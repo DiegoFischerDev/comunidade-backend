@@ -1,0 +1,46 @@
+# Produção na VPS compartilhada (sem nginx no container).
+# Nginx do HOST faz proxy para estas portas. Use com deploy/README-VPS-HOSTINGER.md
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: comunidade
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: comunidade
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U comunidade"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ${IMAGE_BACKEND:-ghcr.io/SEU_USER/comunidade-backend:latest}
+    restart: unless-stopped
+    environment:
+      PORT: 3001
+      NODE_ENV: production
+      DATABASE_URL: postgresql://comunidade:${POSTGRES_PASSWORD}@postgres:5432/comunidade?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:13001:3001"
+
+  frontend:
+    image: ${IMAGE_FRONTEND:-ghcr.io/SEU_USER/comunidade-frontend:latest}
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:13000:3000"
+
+volumes:
+  postgres_data_prod:
