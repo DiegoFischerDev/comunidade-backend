@@ -2,6 +2,7 @@ import {
   ConflictException,
   Injectable,
   InternalServerErrorException,
+  NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,6 +14,21 @@ const SALT_ROUNDS = 10;
 @Injectable()
 export class PartnerService {
   constructor(private readonly prisma: PrismaService) {}
+
+  listPartners() {
+    return this.prisma.partner.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            role: true,
+          },
+        },
+      },
+    });
+  }
 
   async createPartner(dto: CreatePartnerDto) {
     const normalizedEmail = dto.email.toLowerCase().trim();
@@ -57,6 +73,16 @@ export class PartnerService {
       throw new InternalServerErrorException(
         'Erro ao criar parceiro. Tente novamente mais tarde.',
       );
+    }
+  }
+
+  async deletePartner(id: string) {
+    try {
+      await this.prisma.partner.delete({
+        where: { id },
+      });
+    } catch (error) {
+      throw new NotFoundException('Parceiro não encontrado.');
     }
   }
 }

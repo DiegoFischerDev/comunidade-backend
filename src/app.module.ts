@@ -7,9 +7,10 @@ import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
 import { PartnerModule } from './partner/partner.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, PartnerModule],
+  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule],
   controllers: [AppController],
   providers: [
     AppService,
