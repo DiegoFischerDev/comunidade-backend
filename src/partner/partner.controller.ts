@@ -82,6 +82,11 @@ export class PartnerController {
     return this.partnerService.listCategoriesWithPartners();
   }
 
+  @Get(':id/public')
+  async getPartnerPublic(@Param('id') id: string) {
+    return this.partnerService.getPartnerPublic(id);
+  }
+
   @Get('me')
   @Roles(Role.PARTNER)
   async me(@CurrentUser() user: { id: string }) {

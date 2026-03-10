@@ -63,12 +63,14 @@ model Partner {
 }
 
 model ProductCategory {
-  id        String   @id @default(cuid())
-  slug      String   @unique
-  name      String
-  sortOrder Int      @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                 String   @id @default(cuid())
+  slug               String   @unique
+  name               String
+  description        String?  @map("description")
+  backgroundImageUrl String?  @map("background_image_url")
+  sortOrder          Int      @default(0) @map("sort_order")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   services Service[]
   partners Partner[]

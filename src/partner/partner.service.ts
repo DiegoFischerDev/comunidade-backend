@@ -155,7 +155,7 @@ export class PartnerService {
           select: {
             id: true,
             name: true,
-            logoUrl: true,
+            backgroundImageUrl: true,
             shortDescription: true,
           },
         },
@@ -165,12 +165,42 @@ export class PartnerService {
     return categories.filter((category) => category.partners.length > 0);
   }
 
+  async getPartnerPublic(id: string) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: {
+            email: true,
+          },
+        },
+        services: {
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            price: true,
+          },
+        },
+      },
+    });
+
+    if (!partner) {
+      throw new NotFoundException('Parceiro não encontrado.');
+    }
+
+    return partner;
+  }
+
   async createCategory(dto: CreateCategoryDto) {
     try {
       return await this.prisma.productCategory.create({
         data: {
           slug: dto.slug,
           name: dto.name,
+          description: dto.description,
+          backgroundImageUrl: dto.backgroundImageUrl,
           sortOrder: dto.sortOrder ?? 0,
         },
       });
@@ -199,6 +229,9 @@ export class PartnerService {
         data: {
           slug: dto.slug ?? existing.slug,
           name: dto.name ?? existing.name,
+          description: dto.description ?? existing.description,
+          backgroundImageUrl:
+            dto.backgroundImageUrl ?? existing.backgroundImageUrl,
           sortOrder: dto.sortOrder ?? existing.sortOrder,
         },
       });
