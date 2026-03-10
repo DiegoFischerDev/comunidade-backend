@@ -1,4 +1,5 @@
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsEmail, IsNumber, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreatePartnerDto {
   @IsEmail()
@@ -17,5 +18,22 @@ export class CreatePartnerDto {
   @IsOptional()
   @IsString()
   logoUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  shortDescription?: string;
+
+  @IsOptional()
+  @IsString()
+  fullDescription?: string;
+
+  @IsOptional()
+  @IsString()
+  backgroundImageUrl?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  rpmCommissionPercent?: number;
 }
 
