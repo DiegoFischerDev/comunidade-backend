@@ -97,13 +97,18 @@ export class PartnerService {
   }
 
   async deletePartner(id: string) {
-    try {
-      await this.prisma.partner.delete({
-        where: { id },
-      });
-    } catch (error) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { id },
+    });
+
+    if (!partner) {
       throw new NotFoundException('Parceiro não encontrado.');
     }
+
+    // Ao remover o usuário, o registro de Partner é removido em cascata
+    await this.prisma.user.delete({
+      where: { id: partner.userId },
+    });
   }
 
   async updatePartnerAdmin(id: string, dto: UpdatePartnerAdminDto) {

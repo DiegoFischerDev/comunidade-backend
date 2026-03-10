@@ -42,7 +42,7 @@ export class PartnerController {
     return this.partnerService.deletePartner(id);
   }
 
-  @Patch(':id')
+  @Patch('admin/:id')
   @Roles(Role.ADMIN)
   async updateAdmin(
     @Param('id') id: string,
