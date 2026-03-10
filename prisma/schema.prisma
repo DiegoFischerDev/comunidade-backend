@@ -44,18 +44,20 @@ model Subscription {
 }
 
 model Partner {
-  id                   String   @id @default(cuid())
-  userId               String   @unique @map("user_id")
-  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                   String           @id @default(cuid())
+  userId               String           @unique @map("user_id")
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   name                 String
   whatsapp             String
-  logoUrl              String?  @map("logo_url")
-  shortDescription     String?  @map("short_description")
-  fullDescription      String?  @map("full_description")
-  rpmCommissionPercent Float?   @map("rpm_commission_percent")
-  backgroundImageUrl   String?  @map("background_image_url")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
+  logoUrl              String?          @map("logo_url")
+  shortDescription     String?          @map("short_description")
+  fullDescription      String?          @map("full_description")
+  rpmCommissionPercent Float?           @map("rpm_commission_percent")
+  backgroundImageUrl   String?          @map("background_image_url")
+  categoryId           String?          @map("category_id")
+  category             ProductCategory? @relation(fields: [categoryId], references: [id])
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
 
   services Service[]
 }
@@ -69,6 +71,7 @@ model ProductCategory {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   services Service[]
+  partners Partner[]
 }
 
 model Service {

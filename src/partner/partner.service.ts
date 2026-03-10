@@ -11,6 +11,7 @@ import { CreatePartnerDto } from './dto/create-partner.dto';
 import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
+import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { Role } from '@prisma/client';
 
 const SALT_ROUNDS = 10;
@@ -28,6 +29,13 @@ export class PartnerService {
             id: true,
             email: true,
             role: true,
+          },
+        },
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
           },
         },
       },
@@ -92,6 +100,66 @@ export class PartnerService {
     } catch (error) {
       throw new NotFoundException('Parceiro não encontrado.');
     }
+  }
+
+  async updatePartnerAdmin(id: string, dto: UpdatePartnerAdminDto) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { id },
+    });
+
+    if (!partner) {
+      throw new NotFoundException('Parceiro não encontrado.');
+    }
+
+    return this.prisma.partner.update({
+      where: { id },
+      data: {
+        categoryId: dto.categoryId ?? partner.categoryId,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            role: true,
+          },
+        },
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+    });
+  }
+
+  listCategories() {
+    return this.prisma.productCategory.findMany({
+      orderBy: { sortOrder: 'asc', name: 'asc' },
+    });
+  }
+
+  async listCategoriesWithPartners() {
+    const categories = await this.prisma.productCategory.findMany({
+      orderBy: { sortOrder: 'asc', name: 'asc' },
+      include: {
+        partners: {
+          where: {
+            categoryId: { not: null },
+          },
+          select: {
+            id: true,
+            name: true,
+            logoUrl: true,
+            shortDescription: true,
+          },
+        },
+      },
+    });
+
+    return categories.filter((category) => category.partners.length > 0);
   }
 
   async getCurrentPartner(userId: string) {
