@@ -1,4 +1,5 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsNumber, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateServiceDto {
   @IsString()
@@ -11,5 +12,10 @@ export class CreateServiceDto {
   @IsOptional()
   @IsString()
   price?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  commissionEuro?: number;
 }
 

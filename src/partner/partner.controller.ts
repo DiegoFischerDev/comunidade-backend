@@ -15,6 +15,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
+import { UpdateServiceAdminDto } from './dto/update-service-admin.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
@@ -75,6 +76,21 @@ export class PartnerController {
   @Roles(Role.ADMIN)
   async deleteCategory(@Param('id') id: string) {
     return this.partnerService.deleteCategory(id);
+  }
+
+  @Get('admin/services')
+  @Roles(Role.ADMIN)
+  async listAllServicesAdmin() {
+    return this.partnerService.listAllServicesAdmin();
+  }
+
+  @Patch('admin/services/:id')
+  @Roles(Role.ADMIN)
+  async updateServiceAdmin(
+    @Param('id') id: string,
+    @Body() dto: UpdateServiceAdminDto,
+  ) {
+    return this.partnerService.updateServiceAdmin(id, dto);
   }
 
   @Get('categories-with-partners')

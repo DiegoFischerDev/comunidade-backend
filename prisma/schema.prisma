@@ -86,6 +86,7 @@ model Service {
   description             String?
   imageUrl                String?          @map("image_url")
   price                   String?
+  commissionEuro          Float?           @map("commission_euro")
   whatsappMessageTemplate String?          @map("whatsapp_message_template")
   sortOrder               Int              @default(0) @map("sort_order")
   createdAt               DateTime         @default(now()) @map("created_at")

@@ -8,9 +8,10 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
 import { PartnerModule } from './partner/partner.module';
 import { UsersModule } from './users/users.module';
+import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule],
+  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule, UploadsModule],
   controllers: [AppController],
   providers: [
     AppService,
