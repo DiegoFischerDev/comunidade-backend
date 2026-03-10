@@ -4,6 +4,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,6 +13,8 @@ import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
+import { CreateCategoryDto } from './dto/create-category.dto';
+import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Role } from '@prisma/client';
 
 const SALT_ROUNDS = 10;
@@ -160,6 +163,71 @@ export class PartnerService {
     });
 
     return categories.filter((category) => category.partners.length > 0);
+  }
+
+  async createCategory(dto: CreateCategoryDto) {
+    try {
+      return await this.prisma.productCategory.create({
+        data: {
+          slug: dto.slug,
+          name: dto.name,
+          sortOrder: dto.sortOrder ?? 0,
+        },
+      });
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        throw new ConflictException('Já existe uma categoria com este slug.');
+      }
+      throw new InternalServerErrorException(
+        'Erro ao criar categoria. Tente novamente mais tarde.',
+      );
+    }
+  }
+
+  async updateCategory(id: string, dto: UpdateCategoryDto) {
+    const existing = await this.prisma.productCategory.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Categoria não encontrada.');
+    }
+
+    try {
+      return await this.prisma.productCategory.update({
+        where: { id },
+        data: {
+          slug: dto.slug ?? existing.slug,
+          name: dto.name ?? existing.name,
+          sortOrder: dto.sortOrder ?? existing.sortOrder,
+        },
+      });
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        throw new ConflictException('Já existe uma categoria com este slug.');
+      }
+      throw new InternalServerErrorException(
+        'Erro ao atualizar categoria. Tente novamente mais tarde.',
+      );
+    }
+  }
+
+  async deleteCategory(id: string) {
+    try {
+      await this.prisma.productCategory.delete({
+        where: { id },
+      });
+      return { success: true };
+    } catch (error: any) {
+      if (error.code === 'P2003') {
+        throw new BadRequestException(
+          'Não é possível remover a categoria porque existem parceiros ou serviços associados.',
+        );
+      }
+      throw new InternalServerErrorException(
+        'Erro ao remover categoria. Tente novamente mais tarde.',
+      );
+    }
   }
 
   async getCurrentPartner(userId: string) {

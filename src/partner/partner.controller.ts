@@ -16,6 +16,8 @@ import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
+import { CreateCategoryDto } from './dto/create-category.dto';
+import { UpdateCategoryDto } from './dto/update-category.dto';
 
 @Controller('partners')
 export class PartnerController {
@@ -52,6 +54,27 @@ export class PartnerController {
   @Roles(Role.ADMIN)
   async listCategories() {
     return this.partnerService.listCategories();
+  }
+
+  @Post('admin/categories')
+  @Roles(Role.ADMIN)
+  async createCategory(@Body() dto: CreateCategoryDto) {
+    return this.partnerService.createCategory(dto);
+  }
+
+  @Patch('admin/categories/:id')
+  @Roles(Role.ADMIN)
+  async updateCategory(
+    @Param('id') id: string,
+    @Body() dto: UpdateCategoryDto,
+  ) {
+    return this.partnerService.updateCategory(id, dto);
+  }
+
+  @Delete('admin/categories/:id')
+  @Roles(Role.ADMIN)
+  async deleteCategory(@Param('id') id: string) {
+    return this.partnerService.deleteCategory(id);
   }
 
   @Get('categories-with-partners')
