@@ -137,13 +137,13 @@ export class PartnerService {
 
   listCategories() {
     return this.prisma.productCategory.findMany({
-      orderBy: { sortOrder: 'asc', name: 'asc' },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
   }
 
   async listCategoriesWithPartners() {
     const categories = await this.prisma.productCategory.findMany({
-      orderBy: { sortOrder: 'asc', name: 'asc' },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       include: {
         partners: {
           where: {
