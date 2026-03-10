@@ -389,7 +389,7 @@ export class PartnerService {
   async createLeadForPartner(
     partnerId: string,
     userId: string,
-    dto: CreateLeadDto,
+    _dto: CreateLeadDto,
   ) {
     const partner = await this.prisma.partner.findUnique({
       where: { id: partnerId },
@@ -399,12 +399,18 @@ export class PartnerService {
       throw new NotFoundException('Parceiro não encontrado.');
     }
 
-    // Apenas cria o lead; múltiplos cliques geram múltiplos registros
-    return this.prisma.lead.create({
-      data: {
+    // Garante apenas um lead por (parceiro, usuário)
+    return this.prisma.lead.upsert({
+      where: {
+        lead_partner_user_unique: {
+          partnerId: partner.id,
+          userId,
+        },
+      },
+      update: {},
+      create: {
         partnerId: partner.id,
         userId,
-        source: dto.source,
       },
     });
   }
@@ -418,7 +424,9 @@ export class PartnerService {
       include: {
         user: {
           select: {
+            name: true,
             email: true,
+            whatsapp: true,
           },
         },
       },

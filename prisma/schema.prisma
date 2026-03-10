@@ -24,6 +24,8 @@ model User {
   email        String   @unique
   passwordHash String  @map("password_hash")
   role         Role     @default(USER)
+  name         String?
+  whatsapp     String?  @map("whatsapp")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -104,9 +106,9 @@ model Lead {
   partner   Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   userId    String   @map("user_id")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  source    String?  @map("source")
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([partnerId])
   @@index([userId])
+  @@unique([partnerId, userId], name: "lead_partner_user_unique")
 }
