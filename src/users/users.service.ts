@@ -11,7 +11,9 @@ export class UsersService {
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
+        name: true,
         email: true,
+        whatsapp: true,
         role: true,
         createdAt: true,
       },
@@ -24,7 +26,9 @@ export class UsersService {
       data: { role },
       select: {
         id: true,
+        name: true,
         email: true,
+        whatsapp: true,
         role: true,
         createdAt: true,
       },
