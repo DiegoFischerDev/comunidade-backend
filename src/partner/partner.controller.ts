@@ -19,6 +19,7 @@ import { UpdateServiceAdminDto } from './dto/update-service-admin.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
+import { CreateLeadDto } from './dto/create-lead.dto';
 
 @Controller('partners')
 export class PartnerController {
@@ -124,6 +125,12 @@ export class PartnerController {
     return this.partnerService.listMyServices(user.id);
   }
 
+  @Get('me/leads')
+  @Roles(Role.PARTNER)
+  async listMyLeads(@CurrentUser() user: { id: string }) {
+    return this.partnerService.listMyLeads(user.id);
+  }
+
   @Post('me/services')
   @Roles(Role.PARTNER)
   async createMyService(
@@ -150,6 +157,15 @@ export class PartnerController {
     @Param('id') id: string,
   ) {
     return this.partnerService.deleteMyService(user.id, id);
+  }
+
+  @Post(':id/leads')
+  async createLead(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+    @Body() dto: CreateLeadDto,
+  ) {
+    return this.partnerService.createLeadForPartner(id, user.id, dto);
   }
 }
 

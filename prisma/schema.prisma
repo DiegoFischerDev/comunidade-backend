@@ -29,6 +29,7 @@ model User {
 
   subscription Subscription?
   partner      Partner?
+  leads        Lead[]
 }
 
 model Subscription {
@@ -60,6 +61,7 @@ model Partner {
   updatedAt            DateTime         @updatedAt @map("updated_at")
 
   services Service[]
+  leads    Lead[]
 }
 
 model ProductCategory {
@@ -94,4 +96,17 @@ model Service {
 
   @@index([categoryId])
   @@index([partnerId])
+}
+
+model Lead {
+  id        String   @id @default(cuid())
+  partnerId String   @map("partner_id")
+  partner   Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source    String?  @map("source")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([partnerId])
+  @@index([userId])
 }

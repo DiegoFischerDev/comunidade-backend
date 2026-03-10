@@ -16,6 +16,7 @@ import { UpdateServiceAdminDto } from './dto/update-service-admin.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
+import { CreateLeadDto } from './dto/create-lead.dto';
 import { Role } from '@prisma/client';
 
 const SALT_ROUNDS = 10;
@@ -383,6 +384,45 @@ export class PartnerService {
     });
 
     return { success: true };
+  }
+
+  async createLeadForPartner(
+    partnerId: string,
+    userId: string,
+    dto: CreateLeadDto,
+  ) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { id: partnerId },
+    });
+
+    if (!partner) {
+      throw new NotFoundException('Parceiro não encontrado.');
+    }
+
+    // Apenas cria o lead; múltiplos cliques geram múltiplos registros
+    return this.prisma.lead.create({
+      data: {
+        partnerId: partner.id,
+        userId,
+        source: dto.source,
+      },
+    });
+  }
+
+  async listMyLeads(userId: string) {
+    const partner = await this.getPartnerForUserOrThrow(userId);
+
+    return this.prisma.lead.findMany({
+      where: { partnerId: partner.id },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: {
+            email: true,
+          },
+        },
+      },
+    });
   }
 
   async listAllServicesAdmin() {
