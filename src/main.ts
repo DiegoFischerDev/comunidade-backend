@@ -17,7 +17,7 @@ async function bootstrap() {
     credentials: true,
   });
   // Servir arquivos estáticos de uploads
-  app.useStaticAssets(join(__dirname, '..', 'uploads'), {
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/uploads/',
   });
   await app.listen(process.env.PORT ?? 3001);
