@@ -66,6 +66,8 @@ export class PartnerService {
           email: normalizedEmail,
           passwordHash,
           role: Role.PARTNER,
+          name: dto.name,
+          whatsapp: dto.whatsapp,
         },
       });
 

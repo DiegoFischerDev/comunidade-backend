@@ -8,6 +8,8 @@ const SALT_ROUNDS = 10;
 async function main() {
   const email = process.env.ADMIN_EMAIL;
   const password = process.env.ADMIN_PASSWORD;
+  const name = process.env.ADMIN_NAME || 'Admin';
+  const whatsapp = process.env.ADMIN_WHATSAPP || '';
 
   if (!email || !password) {
     console.error(
@@ -54,6 +56,8 @@ async function main() {
       email: normalizedEmail,
       passwordHash,
       role: Role.ADMIN,
+      name,
+      whatsapp,
     },
     select: {
       id: true,
