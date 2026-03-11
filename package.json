@@ -20,7 +20,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "prisma:generate": "npx prisma generate",
     "prisma:migrate": "npx prisma migrate dev",
-    "prisma:studio": "npx prisma studio"
+    "prisma:studio": "npx prisma studio",
+    "seed:admin": "ts-node -r dotenv/config src/scripts/create-admin.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

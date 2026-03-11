@@ -30,6 +30,8 @@ export class AuthService {
     const user = await this.prisma.user.create({
       data: {
         email: dto.email.toLowerCase().trim(),
+        name: dto.name,
+        whatsapp: dto.whatsapp,
         passwordHash,
         role: Role.USER,
       },
@@ -37,6 +39,8 @@ export class AuthService {
         id: true,
         email: true,
         role: true,
+        name: true,
+        whatsapp: true,
         createdAt: true,
       },
     });
@@ -81,6 +85,8 @@ export class AuthService {
         id: true,
         email: true,
         role: true,
+        name: true,
+        whatsapp: true,
       },
     });
     return user ?? null;

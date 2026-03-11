@@ -24,11 +24,14 @@ model User {
   email        String   @unique
   passwordHash String  @map("password_hash")
   role         Role     @default(USER)
+  name         String
+  whatsapp     String  @map("whatsapp")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   subscription Subscription?
   partner      Partner?
+  leads        Lead[]
 }
 
 model Subscription {
@@ -44,44 +47,68 @@ model Subscription {
 }
 
 model Partner {
-  id        String   @id @default(cuid())
-  userId    String   @unique @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name      String
-  whatsapp  String
-  logoUrl   String?  @map("logo_url")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                   String           @id @default(cuid())
+  userId               String           @unique @map("user_id")
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                 String
+  whatsapp             String
+  logoUrl              String?          @map("logo_url")
+  shortDescription     String?          @map("short_description")
+  fullDescription      String?          @map("full_description")
+  rpmCommissionPercent Float?           @map("rpm_commission_percent")
+  backgroundImageUrl   String?          @map("background_image_url")
+  categoryId           String?          @map("category_id")
+  category             ProductCategory? @relation(fields: [categoryId], references: [id])
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
 
   services Service[]
+  leads    Lead[]
 }
 
 model ProductCategory {
-  id        String   @id @default(cuid())
-  slug      String   @unique
-  name      String
-  sortOrder Int      @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                 String   @id @default(cuid())
+  slug               String   @unique
+  name               String
+  description        String?  @map("description")
+  backgroundImageUrl String?  @map("background_image_url")
+  sortOrder          Int      @default(0) @map("sort_order")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   services Service[]
+  partners Partner[]
 }
 
 model Service {
-  id                     String          @id @default(cuid())
-  partnerId              String          @map("partner_id")
-  partner                Partner         @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  categoryId             String          @map("category_id")
-  category               ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  title                  String
-  description            String?
-  imageUrl               String?         @map("image_url")
-  price                  String?
-  whatsappMessageTemplate String?        @map("whatsapp_message_template")
-  sortOrder              Int             @default(0) @map("sort_order")
-  createdAt              DateTime        @default(now()) @map("created_at")
-  updatedAt              DateTime        @updatedAt @map("updated_at")
+  id                      String           @id @default(cuid())
+  partnerId               String           @map("partner_id")
+  partner                 Partner          @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  categoryId              String?          @map("category_id")
+  category                ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  title                   String
+  description             String?
+  imageUrl                String?          @map("image_url")
+  price                   String?
+  commissionEuro          Float?           @map("commission_euro")
+  whatsappMessageTemplate String?          @map("whatsapp_message_template")
+  sortOrder               Int              @default(0) @map("sort_order")
+  createdAt               DateTime         @default(now()) @map("created_at")
+  updatedAt               DateTime         @updatedAt @map("updated_at")
 
   @@index([categoryId])
   @@index([partnerId])
+}
+
+model Lead {
+  id        String   @id @default(cuid())
+  partnerId String   @map("partner_id")
+  partner   Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([partnerId])
+  @@index([userId])
+  @@unique([partnerId, userId], name: "lead_partner_user_unique")
 }
