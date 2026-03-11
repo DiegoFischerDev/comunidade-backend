@@ -20,6 +20,7 @@ import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CreateLeadDto } from './dto/create-lead.dto';
+import { Public } from '../auth/public.decorator';
 
 @Controller('partners')
 export class PartnerController {
@@ -94,6 +95,7 @@ export class PartnerController {
     return this.partnerService.updateServiceAdmin(id, dto);
   }
 
+  @Public()
   @Get('categories-with-partners')
   async listCategoriesWithPartners() {
     return this.partnerService.listCategoriesWithPartners();
