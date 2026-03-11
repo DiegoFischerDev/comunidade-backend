@@ -183,6 +183,13 @@ export class PartnerService {
             email: true,
           },
         },
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
         services: {
           orderBy: { sortOrder: 'asc' },
           select: {
