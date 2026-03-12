@@ -91,6 +91,7 @@ export class SaleService {
       data: {
         partnerId: partner.id,
         userId: lead.userId,
+        createdByUserId: params.userId,
         serviceId: service.id,
         month: params.month,
         year: params.year,
@@ -117,6 +118,13 @@ export class SaleService {
         service: {
           select: {
             title: true,
+          },
+        },
+        createdByUser: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
           },
         },
       },
@@ -245,6 +253,7 @@ export class SaleService {
       data: {
         partnerId: partner.id,
         userId: params.userId,
+        createdByUserId: params.userId,
         serviceId: service.id,
         month: params.month,
         year: params.year,

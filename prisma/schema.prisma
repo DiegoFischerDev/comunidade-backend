@@ -44,6 +44,7 @@ model User {
   partner      Partner?
   leads        Lead[]
   sales        Sale[]
+  salesCreated Sale[]   @relation("SaleCreatedBy")
 }
 
 model Subscription {
@@ -132,8 +133,10 @@ model Sale {
   id                     String                  @id @default(cuid())
   partnerId              String                  @map("partner_id")
   partner                Partner                 @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  userId                 String                  @map("user_id")
-  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                 String?                 @map("user_id")
+  user                   User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdByUserId        String?                 @map("created_by_user_id")
+  createdByUser          User?                   @relation("SaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   serviceId              String                  @map("service_id")
   service                Service                 @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   month                  Int
