@@ -19,6 +19,17 @@ enum SubscriptionStatus {
   EXPIRED
 }
 
+enum SaleStatus {
+  PENDING_PARTNER
+  APPROVED
+  REJECTED
+}
+
+enum CommissionPaymentStatus {
+  PENDING
+  PAID
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -32,6 +43,7 @@ model User {
   subscription Subscription?
   partner      Partner?
   leads        Lead[]
+  sales        Sale[]
 }
 
 model Subscription {
@@ -64,6 +76,7 @@ model Partner {
 
   services Service[]
   leads    Lead[]
+  sales    Sale[]
 }
 
 model ProductCategory {
@@ -96,6 +109,8 @@ model Service {
   createdAt               DateTime         @default(now()) @map("created_at")
   updatedAt               DateTime         @updatedAt @map("updated_at")
 
+  sales Sale[]
+
   @@index([categoryId])
   @@index([partnerId])
 }
@@ -111,4 +126,27 @@ model Lead {
   @@index([partnerId])
   @@index([userId])
   @@unique([partnerId, userId], name: "lead_partner_user_unique")
+}
+
+model Sale {
+  id                     String                  @id @default(cuid())
+  partnerId              String                  @map("partner_id")
+  partner                Partner                 @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  userId                 String                  @map("user_id")
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serviceId              String                  @map("service_id")
+  service                Service                 @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  month                  Int
+  year                   Int
+  amount                 Float                   @map("amount")
+  commissionEuro         Float                   @map("commission_euro")
+  status                 SaleStatus              @default(PENDING_PARTNER)
+  commissionPaymentStatus CommissionPaymentStatus @default(PENDING) @map("commission_payment_status")
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+
+  @@index([partnerId])
+  @@index([userId])
+  @@index([status])
+  @@index([commissionPaymentStatus])
 }
