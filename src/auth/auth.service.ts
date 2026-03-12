@@ -2,6 +2,7 @@ import {
   Injectable,
   ConflictException,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -90,5 +91,52 @@ export class AuthService {
       },
     });
     return user ?? null;
+  }
+
+  async impersonate(adminUserId: string, targetUserId: string) {
+    const admin = await this.prisma.user.findUnique({
+      where: { id: adminUserId },
+    });
+
+    if (!admin) {
+      throw new UnauthorizedException('Administrador não encontrado.');
+    }
+
+    if (admin.role !== Role.ADMIN) {
+      throw new ForbiddenException(
+        'Apenas administradores podem usar esta funcionalidade.',
+      );
+    }
+
+    if (admin.id === targetUserId) {
+      throw new ForbiddenException(
+        'Você já está autenticado como este utilizador.',
+      );
+    }
+
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+    });
+
+    if (!target) {
+      throw new UnauthorizedException('Utilizador alvo não encontrado.');
+    }
+
+    const token = this.jwtService.sign({
+      sub: target.id,
+      email: target.email,
+      role: target.role,
+    });
+
+    return {
+      user: {
+        id: target.id,
+        email: target.email,
+        role: target.role,
+        name: target.name ?? undefined,
+        whatsapp: target.whatsapp ?? undefined,
+      },
+      token,
+    };
   }
 }

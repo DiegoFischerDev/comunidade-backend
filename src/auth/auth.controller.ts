@@ -27,4 +27,13 @@ export class AuthController {
   async me(@CurrentUser() user: { id: string; email: string; role: string }) {
     return this.authService.validateUserById(user.id);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('impersonate')
+  async impersonate(
+    @CurrentUser() user: { id: string; email: string; role: string },
+    @Body('userId') userId: string,
+  ) {
+    return this.authService.impersonate(user.id, userId);
+  }
 }
