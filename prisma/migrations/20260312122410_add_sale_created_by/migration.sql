@@ -1,11 +1,10 @@
 /*
-  Warnings:
-
-  - Added the required column `created_by_user_id` to the `Sale` table without a default value. This is not possible if the table is not empty.
-
+  Adjusted to add `created_by_user_id` as nullable to support existing rows.
 */
 -- AlterTable
-ALTER TABLE "Sale" ADD COLUMN     "created_by_user_id" TEXT NOT NULL;
+ALTER TABLE "Sale" ADD COLUMN "created_by_user_id" TEXT;
 
 -- AddForeignKey
-ALTER TABLE "Sale" ADD CONSTRAINT "Sale_created_by_user_id_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Sale"
+  ADD CONSTRAINT "Sale_created_by_user_id_fkey"
+  FOREIGN KEY ("created_by_user_id") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
