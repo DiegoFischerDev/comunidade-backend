@@ -20,6 +20,10 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
+  private normalizeWhatsapp(value: string): string {
+    return value.replace(/\s+/g, '');
+  }
+
   async register(dto: RegisterDto) {
     const existing = await this.prisma.user.findUnique({
       where: { email: dto.email.toLowerCase().trim() },
@@ -32,7 +36,7 @@ export class AuthService {
       data: {
         email: dto.email.toLowerCase().trim(),
         name: dto.name,
-        whatsapp: dto.whatsapp,
+        whatsapp: this.normalizeWhatsapp(dto.whatsapp),
         passwordHash,
         role: Role.USER,
       },

@@ -25,6 +25,10 @@ const SALT_ROUNDS = 10;
 export class PartnerService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private normalizeWhatsapp(value: string): string {
+    return value.replace(/\s+/g, '');
+  }
+
   listPartners() {
     return this.prisma.partner.findMany({
       orderBy: { createdAt: 'desc' },
@@ -67,7 +71,7 @@ export class PartnerService {
           passwordHash,
           role: Role.PARTNER,
           name: dto.name,
-          whatsapp: dto.whatsapp,
+          whatsapp: this.normalizeWhatsapp(dto.whatsapp),
         },
       });
 
@@ -75,7 +79,7 @@ export class PartnerService {
         data: {
           userId: user.id,
           name: dto.name,
-          whatsapp: dto.whatsapp,
+          whatsapp: this.normalizeWhatsapp(dto.whatsapp),
           logoUrl: dto.logoUrl,
           shortDescription: dto.shortDescription,
           fullDescription: dto.fullDescription,
