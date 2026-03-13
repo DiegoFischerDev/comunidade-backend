@@ -122,7 +122,7 @@ Se não foi você que iniciou este registo, pode ignorar esta mensagem.`;
 
     if (user.emailVerificationCode && !user.emailVerifiedAt) {
       throw new ForbiddenException(
-        'É necessário confirmar o seu e-mail antes de entrar. Verifique a sua caixa de entrada.',
+        'É necessário confirmar o seu e-mail antes de entrar. Verifique a sua caixa de entrada e também a pasta de spam/lixo eletrónico. Se precisar, peça o reenvio do código.',
       );
     }
 
@@ -182,6 +182,68 @@ Se não foi você que iniciou este registo, pode ignorar esta mensagem.`;
         emailVerificationExpiresAt: null,
       },
     });
+
+    return { success: true };
+  }
+
+  async resendVerification(email: string) {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Utilizador não encontrado.');
+    }
+
+    if (user.emailVerifiedAt) {
+      return { success: true };
+    }
+
+    const verificationCode = this.generateVerificationCode();
+    const verificationExpiresAt = this.getVerificationExpiryDate();
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerificationCode: verificationCode,
+        emailVerificationExpiresAt: verificationExpiresAt,
+      },
+    });
+
+    try {
+      const subject = 'Novo código de confirmação da Comunidade RPM';
+      const text = `Olá ${user.name},
+
+Recebemos um pedido para reenviar o seu código de confirmação da Comunidade RPM.
+
+Utilize o seguinte código para confirmar o seu e-mail:
+
+${verificationCode}
+
+Este código é válido por 15 minutos.
+
+Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
+
+      const html = `<p>Olá ${user.name},</p>
+<p>Recebemos um pedido para reenviar o seu código de confirmação da <strong>Comunidade RPM</strong>.</p>
+<p>Utilize o seguinte código para confirmar o seu e-mail:</p>
+<p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${verificationCode}</p>
+<p>Este código é válido por 15 minutos.</p>
+<p>Se não foi você que iniciou este pedido, pode ignorar esta mensagem.</p>`;
+
+      await sendEmailBase({
+        to: user.email,
+        subject,
+        text,
+        html,
+      });
+    } catch {
+      throw new ServiceUnavailableException(
+        'Não foi possível reenviar o e-mail de confirmação. Tente novamente mais tarde.',
+      );
+    }
 
     return { success: true };
   }
