@@ -37,6 +37,12 @@ export class AuthService {
     return expires;
   }
 
+  private getResetPasswordExpiryDate(): Date {
+    const expires = new Date();
+    expires.setMinutes(expires.getMinutes() + 30);
+    return expires;
+  }
+
   async register(dto: RegisterDto) {
     const existing = await this.prisma.user.findUnique({
       where: { email: dto.email.toLowerCase().trim() },
@@ -180,6 +186,109 @@ Se não foi você que iniciou este registo, pode ignorar esta mensagem.`;
         emailVerifiedAt: new Date(),
         emailVerificationCode: null,
         emailVerificationExpiresAt: null,
+      },
+    });
+
+    return { success: true };
+  }
+
+  async requestPasswordReset(email: string) {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (!user) {
+      // Não expomos que o utilizador não existe
+      return { success: true };
+    }
+
+    const resetCode = this.generateVerificationCode();
+    const resetExpiresAt = this.getResetPasswordExpiryDate();
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetPasswordCode: resetCode,
+        resetPasswordExpiresAt: resetExpiresAt,
+      },
+    });
+
+    try {
+      const subject = 'Pedido de redefinição de senha – Comunidade RPM';
+      const text = `Olá ${user.name},
+
+Recebemos um pedido para redefinir a sua senha na Comunidade RPM.
+
+Utilize o código abaixo para criar uma nova senha:
+
+${resetCode}
+
+Este código é válido por 30 minutos.
+
+Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
+
+      const html = `<p>Olá ${user.name},</p>
+<p>Recebemos um pedido para redefinir a sua senha na <strong>Comunidade RPM</strong>.</p>
+<p>Utilize o código abaixo para criar uma nova senha:</p>
+<p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${resetCode}</p>
+<p>Este código é válido por 30 minutos.</p>
+<p>Se não foi você que fez este pedido, pode ignorar esta mensagem.</p>`;
+
+      await sendEmailBase({
+        to: user.email,
+        subject,
+        text,
+        html,
+      });
+    } catch {
+      throw new ServiceUnavailableException(
+        'Não foi possível enviar o e-mail de recuperação de senha. Tente novamente mais tarde.',
+      );
+    }
+
+    return { success: true };
+  }
+
+  async resetPassword(
+    email: string,
+    code: string,
+    newPassword: string,
+  ) {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (
+      !user ||
+      !user.resetPasswordCode ||
+      !user.resetPasswordExpiresAt
+    ) {
+      throw new BadRequestException(
+        'Código de recuperação inválido ou expirado.',
+      );
+    }
+
+    const now = new Date();
+    if (user.resetPasswordExpiresAt < now) {
+      throw new ForbiddenException('O código de recuperação expirou.');
+    }
+
+    if (user.resetPasswordCode !== code.trim()) {
+      throw new ForbiddenException('Código de recuperação inválido.');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        resetPasswordCode: null,
+        resetPasswordExpiresAt: null,
       },
     });
 

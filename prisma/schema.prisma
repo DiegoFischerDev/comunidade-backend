@@ -40,6 +40,8 @@ model User {
   emailVerifiedAt            DateTime? @map("email_verified_at")
   emailVerificationCode      String?  @map("email_verification_code")
   emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
+  resetPasswordCode          String?  @map("reset_password_code")
+  resetPasswordExpiresAt     DateTime? @map("reset_password_expires_at")
   createdAt                  DateTime @default(now()) @map("created_at")
   updatedAt                  DateTime @updatedAt @map("updated_at")
 
