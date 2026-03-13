@@ -1,11 +1,9 @@
-import { IsNumber, IsOptional } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsOptional, IsString } from 'class-validator';
 
 export class UpdateServiceAdminDto {
-  /** Comissão RPM em percentual (0-100). */
+  /** Comissão RPM: texto definido pelo admin, ex. "10%" ou "5 €". */
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  commissionPercent?: number;
+  @IsString()
+  commission?: string;
 }
 

@@ -234,7 +234,7 @@ export class PartnerService {
             description: true,
             price: true,
             priceOnRequest: true,
-            commissionPercent: true,
+            commission: true,
           },
         },
       },
@@ -411,7 +411,7 @@ export class PartnerService {
         description: true,
         price: true,
         priceOnRequest: true,
-        commissionPercent: true,
+        commission: true,
         createdAt: true,
       },
     });
@@ -571,10 +571,8 @@ export class PartnerService {
     return this.prisma.service.update({
       where: { id },
       data: {
-        commissionPercent:
-          dto.commissionPercent !== undefined
-            ? dto.commissionPercent
-            : service.commissionPercent,
+        commission:
+          dto.commission !== undefined ? dto.commission : service.commission,
       },
     });
   }

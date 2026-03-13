@@ -11,6 +11,21 @@ import type { SaleStatus } from '@prisma/client';
 export class SaleService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Converte a string de comissão (ex. "10%" ou "5 €") no valor em euros
+   * para esta venda. % = percentual do amount; € ou $ = valor fixo.
+   */
+  private parseCommissionToEuro(commissionStr: string | null, saleAmount: number): number {
+    const s = commissionStr?.trim();
+    if (!s) return 0;
+    const numMatch = s.match(/^[\d.,]+/);
+    const num = numMatch ? parseFloat(numMatch[0].replace(',', '.')) : NaN;
+    if (Number.isNaN(num) || num < 0) return 0;
+    if (/\d\s*%\s*$/i.test(s)) return (saleAmount * num) / 100;
+    if (/\d\s*[€$]\s*$/i.test(s)) return num;
+    return 0;
+  }
+
   private async getPartnerForUserOrThrow(userId: string) {
     const partner = await this.prisma.partner.findUnique({
       where: { userId },
@@ -49,7 +64,7 @@ export class SaleService {
           title: true,
           price: true,
           priceOnRequest: true,
-          commissionPercent: true,
+          commission: true,
         },
       }),
     ]);
@@ -108,8 +123,10 @@ export class SaleService {
         params.amount ??
         (service.price ? parseFloat(service.price) : 0);
     }
-    const commissionEuro =
-      amount * ((service.commissionPercent ?? 0) / 100);
+    const commissionEuro = this.parseCommissionToEuro(
+      service.commission,
+      amount,
+    );
 
     return this.prisma.sale.create({
       data: {
@@ -240,7 +257,7 @@ export class SaleService {
         title: true,
         price: true,
         priceOnRequest: true,
-        commissionPercent: true,
+        commission: true,
       },
     });
   }
@@ -290,8 +307,10 @@ export class SaleService {
         params.amount ??
         (service.price ? parseFloat(service.price) : 0);
     }
-    const commissionEuro =
-      amount * ((service.commissionPercent ?? 0) / 100);
+    const commissionEuro = this.parseCommissionToEuro(
+      service.commission,
+      amount,
+    );
 
     return this.prisma.sale.create({
       data: {
