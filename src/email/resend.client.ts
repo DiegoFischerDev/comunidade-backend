@@ -24,12 +24,14 @@ export async function sendEmailBase(params: {
 
   const fromFormatted = 'Comunidade RPM <noreply@ia.rafaapelomundo.com>';
 
-  return await resend.emails.send({
-    from: fromFormatted,
-    to: Array.isArray(params.to) ? params.to : [params.to],
-    subject: params.subject,
-    text: params.text,
-    html: params.html,
-  });
+  return await resend.emails.send(
+    {
+      from: fromFormatted,
+      to: Array.isArray(params.to) ? params.to : [params.to],
+      subject: params.subject,
+      text: params.text,
+      html: params.html,
+    } as any,
+  );
 }
 
