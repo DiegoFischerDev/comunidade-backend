@@ -1,10 +1,4 @@
-import {
-  IsBoolean,
-  IsNumber,
-  IsOptional,
-  IsString,
-  ValidateIf,
-} from 'class-validator';
+import { IsBoolean, IsOptional, IsString, ValidateIf } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateServiceDto {
@@ -22,10 +16,5 @@ export class CreateServiceDto {
   @ValidateIf((o) => !o.priceOnRequest)
   @IsString()
   price?: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  commissionEuro?: number;
 }
 

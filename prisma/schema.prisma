@@ -110,7 +110,6 @@ model Service {
   imageUrl                String?          @map("image_url")
   price                   String?
   priceOnRequest          Boolean          @default(false) @map("price_on_request")
-  commissionEuro          Float?           @map("commission_euro")
   commissionPercent       Float?           @map("commission_percent")
   whatsappMessageTemplate String?          @map("whatsapp_message_template")
   sortOrder               Int              @default(0) @map("sort_order")

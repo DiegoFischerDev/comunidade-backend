@@ -49,7 +49,7 @@ export class SaleService {
           title: true,
           price: true,
           priceOnRequest: true,
-          commissionEuro: true,
+          commissionPercent: true,
         },
       }),
     ]);
@@ -108,9 +108,8 @@ export class SaleService {
         params.amount ??
         (service.price ? parseFloat(service.price) : 0);
     }
-    const commissionEuro = service.priceOnRequest
-      ? (amount * ((service.commissionPercent ?? 0) / 100))
-      : (service.commissionEuro ?? 0);
+    const commissionEuro =
+      amount * ((service.commissionPercent ?? 0) / 100);
 
     return this.prisma.sale.create({
       data: {
@@ -241,7 +240,7 @@ export class SaleService {
         title: true,
         price: true,
         priceOnRequest: true,
-        commissionEuro: true,
+        commissionPercent: true,
       },
     });
   }
@@ -291,9 +290,8 @@ export class SaleService {
         params.amount ??
         (service.price ? parseFloat(service.price) : 0);
     }
-    const commissionEuro = service.priceOnRequest
-      ? (amount * ((service.commissionPercent ?? 0) / 100))
-      : (service.commissionEuro ?? 0);
+    const commissionEuro =
+      amount * ((service.commissionPercent ?? 0) / 100);
 
     return this.prisma.sale.create({
       data: {

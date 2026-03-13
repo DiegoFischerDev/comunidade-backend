@@ -2,12 +2,7 @@ import { IsNumber, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class UpdateServiceAdminDto {
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  commissionEuro?: number;
-
-  /** Percentual de comissão (0-100), usado quando o serviço é "sob consulta". */
+  /** Comissão RPM em percentual (0-100). */
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
