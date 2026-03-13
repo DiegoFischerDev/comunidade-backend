@@ -160,6 +160,7 @@ export class SaleService {
         service: {
           select: {
             title: true,
+            commission: true,
           },
         },
         createdByUser: {
