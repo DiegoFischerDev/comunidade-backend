@@ -3,6 +3,8 @@ import {
   ConflictException,
   UnauthorizedException,
   ForbiddenException,
+  ServiceUnavailableException,
+  BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -10,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { Role } from '@prisma/client';
+import { sendEmailBase } from '../email/resend.client';
 
 const SALT_ROUNDS = 10;
 
@@ -24,6 +27,16 @@ export class AuthService {
     return value.replace(/\s+/g, '');
   }
 
+  private generateVerificationCode(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  private getVerificationExpiryDate(): Date {
+    const expires = new Date();
+    expires.setMinutes(expires.getMinutes() + 15);
+    return expires;
+  }
+
   async register(dto: RegisterDto) {
     const existing = await this.prisma.user.findUnique({
       where: { email: dto.email.toLowerCase().trim() },
@@ -31,7 +44,11 @@ export class AuthService {
     if (existing) {
       throw new ConflictException('Este e-mail já está em uso.');
     }
+
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    const verificationCode = this.generateVerificationCode();
+    const verificationExpiresAt = this.getVerificationExpiryDate();
+
     const user = await this.prisma.user.create({
       data: {
         email: dto.email.toLowerCase().trim(),
@@ -39,6 +56,8 @@ export class AuthService {
         whatsapp: this.normalizeWhatsapp(dto.whatsapp),
         passwordHash,
         role: Role.USER,
+        emailVerificationCode: verificationCode,
+        emailVerificationExpiresAt: verificationExpiresAt,
       },
       select: {
         id: true,
@@ -49,12 +68,48 @@ export class AuthService {
         createdAt: true,
       },
     });
-    const token = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-    });
-    return { user, token };
+
+    try {
+      const subject = 'Confirme o seu e-mail na Comunidade RPM';
+      const text = `Olá ${user.name},
+
+Obrigado por se registar na Comunidade RPM.
+
+Para confirmar o seu e-mail, utilize o seguinte código:
+
+${verificationCode}
+
+Este código é válido por 15 minutos.
+
+Se não foi você que iniciou este registo, pode ignorar esta mensagem.`;
+
+      const html = `<p>Olá ${user.name},</p>
+<p>Obrigado por se registar na <strong>Comunidade RPM</strong>.</p>
+<p>Para confirmar o seu e-mail, utilize o seguinte código:</p>
+<p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${verificationCode}</p>
+<p>Este código é válido por 15 minutos.</p>
+<p>Se não foi você que iniciou este registo, pode ignorar esta mensagem.</p>`;
+
+      await sendEmailBase({
+        to: user.email,
+        subject,
+        text,
+        html,
+      });
+    } catch (error) {
+      await this.prisma.user
+        .delete({ where: { id: user.id } })
+        .catch(() => undefined);
+
+      throw new ServiceUnavailableException(
+        'Não foi possível enviar o e-mail de confirmação. Tente novamente mais tarde.',
+      );
+    }
+
+    return {
+      user,
+      requiresEmailVerification: true,
+    };
   }
 
   async login(dto: LoginDto) {
@@ -64,6 +119,13 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
+
+    if (user.emailVerificationCode && !user.emailVerifiedAt) {
+      throw new ForbiddenException(
+        'É necessário confirmar o seu e-mail antes de entrar. Verifique a sua caixa de entrada.',
+      );
+    }
+
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
@@ -81,6 +143,47 @@ export class AuthService {
       },
       token,
     };
+  }
+
+  async verifyEmail(email: string, code: string) {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Utilizador não encontrado.');
+    }
+
+    if (!user.emailVerificationCode || !user.emailVerificationExpiresAt) {
+      if (user.emailVerifiedAt) {
+        return { success: true };
+      }
+      throw new BadRequestException(
+        'Não há um código de confirmação ativo para este e-mail.',
+      );
+    }
+
+    const now = new Date();
+    if (user.emailVerificationExpiresAt < now) {
+      throw new ForbiddenException('O código de confirmação expirou.');
+    }
+
+    if (user.emailVerificationCode !== code.trim()) {
+      throw new ForbiddenException('Código de confirmação inválido.');
+    }
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerifiedAt: new Date(),
+        emailVerificationCode: null,
+        emailVerificationExpiresAt: null,
+      },
+    });
+
+    return { success: true };
   }
 
   async validateUserById(userId: string) {

@@ -31,14 +31,17 @@ enum CommissionPaymentStatus {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String  @map("password_hash")
-  role         Role     @default(USER)
-  name         String
-  whatsapp     String  @map("whatsapp")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                         String   @id @default(cuid())
+  email                      String   @unique
+  passwordHash               String  @map("password_hash")
+  role                       Role     @default(USER)
+  name                       String
+  whatsapp                   String  @map("whatsapp")
+  emailVerifiedAt            DateTime? @map("email_verified_at")
+  emailVerificationCode      String?  @map("email_verification_code")
+  emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
 
   subscription Subscription?
   partner      Partner?
