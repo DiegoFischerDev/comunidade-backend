@@ -18,12 +18,44 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { Role } from '@prisma/client';
+import { unlink } from 'fs/promises';
+import { join } from 'path';
 
 const SALT_ROUNDS = 10;
 
 @Injectable()
 export class PartnerService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private async deleteUploadFileIfLocal(url?: string | null) {
+    if (!url) return;
+
+    let pathname = url;
+    if (pathname.startsWith('http://') || pathname.startsWith('https://')) {
+      try {
+        pathname = new URL(pathname).pathname;
+      } catch {
+        return;
+      }
+    }
+
+    if (!pathname.startsWith('/uploads/')) {
+      return;
+    }
+
+    const filename = pathname.replace('/uploads/', '');
+    if (!filename) return;
+
+    const filePath = join(process.cwd(), 'uploads', filename);
+
+    try {
+      await unlink(filePath);
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') {
+        // Intencionalmente ignoramos outros erros de deleção para não quebrar o fluxo de negócio
+      }
+    }
+  }
 
   private normalizeWhatsapp(value: string): string {
     return value.replace(/\s+/g, '');
@@ -244,8 +276,16 @@ export class PartnerService {
       throw new NotFoundException('Categoria não encontrada.');
     }
 
+    let oldBackgroundToDelete: string | null = null;
+    if (
+      dto.backgroundImageUrl &&
+      dto.backgroundImageUrl !== existing.backgroundImageUrl
+    ) {
+      oldBackgroundToDelete = existing.backgroundImageUrl;
+    }
+
     try {
-      return await this.prisma.productCategory.update({
+      const updated = await this.prisma.productCategory.update({
         where: { id },
         data: {
           slug: dto.slug ?? existing.slug,
@@ -256,6 +296,12 @@ export class PartnerService {
           sortOrder: dto.sortOrder ?? existing.sortOrder,
         },
       });
+
+      if (oldBackgroundToDelete) {
+        await this.deleteUploadFileIfLocal(oldBackgroundToDelete);
+      }
+
+      return updated;
     } catch (error: any) {
       if (error.code === 'P2002') {
         throw new ConflictException('Já existe uma categoria com este slug.');
@@ -304,8 +350,21 @@ export class PartnerService {
     if (!partner) {
       throw new NotFoundException('Parceiro não encontrado para este usuário.');
     }
+    let oldLogoToDelete: string | null = null;
+    let oldBackgroundToDelete: string | null = null;
 
-    return this.prisma.partner.update({
+    if (dto.logoUrl && dto.logoUrl !== partner.logoUrl) {
+      oldLogoToDelete = partner.logoUrl;
+    }
+
+    if (
+      dto.backgroundImageUrl &&
+      dto.backgroundImageUrl !== partner.backgroundImageUrl
+    ) {
+      oldBackgroundToDelete = partner.backgroundImageUrl;
+    }
+
+    const updated = await this.prisma.partner.update({
       where: { id: partner.id },
       data: {
         logoUrl: dto.logoUrl ?? partner.logoUrl,
@@ -315,6 +374,16 @@ export class PartnerService {
           dto.backgroundImageUrl ?? partner.backgroundImageUrl,
       },
     });
+
+    if (oldLogoToDelete) {
+      await this.deleteUploadFileIfLocal(oldLogoToDelete);
+    }
+
+    if (oldBackgroundToDelete) {
+      await this.deleteUploadFileIfLocal(oldBackgroundToDelete);
+    }
+
+    return updated;
   }
 
   private async getPartnerForUserOrThrow(userId: string) {
