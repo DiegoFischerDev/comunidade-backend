@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type { SaleStatus } from '@prisma/client';
 
@@ -43,6 +48,7 @@ export class SaleService {
           id: true,
           title: true,
           price: true,
+          priceOnRequest: true,
           commissionEuro: true,
         },
       }),
@@ -84,8 +90,27 @@ export class SaleService {
       throw new NotFoundException('Serviço não encontrado para este parceiro.');
     }
 
-    const amount = params.amount ?? (service.price ? parseFloat(service.price) : 0);
-    const commissionEuro = service.commissionEuro ?? 0;
+    let amount: number;
+    if (service.priceOnRequest) {
+      if (
+        params.amount == null ||
+        params.amount === undefined ||
+        Number.isNaN(params.amount) ||
+        params.amount <= 0
+      ) {
+        throw new BadRequestException(
+          'Para serviços "sob consulta" o valor da venda é obrigatório.',
+        );
+      }
+      amount = params.amount;
+    } else {
+      amount =
+        params.amount ??
+        (service.price ? parseFloat(service.price) : 0);
+    }
+    const commissionEuro = service.priceOnRequest
+      ? (amount * ((service.commissionPercent ?? 0) / 100))
+      : (service.commissionEuro ?? 0);
 
     return this.prisma.sale.create({
       data: {
@@ -93,6 +118,7 @@ export class SaleService {
         userId: lead.userId,
         createdByUserId: params.userId,
         serviceId: service.id,
+        serviceTitle: service.title,
         month: params.month,
         year: params.year,
         amount,
@@ -214,6 +240,7 @@ export class SaleService {
         id: true,
         title: true,
         price: true,
+        priceOnRequest: true,
         commissionEuro: true,
       },
     });
@@ -246,8 +273,27 @@ export class SaleService {
       throw new NotFoundException('Serviço não encontrado para este parceiro.');
     }
 
-    const amount = params.amount ?? (service.price ? parseFloat(service.price) : 0);
-    const commissionEuro = service.commissionEuro ?? 0;
+    let amount: number;
+    if (service.priceOnRequest) {
+      if (
+        params.amount == null ||
+        params.amount === undefined ||
+        Number.isNaN(params.amount) ||
+        params.amount <= 0
+      ) {
+        throw new BadRequestException(
+          'Para serviços "sob consulta" o valor da compra é obrigatório.',
+        );
+      }
+      amount = params.amount;
+    } else {
+      amount =
+        params.amount ??
+        (service.price ? parseFloat(service.price) : 0);
+    }
+    const commissionEuro = service.priceOnRequest
+      ? (amount * ((service.commissionPercent ?? 0) / 100))
+      : (service.commissionEuro ?? 0);
 
     return this.prisma.sale.create({
       data: {
@@ -255,6 +301,7 @@ export class SaleService {
         userId: params.userId,
         createdByUserId: params.userId,
         serviceId: service.id,
+        serviceTitle: service.title,
         month: params.month,
         year: params.year,
         amount,

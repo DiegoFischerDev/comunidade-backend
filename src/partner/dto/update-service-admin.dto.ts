@@ -6,5 +6,11 @@ export class UpdateServiceAdminDto {
   @Type(() => Number)
   @IsNumber()
   commissionEuro?: number;
+
+  /** Percentual de comissão (0-100), usado quando o serviço é "sob consulta". */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  commissionPercent?: number;
 }
 

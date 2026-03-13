@@ -233,6 +233,7 @@ export class PartnerService {
             title: true,
             description: true,
             price: true,
+            priceOnRequest: true,
             commissionEuro: true,
           },
         },
@@ -409,6 +410,7 @@ export class PartnerService {
         title: true,
         description: true,
         price: true,
+        priceOnRequest: true,
         commissionEuro: true,
         createdAt: true,
       },
@@ -418,12 +420,23 @@ export class PartnerService {
   async createMyService(userId: string, dto: CreateServiceDto) {
     const partner = await this.getPartnerForUserOrThrow(userId);
 
+    if (!dto.description?.trim()) {
+      throw new BadRequestException('A descrição é obrigatória.');
+    }
+    const priceOnRequest = dto.priceOnRequest ?? false;
+    if (!priceOnRequest && (!dto.price || dto.price.trim() === '')) {
+      throw new BadRequestException(
+        'Valor é obrigatório quando o serviço não é "sob consulta".',
+      );
+    }
+
     return this.prisma.service.create({
       data: {
         partnerId: partner.id,
         title: dto.title,
-        description: dto.description,
-        price: dto.price,
+        description: dto.description?.trim() ?? '',
+        price: priceOnRequest ? null : (dto.price?.trim() || null),
+        priceOnRequest,
         commissionEuro: dto.commissionEuro,
       },
     });
@@ -440,12 +453,30 @@ export class PartnerService {
       throw new NotFoundException('Serviço não encontrado.');
     }
 
+    if (dto.description !== undefined && !dto.description.trim()) {
+      throw new BadRequestException('A descrição é obrigatória.');
+    }
+    const priceOnRequest = dto.priceOnRequest ?? service.priceOnRequest;
+    const title = dto.title ?? service.title;
+    const description = dto.description !== undefined ? dto.description : service.description;
+    const price =
+      dto.price !== undefined
+        ? (priceOnRequest ? null : dto.price || null)
+        : (priceOnRequest ? null : service.price);
+
+    if (!priceOnRequest && (!price || price.trim() === '')) {
+      throw new BadRequestException(
+        'Valor é obrigatório quando o serviço não é "sob consulta".',
+      );
+    }
+
     return this.prisma.service.update({
       where: { id: service.id },
       data: {
-        title: dto.title ?? service.title,
-        description: dto.description ?? service.description,
-        price: dto.price ?? service.price,
+        title,
+        description: description ?? service.description,
+        price: price?.trim() || null,
+        priceOnRequest,
       },
     });
   }
@@ -545,6 +576,10 @@ export class PartnerService {
           dto.commissionEuro !== undefined
             ? dto.commissionEuro
             : service.commissionEuro,
+        commissionPercent:
+          dto.commissionPercent !== undefined
+            ? dto.commissionPercent
+            : service.commissionPercent,
       },
     });
   }

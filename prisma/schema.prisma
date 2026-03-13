@@ -109,7 +109,9 @@ model Service {
   description             String?
   imageUrl                String?          @map("image_url")
   price                   String?
+  priceOnRequest          Boolean          @default(false) @map("price_on_request")
   commissionEuro          Float?           @map("commission_euro")
+  commissionPercent       Float?           @map("commission_percent")
   whatsappMessageTemplate String?          @map("whatsapp_message_template")
   sortOrder               Int              @default(0) @map("sort_order")
   createdAt               DateTime         @default(now()) @map("created_at")
@@ -142,8 +144,9 @@ model Sale {
   user                   User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdByUserId        String?                 @map("created_by_user_id")
   createdByUser          User?                   @relation("SaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  serviceId              String                  @map("service_id")
-  service                Service                 @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  serviceId              String?                 @map("service_id")
+  service                Service?               @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  serviceTitle           String?                 @map("service_title")
   month                  Int
   year                   Int
   amount                 Float                   @map("amount")
