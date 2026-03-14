@@ -13,6 +13,11 @@ enum Role {
   ADMIN
 }
 
+enum UserTier {
+  VISITOR
+  MEMBER
+}
+
 enum SubscriptionStatus {
   ACTIVE
   CANCELLED
@@ -31,19 +36,21 @@ enum CommissionPaymentStatus {
 }
 
 model User {
-  id                         String   @id @default(cuid())
-  email                      String   @unique
-  passwordHash               String  @map("password_hash")
-  role                       Role     @default(USER)
+  id                         String    @id @default(cuid())
+  email                      String    @unique
+  passwordHash               String    @map("password_hash")
+  role                       Role      @default(USER)
+  tier                       UserTier  @default(VISITOR) @map("tier")
+  membershipExpiresAt        DateTime? @map("membership_expires_at")
   name                       String
-  whatsapp                   String  @map("whatsapp")
+  whatsapp                   String    @map("whatsapp")
   emailVerifiedAt            DateTime? @map("email_verified_at")
-  emailVerificationCode      String?  @map("email_verification_code")
+  emailVerificationCode      String?   @map("email_verification_code")
   emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
-  resetPasswordCode          String?  @map("reset_password_code")
+  resetPasswordCode          String?   @map("reset_password_code")
   resetPasswordExpiresAt     DateTime? @map("reset_password_expires_at")
-  createdAt                  DateTime @default(now()) @map("created_at")
-  updatedAt                  DateTime @updatedAt @map("updated_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @updatedAt @map("updated_at")
 
   subscription Subscription?
   partner      Partner?

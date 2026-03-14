@@ -11,7 +11,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { Role } from '@prisma/client';
+import { Role, UserTier } from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
 
 const SALT_ROUNDS = 10;
@@ -358,7 +358,7 @@ Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
   }
 
   async validateUserById(userId: string) {
-    const user = await this.prisma.user.findUnique({
+    let user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -366,9 +366,23 @@ Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
         role: true,
         name: true,
         whatsapp: true,
+        tier: true,
+        membershipExpiresAt: true,
       },
     });
-    return user ?? null;
+    if (!user) return null;
+    if (
+      user.tier === 'MEMBER' &&
+      user.membershipExpiresAt &&
+      user.membershipExpiresAt < new Date()
+    ) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { tier: UserTier.VISITOR, membershipExpiresAt: null },
+      });
+      user = { ...user, tier: UserTier.VISITOR, membershipExpiresAt: null };
+    }
+    return user;
   }
 
   async impersonate(adminUserId: string, targetUserId: string) {
