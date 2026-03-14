@@ -353,6 +353,7 @@ export class PartnerService {
     }
     let oldLogoToDelete: string | null = null;
     let oldBackgroundToDelete: string | null = null;
+    const oldCatalogImages = partner.catalogImageUrls ?? [];
 
     if (dto.logoUrl && dto.logoUrl !== partner.logoUrl) {
       oldLogoToDelete = partner.logoUrl;
@@ -365,6 +366,14 @@ export class PartnerService {
       oldBackgroundToDelete = partner.backgroundImageUrl;
     }
 
+    const newCatalogImages =
+      dto.catalogImageUrls?.filter((url) => !!url && url.trim() !== '') ?? oldCatalogImages;
+    if (newCatalogImages.length > 5) {
+      throw new BadRequestException(
+        'O parceiro pode ter no máximo 5 imagens de catálogo.',
+      );
+    }
+
     const updated = await this.prisma.partner.update({
       where: { id: partner.id },
       data: {
@@ -373,6 +382,7 @@ export class PartnerService {
         fullDescription: dto.fullDescription ?? partner.fullDescription,
         backgroundImageUrl:
           dto.backgroundImageUrl ?? partner.backgroundImageUrl,
+        catalogImageUrls: newCatalogImages,
       },
     });
 
@@ -382,6 +392,14 @@ export class PartnerService {
 
     if (oldBackgroundToDelete) {
       await this.deleteUploadFileIfLocal(oldBackgroundToDelete);
+    }
+
+    // remove do servidor quaisquer imagens que deixaram de ser usadas
+    const toDelete = oldCatalogImages.filter(
+      (oldUrl) => !!oldUrl && !newCatalogImages.includes(oldUrl),
+    );
+    for (const url of toDelete) {
+      await this.deleteUploadFileIfLocal(url);
     }
 
     return updated;

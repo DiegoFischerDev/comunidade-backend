@@ -75,6 +75,7 @@ model Partner {
   fullDescription      String?          @map("full_description")
   rpmCommissionPercent Float?           @map("rpm_commission_percent")
   backgroundImageUrl   String?          @map("background_image_url")
+  catalogImageUrls     String[]         @default([]) @map("catalog_image_urls")
   categoryId           String?          @map("category_id")
   category             ProductCategory? @relation(fields: [categoryId], references: [id])
   createdAt            DateTime         @default(now()) @map("created_at")

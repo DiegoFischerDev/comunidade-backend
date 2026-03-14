@@ -1,4 +1,4 @@
-import { IsOptional, IsString } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsOptional, IsString } from 'class-validator';
 
 export class UpdatePartnerProfileDto {
   @IsOptional()
@@ -16,5 +16,11 @@ export class UpdatePartnerProfileDto {
   @IsOptional()
   @IsString()
   backgroundImageUrl?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  catalogImageUrls?: string[];
 }
 
