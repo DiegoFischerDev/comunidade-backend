@@ -383,6 +383,7 @@ export class PartnerService {
         backgroundImageUrl:
           dto.backgroundImageUrl ?? partner.backgroundImageUrl,
         catalogImageUrls: newCatalogImages,
+        instagram: dto.instagram !== undefined ? dto.instagram : partner.instagram,
       },
     });
 
