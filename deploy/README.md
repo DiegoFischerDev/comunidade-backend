@@ -36,7 +36,7 @@ FRONTEND_URL=https://app.seudominio.com
 NEXT_PUBLIC_API_URL=https://api.seudominio.com
 ```
 
-- Ajuste em `nginx.conf` os `server_name` para seus domínios.
+- Ajuste em `nginx.conf` os `server_name` para seus domínios
 
 ## 3. Stage (`/opt/comunidade-stage`)
 
