@@ -69,23 +69,23 @@ export class SaleController {
     });
   }
 
-  // Usuário - lookup de parceiros
+  // Usuário - lookup de parceiros (USER, PARTNER e ADMIN para ver página Cashback)
   @Get('user/lookup')
-  @Roles(Role.USER, Role.PARTNER)
+  @Roles(Role.USER, Role.PARTNER, Role.ADMIN)
   async getUserLookup() {
     return this.saleService.getUserLookup();
   }
 
   // Usuário - listar serviços de um parceiro
   @Get('user/partners/:partnerId/services')
-  @Roles(Role.USER, Role.PARTNER)
+  @Roles(Role.USER, Role.PARTNER, Role.ADMIN)
   async listServicesForPartner(@Param('partnerId') partnerId: string) {
     return this.saleService.listServicesForPartner(partnerId);
   }
 
   // Usuário - criar registro de compra
   @Post('user')
-  @Roles(Role.USER, Role.PARTNER)
+  @Roles(Role.USER, Role.PARTNER, Role.ADMIN)
   async createUserSale(
     @CurrentUser() user: { id: string },
     @Body()
@@ -109,14 +109,14 @@ export class SaleController {
 
   // Usuário - listar compras
   @Get('user')
-  @Roles(Role.USER, Role.PARTNER)
+  @Roles(Role.USER, Role.PARTNER, Role.ADMIN)
   async listUserSales(@CurrentUser() user: { id: string }) {
     return this.saleService.listUserSales(user.id);
   }
 
   // Usuário - solicitar cashback (MB Way)
   @Post('user/:id/cashback')
-  @Roles(Role.USER, Role.PARTNER)
+  @Roles(Role.USER, Role.PARTNER, Role.ADMIN)
   async requestCashback(
     @CurrentUser() user: { id: string },
     @Param('id') saleId: string,
