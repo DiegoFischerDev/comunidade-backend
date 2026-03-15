@@ -349,7 +349,96 @@ export class SaleService {
 
     return sales.map((s) => ({
       ...s,
-      cashbackEligible: s.status === 'APPROVED',
+      cashbackEligible: s.status === 'APPROVED' && !s.cashbackRequestedAt,
+    }));
+  }
+
+  async requestCashback(params: {
+    userId: string;
+    saleId: string;
+    mbwayNumber: string;
+    mbwayName: string;
+  }) {
+    const sale = await this.prisma.sale.findFirst({
+      where: {
+        id: params.saleId,
+        userId: params.userId,
+      },
+    });
+
+    if (!sale) {
+      throw new NotFoundException('Compra não encontrada.');
+    }
+
+    if (sale.status !== 'APPROVED') {
+      throw new BadRequestException(
+        'Só pode solicitar cashback em compras aprovadas.',
+      );
+    }
+
+    if (sale.cashbackRequestedAt) {
+      throw new BadRequestException('Cashback já foi solicitado para esta compra.');
+    }
+
+    const mbwayNumber = params.mbwayNumber.replace(/\s/g, '').trim();
+    const mbwayName = params.mbwayName.trim();
+    if (!mbwayNumber || !mbwayName) {
+      throw new BadRequestException('Número e nome MB Way são obrigatórios.');
+    }
+
+    return this.prisma.sale.update({
+      where: { id: params.saleId },
+      data: {
+        cashbackRequestedAt: new Date(),
+        cashbackMbwayNumber: mbwayNumber,
+        cashbackMbwayName: mbwayName,
+      },
+    });
+  }
+
+  async listAllSalesForAdmin(filters?: {
+    partnerId?: string;
+    status?: SaleStatus;
+    cashbackOnly?: boolean;
+  }) {
+    const where: {
+      partnerId?: string;
+      status?: SaleStatus;
+      cashbackRequestedAt?: { not: null };
+    } = {};
+
+    if (filters?.partnerId) where.partnerId = filters.partnerId;
+    if (filters?.status) where.status = filters.status;
+    if (filters?.cashbackOnly) where.cashbackRequestedAt = { not: null };
+
+    const sales = await this.prisma.sale.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        partner: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        service: {
+          select: {
+            title: true,
+          },
+        },
+      },
+    });
+
+    return sales.map((s) => ({
+      ...s,
+      cashbackEligible: s.status === 'APPROVED' && !s.cashbackRequestedAt,
     }));
   }
 }

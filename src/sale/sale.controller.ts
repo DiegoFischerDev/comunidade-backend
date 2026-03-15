@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { SaleService } from './sale.service';
 import { Roles } from '../auth/roles.decorator';
@@ -111,6 +112,37 @@ export class SaleController {
   @Roles(Role.USER, Role.PARTNER)
   async listUserSales(@CurrentUser() user: { id: string }) {
     return this.saleService.listUserSales(user.id);
+  }
+
+  // Usuário - solicitar cashback (MB Way)
+  @Post('user/:id/cashback')
+  @Roles(Role.USER, Role.PARTNER)
+  async requestCashback(
+    @CurrentUser() user: { id: string },
+    @Param('id') saleId: string,
+    @Body() body: { mbwayNumber: string; mbwayName: string },
+  ) {
+    return this.saleService.requestCashback({
+      userId: user.id,
+      saleId,
+      mbwayNumber: body.mbwayNumber ?? '',
+      mbwayName: body.mbwayName ?? '',
+    });
+  }
+
+  // Admin - listar todas as compras (com filtros)
+  @Get('admin')
+  @Roles(Role.ADMIN)
+  async listAllSalesForAdmin(
+    @Query('partnerId') partnerId?: string,
+    @Query('status') status?: 'PENDING_PARTNER' | 'APPROVED' | 'REJECTED',
+    @Query('cashbackOnly') cashbackOnly?: string,
+  ) {
+    return this.saleService.listAllSalesForAdmin({
+      partnerId: partnerId || undefined,
+      status,
+      cashbackOnly: cashbackOnly === 'true' || cashbackOnly === '1',
+    });
   }
 }
 
