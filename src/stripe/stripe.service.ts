@@ -128,8 +128,9 @@ export class StripeService {
     const customerId = session.customer as string;
     const subscriptionId = session.subscription as string;
 
-    const sub = await this.getClient().subscriptions.retrieve(subscriptionId);
-    const validUntil = sub.current_period_end
+    const subResponse = await this.getClient().subscriptions.retrieve(subscriptionId);
+    const sub = subResponse as unknown as Stripe.Subscription;
+    const validUntil = sub.current_period_end != null
       ? new Date(sub.current_period_end * 1000)
       : addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
 
@@ -158,7 +159,8 @@ export class StripeService {
   }
 
   private async getUserIdFromSubscription(subscriptionId: string): Promise<string | null> {
-    const sub = await this.getClient().subscriptions.retrieve(subscriptionId);
+    const subResponse = await this.getClient().subscriptions.retrieve(subscriptionId);
+    const sub = subResponse as unknown as Stripe.Subscription;
     return (sub.metadata?.userId as string) ?? null;
   }
 
@@ -202,8 +204,12 @@ export class StripeService {
     const userId = await this.getUserIdFromSubscription(subscriptionId);
     if (!userId) return;
 
-    const sub = await this.getClient().subscriptions.retrieve(subscriptionId);
-    const validUntil = sub.current_period_end ? new Date(sub.current_period_end * 1000) : addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
+    const subResponse = await this.getClient().subscriptions.retrieve(subscriptionId);
+    const sub = subResponse as unknown as Stripe.Subscription;
+    const validUntil =
+      sub.current_period_end != null
+        ? new Date(sub.current_period_end * 1000)
+        : addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
 
     await this.prisma.subscription.updateMany({
       where: { stripeSubscriptionId: subscriptionId },
