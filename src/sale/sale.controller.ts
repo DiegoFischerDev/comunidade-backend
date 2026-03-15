@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -143,6 +144,20 @@ export class SaleController {
       status,
       cashbackOnly: cashbackOnly === 'true' || cashbackOnly === '1',
     });
+  }
+
+  // Admin - marcar cashback como pago (mbway pago)
+  @Patch('admin/:id/cashback-paid')
+  @Roles(Role.ADMIN)
+  async markCashbackPaid(@Param('id') saleId: string) {
+    return this.saleService.markCashbackPaid(saleId);
+  }
+
+  // Admin - excluir registro de compra
+  @Delete('admin/:id')
+  @Roles(Role.ADMIN)
+  async deleteSaleForAdmin(@Param('id') saleId: string) {
+    return this.saleService.deleteSaleForAdmin(saleId);
   }
 }
 

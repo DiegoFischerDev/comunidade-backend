@@ -164,6 +164,7 @@ model Sale {
   cashbackRequestedAt    DateTime?               @map("cashback_requested_at")
   cashbackMbwayNumber    String?                 @map("cashback_mbway_number")
   cashbackMbwayName      String?                 @map("cashback_mbway_name")
+  cashbackPaidAt         DateTime?               @map("cashback_paid_at")
   createdAt              DateTime                @default(now()) @map("created_at")
   updatedAt              DateTime                @updatedAt @map("updated_at")
 

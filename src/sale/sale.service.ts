@@ -441,5 +441,46 @@ export class SaleService {
       cashbackEligible: s.status === 'APPROVED' && !s.cashbackRequestedAt,
     }));
   }
+
+  async markCashbackPaid(saleId: string) {
+    const sale = await this.prisma.sale.findUnique({
+      where: { id: saleId },
+    });
+
+    if (!sale) {
+      throw new NotFoundException('Compra não encontrada.');
+    }
+
+    if (!sale.cashbackRequestedAt) {
+      throw new BadRequestException(
+        'Só pode marcar como pago um cashback que foi solicitado.',
+      );
+    }
+
+    if (sale.cashbackPaidAt) {
+      throw new BadRequestException('Cashback já foi marcado como pago.');
+    }
+
+    return this.prisma.sale.update({
+      where: { id: saleId },
+      data: { cashbackPaidAt: new Date() },
+    });
+  }
+
+  async deleteSaleForAdmin(saleId: string) {
+    const sale = await this.prisma.sale.findUnique({
+      where: { id: saleId },
+    });
+
+    if (!sale) {
+      throw new NotFoundException('Compra não encontrada.');
+    }
+
+    await this.prisma.sale.delete({
+      where: { id: saleId },
+    });
+
+    return { id: saleId };
+  }
 }
 
