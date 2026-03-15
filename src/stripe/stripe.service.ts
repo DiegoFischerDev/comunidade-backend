@@ -128,10 +128,10 @@ export class StripeService {
     const customerId = session.customer as string;
     const subscriptionId = session.subscription as string;
 
-    const subResponse = await this.getClient().subscriptions.retrieve(subscriptionId);
-    const sub = subResponse as unknown as Stripe.Subscription;
-    const validUntil = sub.current_period_end != null
-      ? new Date(sub.current_period_end * 1000)
+    const sub = await this.getClient().subscriptions.retrieve(subscriptionId);
+    const currentPeriodEnd = (sub as any).current_period_end as number | undefined;
+    const validUntil = currentPeriodEnd != null
+      ? new Date(currentPeriodEnd * 1000)
       : addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
 
     await this.prisma.$transaction([
@@ -159,9 +159,9 @@ export class StripeService {
   }
 
   private async getUserIdFromSubscription(subscriptionId: string): Promise<string | null> {
-    const subResponse = await this.getClient().subscriptions.retrieve(subscriptionId);
-    const sub = subResponse as unknown as Stripe.Subscription;
-    return (sub.metadata?.userId as string) ?? null;
+    const sub = await this.getClient().subscriptions.retrieve(subscriptionId);
+    const metadata = (sub as any).metadata as Stripe.Metadata | undefined;
+    return (metadata?.userId as string) ?? null;
   }
 
   private async handleSubscriptionUpdatedOrDeleted(stripeSubscription: Stripe.Subscription): Promise<void> {
@@ -171,16 +171,16 @@ export class StripeService {
     const userId = sub?.userId ?? (stripeSubscription.metadata?.userId as string | undefined);
     if (!userId) return;
 
+    const statusRaw = (stripeSubscription as any).status as string | undefined;
     const status =
-      stripeSubscription.status === 'active' ? SubscriptionStatus.ACTIVE
-      : stripeSubscription.status === 'canceled' || stripeSubscription.status === 'unpaid'
+      statusRaw === 'active' ? SubscriptionStatus.ACTIVE
+      : statusRaw === 'canceled' || statusRaw === 'unpaid'
         ? SubscriptionStatus.CANCELLED
         : SubscriptionStatus.EXPIRED;
 
+    const currentPeriodEnd = (stripeSubscription as any).current_period_end as number | undefined;
     const validUntil =
-      stripeSubscription.current_period_end != null
-        ? new Date(stripeSubscription.current_period_end * 1000)
-        : new Date(0);
+      currentPeriodEnd != null ? new Date(currentPeriodEnd * 1000) : new Date(0);
 
     await this.prisma.subscription.updateMany({
       where: { stripeSubscriptionId: stripeSubscription.id },
@@ -198,17 +198,21 @@ export class StripeService {
   }
 
   private async handleInvoicePaid(invoice: Stripe.Invoice): Promise<void> {
-    const subscriptionId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
+    const inv: any = invoice as any;
+    const subscriptionId =
+      typeof inv.subscription === 'string'
+        ? (inv.subscription as string)
+        : (inv.subscription?.id as string | undefined);
     if (!subscriptionId) return;
 
     const userId = await this.getUserIdFromSubscription(subscriptionId);
     if (!userId) return;
 
-    const subResponse = await this.getClient().subscriptions.retrieve(subscriptionId);
-    const sub = subResponse as unknown as Stripe.Subscription;
+    const sub = await this.getClient().subscriptions.retrieve(subscriptionId);
+    const currentPeriodEnd = (sub as any).current_period_end as number | undefined;
     const validUntil =
-      sub.current_period_end != null
-        ? new Date(sub.current_period_end * 1000)
+      currentPeriodEnd != null
+        ? new Date(currentPeriodEnd * 1000)
         : addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
 
     await this.prisma.subscription.updateMany({
