@@ -10,9 +10,10 @@ import { PartnerModule } from './partner/partner.module';
 import { SaleModule } from './sale/sale.module';
 import { UsersModule } from './users/users.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { StripeModule } from './stripe/stripe.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule, UploadsModule, SaleModule],
+  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule, UploadsModule, SaleModule, StripeModule],
   controllers: [AppController],
   providers: [
     AppService,
