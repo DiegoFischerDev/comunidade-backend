@@ -3,6 +3,7 @@ import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionStatus } from '@prisma/client';
 import { UserTier } from '@prisma/client';
+import { sendEmailBase } from '../email/resend.client';
 
 const MEMBERSHIP_DURATION_YEARS = 1;
 
@@ -119,14 +120,17 @@ export class StripeService {
   }
 
   private async handleCheckoutCompleted(session: Stripe.Checkout.Session): Promise<void> {
+    const sess = session as any;
+    const subIdFromSession = resolveSubscriptionId(session.subscription);
     const userId =
-      (session.client_reference_id as string) ||
-      (session.subscription ? await this.getUserIdFromSubscription(session.subscription as string) : null) ||
-      (session.metadata?.userId as string);
+      (sess.client_reference_id as string) ||
+      (sess.metadata?.userId as string) ||
+      (subIdFromSession ? await this.getUserIdFromSubscription(subIdFromSession) : null);
     if (!userId) return;
 
-    const customerId = session.customer as string;
-    const subscriptionId = session.subscription as string;
+    const customerId = typeof sess.customer === 'string' ? sess.customer : sess.customer?.id;
+    const subscriptionId = resolveSubscriptionId(session.subscription);
+    if (!customerId || !subscriptionId) return;
 
     const sub = await this.getClient().subscriptions.retrieve(subscriptionId);
     const currentPeriodEnd = (sub as any).current_period_end as number | undefined;
@@ -156,6 +160,40 @@ export class StripeService {
         data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
       }),
     ]);
+
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true, email: true },
+      });
+      if (user?.email) {
+        const frontendBase =
+          process.env.FRONTEND_URL?.replace(/\/$/, '') ||
+          'https://comunidade.rafaapelomundo.com';
+        const heroUrl = `${frontendBase}/comunidade_bg.svg`;
+        await sendEmailBase({
+          to: user.email,
+          subject: 'Bem-vindo à Comunidade RPM – já és membro',
+          text: `Olá ${user.name},\n\nObrigado por te juntares à Comunidade RPM. O teu pagamento foi confirmado e agora tens acesso a todos os benefícios durante um ano.\n\nAté já!\nA equipa Comunidade RPM`,
+          html: `
+            <div style="max-width:640px;margin:0 auto;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
+              <div style="width:100%;height:180px;overflow:hidden;">
+                <img src="${heroUrl}" alt="Comunidade RPM" style="width:100%;height:100%;object-fit:cover;display:block;" />
+              </div>
+              <div style="padding:24px 20px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827;">
+                <p style="font-size:16px;margin:0 0 12px;">Olá <strong>${user.name}</strong>,</p>
+                <p style="margin:0 0 12px;">Obrigado por te juntares à <strong>Comunidade RPM</strong>. O teu pagamento foi confirmado e agora tens acesso a todos os benefícios durante um ano.</p>
+                <p style="margin:0 0 8px;">Sempre que precisares de ajuda, é só entrar no teu dashboard e falar connosco.</p>
+                <p style="margin:16px 0 0;">Até já!</p>
+                <p style="margin:4px 0 0;">A equipa Comunidade RPM</p>
+              </div>
+            </div>
+          `,
+        });
+      }
+    } catch {
+      // Não falhar o webhook se o email falhar
+    }
   }
 
   private async getUserIdFromSubscription(subscriptionId: string): Promise<string | null> {
@@ -224,6 +262,12 @@ export class StripeService {
       data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
     });
   }
+}
+
+function resolveSubscriptionId(sub: string | Stripe.Subscription | null | undefined): string | null {
+  if (!sub) return null;
+  if (typeof sub === 'string') return sub;
+  return (sub as any)?.id ?? null;
 }
 
 function addYears(date: Date, years: number): Date {
