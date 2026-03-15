@@ -28,7 +28,7 @@ export class StripeService {
   private get eurAmountCents(): number {
     const raw = process.env.STRIPE_AMOUNT_EUR_CENTS;
     const n = raw ? parseInt(raw, 10) : 2300;
-    if (!Number.isFinite(n) || n < 100) return 2300;
+    if (!Number.isFinite(n) || n < 1) return 2300;
     return n;
   }
 
@@ -36,8 +36,16 @@ export class StripeService {
   private get pixAmountCentavos(): number {
     const raw = process.env.STRIPE_PIX_AMOUNT_BRL;
     const n = raw ? parseInt(raw, 10) : 2300;
-    if (!Number.isFinite(n) || n < 100) return 2300;
+    if (!Number.isFinite(n) || n < 1) return 2300;
     return n;
+  }
+
+  /** Valores atuais da anuidade (para exibir no frontend). */
+  getMembershipAmounts(): { eurCents: number; pixCentavos: number } {
+    return {
+      eurCents: this.eurAmountCents,
+      pixCentavos: this.pixAmountCentavos,
+    };
   }
 
   /**

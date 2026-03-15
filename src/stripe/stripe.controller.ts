@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Req, Headers, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Req, Headers, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { StripeService } from './stripe.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -9,6 +9,12 @@ import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 @Controller('stripe')
 export class StripeController {
   constructor(private readonly stripeService: StripeService) {}
+
+  @Public()
+  @Get('membership-amounts')
+  getMembershipAmounts() {
+    return this.stripeService.getMembershipAmounts();
+  }
 
   @Post('create-checkout-session')
   @UseGuards(JwtAuthGuard)
