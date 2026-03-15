@@ -24,52 +24,167 @@ export class StripeService {
     return this.stripe;
   }
 
-  /** ID do preço da anuidade (criado no Stripe Dashboard) */
-  private get priceId(): string {
-    const id = process.env.STRIPE_PRICE_ID_ANNUAL;
-    if (!id) {
-      throw new BadRequestException('Configuração de preço da anuidade não definida.');
-    }
-    return id;
+  /** Valor em cêntimos para pagamentos em EUR (cartão, MB WAY). Ex.: 2300 = 23,00 € */
+  private get eurAmountCents(): number {
+    const raw = process.env.STRIPE_AMOUNT_EUR_CENTS;
+    const n = raw ? parseInt(raw, 10) : 2300;
+    if (!Number.isFinite(n) || n < 100) return 2300;
+    return n;
+  }
+
+  /** Valor em centavos para Pix (BRL). Ex.: 2300 = R$ 23,00 */
+  private get pixAmountCentavos(): number {
+    const raw = process.env.STRIPE_PIX_AMOUNT_BRL;
+    const n = raw ? parseInt(raw, 10) : 2300;
+    if (!Number.isFinite(n) || n < 100) return 2300;
+    return n;
   }
 
   /**
-   * Cria uma sessão de Checkout para assinatura anual.
-   * Se o utilizador já tiver stripeCustomerId, reutiliza; senão, o Stripe cria o cliente no checkout.
+   * Cria uma sessão de Checkout para pagamento único com cartão (EUR).
+   * A anuidade de 1 ano é aplicada no backend quando o webhook confirma o pagamento.
    */
   async createCheckoutSession(userId: string, userEmail: string, successUrl: string, cancelUrl: string): Promise<{ url: string }> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { subscription: true },
     });
     if (!user) {
       throw new BadRequestException('Utilizador não encontrado.');
     }
 
-    const customerId = user.subscription?.stripeCustomerId ?? undefined;
     const stripe = this.getClient();
+    const amount = this.eurAmountCents;
 
     const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer_email: customerId ? undefined : userEmail,
-      customer: customerId || undefined,
+      mode: 'payment',
+      customer_email: userEmail,
       line_items: [
         {
-          price: this.priceId,
+          price_data: {
+            currency: 'eur',
+            unit_amount: amount,
+            product_data: {
+              name: 'Anuidade Comunidade RPM',
+              description: 'Acesso à comunidade por 1 ano (pagamento único)',
+            },
+          },
           quantity: 1,
         },
       ],
+      payment_method_types: ['card'],
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: userId,
-      subscription_data: {
-        metadata: { userId },
-      },
+      metadata: { userId },
       allow_promotion_codes: true,
     });
 
     if (!session.url) {
       throw new BadRequestException('Não foi possível criar a sessão de pagamento.');
+    }
+
+    return { url: session.url };
+  }
+
+  /**
+   * Cria uma sessão de Checkout apenas para MB WAY (pagamento único em EUR).
+   */
+  async createMbWayCheckoutSession(
+    userId: string,
+    userEmail: string,
+    successUrl: string,
+    cancelUrl: string,
+  ): Promise<{ url: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+    if (!user) {
+      throw new BadRequestException('Utilizador não encontrado.');
+    }
+
+    const stripe = this.getClient();
+    const amount = this.eurAmountCents;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: userEmail,
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            unit_amount: amount,
+            product_data: {
+              name: 'Anuidade Comunidade RPM',
+              description: 'Acesso à comunidade por 1 ano (pagamento único)',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['mb_way'],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: userId,
+      metadata: { userId },
+    });
+
+    if (!session.url) {
+      throw new BadRequestException('Não foi possível criar a sessão de pagamento MB WAY.');
+    }
+
+    return { url: session.url };
+  }
+
+  /**
+   * Cria uma sessão de Checkout apenas para Pix (pagamento único em BRL).
+   * O cliente é redirecionado para o Stripe, escolhe Pix e vê o QR code na página da Stripe.
+   */
+  async createPixCheckoutSession(
+    userId: string,
+    userEmail: string,
+    successUrl: string,
+    cancelUrl: string,
+  ): Promise<{ url: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+    if (!user) {
+      throw new BadRequestException('Utilizador não encontrado.');
+    }
+
+    const stripe = this.getClient();
+    const amount = this.pixAmountCentavos;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: userEmail,
+      line_items: [
+        {
+          price_data: {
+            currency: 'brl',
+            unit_amount: amount,
+            product_data: {
+              name: 'Anuidade Comunidade RPM',
+              description: 'Acesso à comunidade por 1 ano (pagamento único)',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['pix'],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: userId,
+      metadata: { userId },
+      payment_method_options: {
+        pix: {
+          expires_after_seconds: 30 * 60, // 30 minutos
+        },
+      },
+    });
+
+    if (!session.url) {
+      throw new BadRequestException('Não foi possível criar a sessão de pagamento Pix.');
     }
 
     return { url: session.url };
@@ -102,6 +217,11 @@ export class StripeService {
         await this.handleCheckoutCompleted(session);
         break;
       }
+      case 'checkout.session.async_payment_succeeded': {
+        const session = event.data.object as Stripe.Checkout.Session;
+        await this.handleCheckoutCompleted(session);
+        break;
+      }
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
         const subscription = event.data.object as Stripe.Subscription;
@@ -121,6 +241,8 @@ export class StripeService {
 
   private async handleCheckoutCompleted(session: Stripe.Checkout.Session): Promise<void> {
     const sess = session as any;
+    if (sess.payment_status !== 'paid') return;
+
     const subIdFromSession = resolveSubscriptionId(session.subscription);
     const userId =
       (sess.client_reference_id as string) ||
@@ -130,27 +252,21 @@ export class StripeService {
 
     const customerId = typeof sess.customer === 'string' ? sess.customer : sess.customer?.id;
     const subscriptionId = resolveSubscriptionId(session.subscription);
-    if (!customerId || !subscriptionId) return;
-
-    const sub = await this.getClient().subscriptions.retrieve(subscriptionId);
-    const currentPeriodEnd = (sub as any).current_period_end as number | undefined;
-    const validUntil = currentPeriodEnd != null
-      ? new Date(currentPeriodEnd * 1000)
-      : addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
+    const validUntil = addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
 
     await this.prisma.$transaction([
       this.prisma.subscription.upsert({
         where: { userId },
         create: {
           userId,
-          stripeCustomerId: customerId,
-          stripeSubscriptionId: subscriptionId,
+          stripeCustomerId: customerId ?? null,
+          stripeSubscriptionId: subscriptionId ?? null,
           status: SubscriptionStatus.ACTIVE,
           validUntil,
         },
         update: {
-          stripeCustomerId: customerId,
-          stripeSubscriptionId: subscriptionId,
+          ...(customerId && { stripeCustomerId: customerId }),
+          ...(subscriptionId && { stripeSubscriptionId: subscriptionId }),
           status: SubscriptionStatus.ACTIVE,
           validUntil,
         },

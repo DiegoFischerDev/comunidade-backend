@@ -24,6 +24,34 @@ export class StripeController {
     );
   }
 
+  @Post('create-mbway-checkout-session')
+  @UseGuards(JwtAuthGuard)
+  async createMbWayCheckoutSession(
+    @CurrentUser() user: { id: string; email: string },
+    @Body() dto: CreateCheckoutSessionDto,
+  ) {
+    return this.stripeService.createMbWayCheckoutSession(
+      user.id,
+      user.email,
+      dto.successUrl,
+      dto.cancelUrl,
+    );
+  }
+
+  @Post('create-pix-checkout-session')
+  @UseGuards(JwtAuthGuard)
+  async createPixCheckoutSession(
+    @CurrentUser() user: { id: string; email: string },
+    @Body() dto: CreateCheckoutSessionDto,
+  ) {
+    return this.stripeService.createPixCheckoutSession(
+      user.id,
+      user.email,
+      dto.successUrl,
+      dto.cancelUrl,
+    );
+  }
+
   /**
    * Webhook Stripe — não usar JSON body parser; o corpo deve ser raw para verificação da assinatura.
    * O main.ts configura express.raw() para esta rota.
