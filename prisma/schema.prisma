@@ -161,6 +161,8 @@ model Sale {
   commissionEuro         Float                   @map("commission_euro")
   status                 SaleStatus              @default(PENDING_PARTNER)
   commissionPaymentStatus CommissionPaymentStatus @default(PENDING) @map("commission_payment_status")
+  /// Valor efetivamente pago pelo parceiro de comissão, em euros
+  commissionPaidEuro     Float?                  @map("commission_paid_euro")
   cashbackRequestedAt    DateTime?               @map("cashback_requested_at")
   cashbackMbwayNumber    String?                 @map("cashback_mbway_number")
   cashbackMbwayName      String?                 @map("cashback_mbway_name")

@@ -6,10 +6,14 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type { SaleStatus } from '@prisma/client';
+import { StripeService } from '../stripe/stripe.service';
 
 @Injectable()
 export class SaleService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly stripeService: StripeService,
+  ) {}
 
   /**
    * Converte a string de comissão (ex. "10%" ou "5 €") no valor em euros
@@ -178,6 +182,74 @@ export class SaleService {
       approved: sales.filter((s) => s.status === 'APPROVED'),
       rejected: sales.filter((s) => s.status === 'REJECTED'),
     };
+  }
+
+  async createPartnerCommissionPayment(params: {
+    userId: string;
+    saleId: string;
+    amountEuro: number;
+    successUrl: string;
+    cancelUrl: string;
+  }) {
+    const { userId, saleId, amountEuro, successUrl, cancelUrl } = params;
+
+    if (!amountEuro || Number.isNaN(amountEuro) || amountEuro <= 0) {
+      throw new BadRequestException('Valor da comissão inválido.');
+    }
+
+    const partner = await this.getPartnerForUserOrThrow(userId);
+
+    const sale = await this.prisma.sale.findFirst({
+      where: {
+        id: saleId,
+        partnerId: partner.id,
+      },
+      include: {
+        service: true,
+        user: true,
+        partner: {
+          include: {
+            user: true,
+          },
+        },
+      },
+    });
+
+    if (!sale) {
+      throw new NotFoundException('Venda não encontrada.');
+    }
+
+    if (sale.status !== 'APPROVED') {
+      throw new BadRequestException(
+        'Só é possível pagar comissão de vendas aprovadas.',
+      );
+    }
+
+    if (sale.commissionPaymentStatus === 'PAID') {
+      throw new BadRequestException('Comissão já foi marcada como paga.');
+    }
+
+    const descriptionParts: string[] = [];
+    const serviceTitle = sale.service?.title ?? sale.serviceTitle;
+    if (serviceTitle) descriptionParts.push(serviceTitle);
+    descriptionParts.push(
+      `Ref. ${sale.month.toString().padStart(2, '0')}/${sale.year}`,
+    );
+    const description = descriptionParts.join(' – ');
+
+    const amountCents = Math.round(amountEuro * 100);
+
+    const partnerEmail = sale.partner.user.email;
+
+    return this.stripeService.createMbWayCommissionCheckoutSession({
+      partnerUserId: userId,
+      partnerEmail,
+      saleId: sale.id,
+      amountCents,
+      description,
+      successUrl,
+      cancelUrl,
+    });
   }
 
   async updatePartnerSaleStatus(params: {

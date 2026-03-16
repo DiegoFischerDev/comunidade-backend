@@ -55,6 +55,28 @@ export class SaleController {
     return this.saleService.listPartnerSales(user.id);
   }
 
+  // Parceiro - iniciar pagamento de comissão (Stripe MB WAY)
+  @Post('partner/:id/pay-commission')
+  @Roles(Role.PARTNER)
+  async createPartnerCommissionPayment(
+    @CurrentUser() user: { id: string; email: string },
+    @Param('id') saleId: string,
+    @Body()
+    body: {
+      amountEuro: number;
+      successUrl: string;
+      cancelUrl: string;
+    },
+  ) {
+    return this.saleService.createPartnerCommissionPayment({
+      userId: user.id,
+      saleId,
+      amountEuro: body.amountEuro,
+      successUrl: body.successUrl,
+      cancelUrl: body.cancelUrl,
+    });
+  }
+
   // Parceiro - aprovar / recusar venda
   @Patch('partner/:id/status')
   @Roles(Role.PARTNER)
