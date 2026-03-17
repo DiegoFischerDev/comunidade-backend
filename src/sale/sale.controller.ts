@@ -153,6 +153,21 @@ export class SaleController {
     });
   }
 
+  // Usuário - enviar comprovativo de pagamento (print)
+  @Post('user/:id/payment-proof')
+  @Roles(Role.USER, Role.PARTNER, Role.ADMIN)
+  async addPaymentProof(
+    @CurrentUser() user: { id: string },
+    @Param('id') saleId: string,
+    @Body() body: { paymentProofUrl: string },
+  ) {
+    return this.saleService.addPaymentProofForUser({
+      userId: user.id,
+      saleId,
+      paymentProofUrl: body.paymentProofUrl,
+    });
+  }
+
   // Admin - listar todas as compras (com filtros)
   @Get('admin')
   @Roles(Role.ADMIN)

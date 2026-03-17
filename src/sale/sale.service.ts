@@ -7,6 +7,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import type { SaleStatus } from '@prisma/client';
 import { StripeService } from '../stripe/stripe.service';
+import { join } from 'path';
+import { unlink } from 'fs/promises';
 
 @Injectable()
 export class SaleService {
@@ -40,6 +42,36 @@ export class SaleService {
     }
 
     return partner;
+  }
+
+  private async deleteUploadFileIfLocal(url?: string | null) {
+    if (!url) return;
+
+    let pathname = url;
+    if (pathname.startsWith('http://') || pathname.startsWith('https://')) {
+      try {
+        pathname = new URL(pathname).pathname;
+      } catch {
+        return;
+      }
+    }
+
+    if (!pathname.startsWith('/uploads/')) {
+      return;
+    }
+
+    const filename = pathname.replace('/uploads/', '');
+    if (!filename) return;
+
+    const filePath = join(process.cwd(), 'uploads', filename);
+
+    try {
+      await unlink(filePath);
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') {
+        // ignoramos outros erros para não quebrar o fluxo de negócio
+      }
+    }
   }
 
   async getPartnerLookup(userId: string) {
@@ -466,6 +498,39 @@ export class SaleService {
         cashbackMbwayName: mbwayName,
       },
     });
+  }
+
+  async addPaymentProofForUser(params: {
+    userId: string;
+    saleId: string;
+    paymentProofUrl: string;
+  }) {
+    const sale = await this.prisma.sale.findFirst({
+      where: {
+        id: params.saleId,
+        userId: params.userId,
+      },
+    });
+
+    if (!sale) {
+      throw new NotFoundException('Compra não encontrada.');
+    }
+
+    const oldUrl = sale.paymentProofUrl;
+
+    const updated = await this.prisma.sale.update({
+      where: { id: sale.id },
+      data: {
+        status: 'PENDING_PARTNER',
+        paymentProofUrl: params.paymentProofUrl,
+      },
+    });
+
+    if (oldUrl && oldUrl !== params.paymentProofUrl) {
+      await this.deleteUploadFileIfLocal(oldUrl);
+    }
+
+    return updated;
   }
 
   async listAllSalesForAdmin(filters?: {
