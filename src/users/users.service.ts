@@ -4,8 +4,9 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Role } from '@prisma/client';
+import { Role, UserTier } from '@prisma/client';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateUserTierDto } from './dto/update-user-tier.dto';
 
 @Injectable()
 export class UsersService {
@@ -20,6 +21,8 @@ export class UsersService {
         email: true,
         whatsapp: true,
         role: true,
+        tier: true,
+        membershipExpiresAt: true,
         createdAt: true,
       },
     });
@@ -59,13 +62,42 @@ export class UsersService {
         email: true,
         whatsapp: true,
         role: true,
+        tier: true,
+        membershipExpiresAt: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  async updateTier(id: string, dto: UpdateUserTierDto) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+    const oneYearFromNow = new Date();
+    oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        tier: dto.tier as UserTier,
+        membershipExpiresAt:
+          dto.tier === 'MEMBER' ? oneYearFromNow : null,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        whatsapp: true,
+        role: true,
+        tier: true,
+        membershipExpiresAt: true,
         createdAt: true,
       },
     });
   }
 
   async updateRole(id: string, role: Role) {
-    const user = await this.prisma.user.update({
+    return this.prisma.user.update({
       where: { id },
       data: { role },
       select: {
@@ -74,10 +106,11 @@ export class UsersService {
         email: true,
         whatsapp: true,
         role: true,
+        tier: true,
+        membershipExpiresAt: true,
         createdAt: true,
       },
     });
-    return user;
   }
 
   async remove(id: string) {

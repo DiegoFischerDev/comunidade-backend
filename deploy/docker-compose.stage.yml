@@ -26,6 +26,10 @@ services:
       DATABASE_URL: postgresql://comunidade:${POSTGRES_PASSWORD}@postgres:5432/comunidade?schema=public
       JWT_SECRET: ${JWT_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      STRIPE_AMOUNT_EUR_CENTS: ${STRIPE_AMOUNT_EUR_CENTS}
+      STRIPE_PIX_AMOUNT_BRL: ${STRIPE_PIX_AMOUNT_BRL}
     depends_on:
       postgres:
         condition: service_healthy

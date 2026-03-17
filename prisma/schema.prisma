@@ -13,25 +13,50 @@ enum Role {
   ADMIN
 }
 
+enum UserTier {
+  VISITOR
+  MEMBER
+}
+
 enum SubscriptionStatus {
   ACTIVE
   CANCELLED
   EXPIRED
 }
 
+enum SaleStatus {
+  PENDING_PARTNER
+  APPROVED
+  REJECTED
+}
+
+enum CommissionPaymentStatus {
+  PENDING
+  PAID
+}
+
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String  @map("password_hash")
-  role         Role     @default(USER)
-  name         String
-  whatsapp     String  @map("whatsapp")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                         String    @id @default(cuid())
+  email                      String    @unique
+  passwordHash               String    @map("password_hash")
+  role                       Role      @default(USER)
+  tier                       UserTier  @default(VISITOR) @map("tier")
+  membershipExpiresAt        DateTime? @map("membership_expires_at")
+  name                       String
+  whatsapp                   String    @map("whatsapp")
+  emailVerifiedAt            DateTime? @map("email_verified_at")
+  emailVerificationCode      String?   @map("email_verification_code")
+  emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
+  resetPasswordCode          String?   @map("reset_password_code")
+  resetPasswordExpiresAt     DateTime? @map("reset_password_expires_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @updatedAt @map("updated_at")
 
   subscription Subscription?
   partner      Partner?
   leads        Lead[]
+  sales        Sale[]
+  salesCreated Sale[]   @relation("SaleCreatedBy")
 }
 
 model Subscription {
@@ -57,6 +82,8 @@ model Partner {
   fullDescription      String?          @map("full_description")
   rpmCommissionPercent Float?           @map("rpm_commission_percent")
   backgroundImageUrl   String?          @map("background_image_url")
+  catalogImageUrls     String[]         @default([]) @map("catalog_image_urls")
+  instagram            String?          @map("instagram")
   categoryId           String?          @map("category_id")
   category             ProductCategory? @relation(fields: [categoryId], references: [id])
   createdAt            DateTime         @default(now()) @map("created_at")
@@ -64,6 +91,7 @@ model Partner {
 
   services Service[]
   leads    Lead[]
+  sales    Sale[]
 }
 
 model ProductCategory {
@@ -90,11 +118,14 @@ model Service {
   description             String?
   imageUrl                String?          @map("image_url")
   price                   String?
-  commissionEuro          Float?           @map("commission_euro")
+  priceOnRequest          Boolean          @default(false) @map("price_on_request")
+  commission              String?          @map("commission")
   whatsappMessageTemplate String?          @map("whatsapp_message_template")
   sortOrder               Int              @default(0) @map("sort_order")
   createdAt               DateTime         @default(now()) @map("created_at")
   updatedAt               DateTime         @updatedAt @map("updated_at")
+
+  sales Sale[]
 
   @@index([categoryId])
   @@index([partnerId])
@@ -111,4 +142,36 @@ model Lead {
   @@index([partnerId])
   @@index([userId])
   @@unique([partnerId, userId], name: "lead_partner_user_unique")
+}
+
+model Sale {
+  id                     String                  @id @default(cuid())
+  partnerId              String                  @map("partner_id")
+  partner                Partner                 @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  userId                 String?                 @map("user_id")
+  user                   User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdByUserId        String?                 @map("created_by_user_id")
+  createdByUser          User?                   @relation("SaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  serviceId              String?                 @map("service_id")
+  service                Service?               @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  serviceTitle           String?                 @map("service_title")
+  month                  Int
+  year                   Int
+  amount                 Float                   @map("amount")
+  commissionEuro         Float                   @map("commission_euro")
+  status                 SaleStatus              @default(PENDING_PARTNER)
+  commissionPaymentStatus CommissionPaymentStatus @default(PENDING) @map("commission_payment_status")
+  /// Valor efetivamente pago pelo parceiro de comissão, em euros
+  commissionPaidEuro     Float?                  @map("commission_paid_euro")
+  cashbackRequestedAt    DateTime?               @map("cashback_requested_at")
+  cashbackMbwayNumber    String?                 @map("cashback_mbway_number")
+  cashbackMbwayName      String?                 @map("cashback_mbway_name")
+  cashbackPaidAt         DateTime?               @map("cashback_paid_at")
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+
+  @@index([partnerId])
+  @@index([userId])
+  @@index([status])
+  @@index([commissionPaymentStatus])
 }

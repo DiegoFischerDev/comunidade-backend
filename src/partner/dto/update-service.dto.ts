@@ -1,4 +1,5 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, ValidateIf } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateServiceDto {
   @IsOptional()
@@ -10,6 +11,12 @@ export class UpdateServiceDto {
   description?: string;
 
   @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  priceOnRequest?: boolean;
+
+  @IsOptional()
+  @ValidateIf((o) => !o.priceOnRequest)
   @IsString()
   price?: string;
 }

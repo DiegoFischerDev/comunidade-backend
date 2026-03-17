@@ -18,12 +18,48 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { Role } from '@prisma/client';
+import { unlink } from 'fs/promises';
+import { join } from 'path';
 
 const SALT_ROUNDS = 10;
 
 @Injectable()
 export class PartnerService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private async deleteUploadFileIfLocal(url?: string | null) {
+    if (!url) return;
+
+    let pathname = url;
+    if (pathname.startsWith('http://') || pathname.startsWith('https://')) {
+      try {
+        pathname = new URL(pathname).pathname;
+      } catch {
+        return;
+      }
+    }
+
+    if (!pathname.startsWith('/uploads/')) {
+      return;
+    }
+
+    const filename = pathname.replace('/uploads/', '');
+    if (!filename) return;
+
+    const filePath = join(process.cwd(), 'uploads', filename);
+
+    try {
+      await unlink(filePath);
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') {
+        // Intencionalmente ignoramos outros erros de deleção para não quebrar o fluxo de negócio
+      }
+    }
+  }
+
+  private normalizeWhatsapp(value: string): string {
+    return value.replace(/\s+/g, '');
+  }
 
   listPartners() {
     return this.prisma.partner.findMany({
@@ -67,7 +103,7 @@ export class PartnerService {
           passwordHash,
           role: Role.PARTNER,
           name: dto.name,
-          whatsapp: dto.whatsapp,
+          whatsapp: this.normalizeWhatsapp(dto.whatsapp),
         },
       });
 
@@ -75,7 +111,7 @@ export class PartnerService {
         data: {
           userId: user.id,
           name: dto.name,
-          whatsapp: dto.whatsapp,
+          whatsapp: this.normalizeWhatsapp(dto.whatsapp),
           logoUrl: dto.logoUrl,
           shortDescription: dto.shortDescription,
           fullDescription: dto.fullDescription,
@@ -197,7 +233,8 @@ export class PartnerService {
             title: true,
             description: true,
             price: true,
-            commissionEuro: true,
+            priceOnRequest: true,
+            commission: true,
           },
         },
       },
@@ -240,8 +277,16 @@ export class PartnerService {
       throw new NotFoundException('Categoria não encontrada.');
     }
 
+    let oldBackgroundToDelete: string | null = null;
+    if (
+      dto.backgroundImageUrl &&
+      dto.backgroundImageUrl !== existing.backgroundImageUrl
+    ) {
+      oldBackgroundToDelete = existing.backgroundImageUrl;
+    }
+
     try {
-      return await this.prisma.productCategory.update({
+      const updated = await this.prisma.productCategory.update({
         where: { id },
         data: {
           slug: dto.slug ?? existing.slug,
@@ -252,6 +297,12 @@ export class PartnerService {
           sortOrder: dto.sortOrder ?? existing.sortOrder,
         },
       });
+
+      if (oldBackgroundToDelete) {
+        await this.deleteUploadFileIfLocal(oldBackgroundToDelete);
+      }
+
+      return updated;
     } catch (error: any) {
       if (error.code === 'P2002') {
         throw new ConflictException('Já existe uma categoria com este slug.');
@@ -300,17 +351,77 @@ export class PartnerService {
     if (!partner) {
       throw new NotFoundException('Parceiro não encontrado para este usuário.');
     }
+    let oldLogoToDelete: string | null = null;
+    let oldBackgroundToDelete: string | null = null;
+    const oldCatalogImages = partner.catalogImageUrls ?? [];
 
-    return this.prisma.partner.update({
-      where: { id: partner.id },
-      data: {
-        logoUrl: dto.logoUrl ?? partner.logoUrl,
-        shortDescription: dto.shortDescription ?? partner.shortDescription,
-        fullDescription: dto.fullDescription ?? partner.fullDescription,
-        backgroundImageUrl:
-          dto.backgroundImageUrl ?? partner.backgroundImageUrl,
-      },
+    if (dto.logoUrl && dto.logoUrl !== partner.logoUrl) {
+      oldLogoToDelete = partner.logoUrl;
+    }
+
+    if (
+      dto.backgroundImageUrl &&
+      dto.backgroundImageUrl !== partner.backgroundImageUrl
+    ) {
+      oldBackgroundToDelete = partner.backgroundImageUrl;
+    }
+
+    const newCatalogImages =
+      dto.catalogImageUrls?.filter((url) => !!url && url.trim() !== '') ?? oldCatalogImages;
+    if (newCatalogImages.length > 5) {
+      throw new BadRequestException(
+        'O parceiro pode ter no máximo 5 imagens de catálogo.',
+      );
+    }
+
+    // Se o parceiro alterar o WhatsApp no perfil, sincronizamos tanto no Partner
+    // quanto no User associado.
+    const whatsappToSet =
+      dto.whatsapp !== undefined && dto.whatsapp !== null
+        ? this.normalizeWhatsapp(dto.whatsapp)
+        : undefined;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (whatsappToSet !== undefined) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { whatsapp: whatsappToSet },
+        });
+      }
+
+      return tx.partner.update({
+        where: { id: partner.id },
+        data: {
+          logoUrl: dto.logoUrl ?? partner.logoUrl,
+          shortDescription: dto.shortDescription ?? partner.shortDescription,
+          fullDescription: dto.fullDescription ?? partner.fullDescription,
+          backgroundImageUrl:
+            dto.backgroundImageUrl ?? partner.backgroundImageUrl,
+          catalogImageUrls: newCatalogImages,
+          instagram:
+            dto.instagram !== undefined ? dto.instagram : partner.instagram,
+          ...(whatsappToSet !== undefined && { whatsapp: whatsappToSet }),
+        },
+      });
     });
+
+    if (oldLogoToDelete) {
+      await this.deleteUploadFileIfLocal(oldLogoToDelete);
+    }
+
+    if (oldBackgroundToDelete) {
+      await this.deleteUploadFileIfLocal(oldBackgroundToDelete);
+    }
+
+    // remove do servidor quaisquer imagens que deixaram de ser usadas
+    const toDelete = oldCatalogImages.filter(
+      (oldUrl) => !!oldUrl && !newCatalogImages.includes(oldUrl),
+    );
+    for (const url of toDelete) {
+      await this.deleteUploadFileIfLocal(url);
+    }
+
+    return updated;
   }
 
   private async getPartnerForUserOrThrow(userId: string) {
@@ -336,7 +447,8 @@ export class PartnerService {
         title: true,
         description: true,
         price: true,
-        commissionEuro: true,
+        priceOnRequest: true,
+        commission: true,
         createdAt: true,
       },
     });
@@ -345,13 +457,23 @@ export class PartnerService {
   async createMyService(userId: string, dto: CreateServiceDto) {
     const partner = await this.getPartnerForUserOrThrow(userId);
 
+    if (!dto.description?.trim()) {
+      throw new BadRequestException('A descrição é obrigatória.');
+    }
+    const priceOnRequest = dto.priceOnRequest ?? false;
+    if (!priceOnRequest && (!dto.price || dto.price.trim() === '')) {
+      throw new BadRequestException(
+        'Valor é obrigatório quando o serviço não é "sob consulta".',
+      );
+    }
+
     return this.prisma.service.create({
       data: {
         partnerId: partner.id,
         title: dto.title,
-        description: dto.description,
-        price: dto.price,
-        commissionEuro: dto.commissionEuro,
+        description: dto.description?.trim() ?? '',
+        price: priceOnRequest ? null : (dto.price?.trim() || null),
+        priceOnRequest,
       },
     });
   }
@@ -367,12 +489,30 @@ export class PartnerService {
       throw new NotFoundException('Serviço não encontrado.');
     }
 
+    if (dto.description !== undefined && !dto.description.trim()) {
+      throw new BadRequestException('A descrição é obrigatória.');
+    }
+    const priceOnRequest = dto.priceOnRequest ?? service.priceOnRequest;
+    const title = dto.title ?? service.title;
+    const description = dto.description !== undefined ? dto.description : service.description;
+    const price =
+      dto.price !== undefined
+        ? (priceOnRequest ? null : dto.price || null)
+        : (priceOnRequest ? null : service.price);
+
+    if (!priceOnRequest && (!price || price.trim() === '')) {
+      throw new BadRequestException(
+        'Valor é obrigatório quando o serviço não é "sob consulta".',
+      );
+    }
+
     return this.prisma.service.update({
       where: { id: service.id },
       data: {
-        title: dto.title ?? service.title,
-        description: dto.description ?? service.description,
-        price: dto.price ?? service.price,
+        title,
+        description: description ?? service.description,
+        price: price?.trim() || null,
+        priceOnRequest,
       },
     });
   }
@@ -468,10 +608,8 @@ export class PartnerService {
     return this.prisma.service.update({
       where: { id },
       data: {
-        commissionEuro:
-          dto.commissionEuro !== undefined
-            ? dto.commissionEuro
-            : service.commissionEuro,
+        commission:
+          dto.commission !== undefined ? dto.commission : service.commission,
       },
     });
   }

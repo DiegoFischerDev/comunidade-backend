@@ -7,11 +7,13 @@ import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
 import { PartnerModule } from './partner/partner.module';
+import { SaleModule } from './sale/sale.module';
 import { UsersModule } from './users/users.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { StripeModule } from './stripe/stripe.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule, UploadsModule],
+  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule, UploadsModule, SaleModule, StripeModule],
   controllers: [AppController],
   providers: [
     AppService,
