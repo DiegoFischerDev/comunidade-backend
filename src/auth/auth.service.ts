@@ -13,6 +13,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { Role, UserTier } from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 const SALT_ROUNDS = 10;
 
@@ -383,6 +384,32 @@ Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
       user = { ...user, tier: UserTier.VISITOR, membershipExpiresAt: null };
     }
     return user;
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const data: { email?: string } = {};
+
+    if (dto.email !== undefined) {
+      const email = dto.email.toLowerCase().trim();
+      const existing = await this.prisma.user.findUnique({
+        where: { email },
+      });
+      if (existing && existing.id !== userId) {
+        throw new ConflictException('Este e-mail já está em uso.');
+      }
+      data.email = email;
+    }
+
+    if (!Object.keys(data).length) {
+      return this.validateUserById(userId);
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data,
+    });
+
+    return this.validateUserById(userId);
   }
 
   async impersonate(adminUserId: string, targetUserId: string) {

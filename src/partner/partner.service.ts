@@ -374,17 +374,35 @@ export class PartnerService {
       );
     }
 
-    const updated = await this.prisma.partner.update({
-      where: { id: partner.id },
-      data: {
-        logoUrl: dto.logoUrl ?? partner.logoUrl,
-        shortDescription: dto.shortDescription ?? partner.shortDescription,
-        fullDescription: dto.fullDescription ?? partner.fullDescription,
-        backgroundImageUrl:
-          dto.backgroundImageUrl ?? partner.backgroundImageUrl,
-        catalogImageUrls: newCatalogImages,
-        instagram: dto.instagram !== undefined ? dto.instagram : partner.instagram,
-      },
+    // Se o parceiro alterar o WhatsApp no perfil, sincronizamos tanto no Partner
+    // quanto no User associado.
+    const whatsappToSet =
+      dto.whatsapp !== undefined && dto.whatsapp !== null
+        ? this.normalizeWhatsapp(dto.whatsapp)
+        : undefined;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (whatsappToSet !== undefined) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { whatsapp: whatsappToSet },
+        });
+      }
+
+      return tx.partner.update({
+        where: { id: partner.id },
+        data: {
+          logoUrl: dto.logoUrl ?? partner.logoUrl,
+          shortDescription: dto.shortDescription ?? partner.shortDescription,
+          fullDescription: dto.fullDescription ?? partner.fullDescription,
+          backgroundImageUrl:
+            dto.backgroundImageUrl ?? partner.backgroundImageUrl,
+          catalogImageUrls: newCatalogImages,
+          instagram:
+            dto.instagram !== undefined ? dto.instagram : partner.instagram,
+          ...(whatsappToSet !== undefined && { whatsapp: whatsappToSet }),
+        },
+      });
     });
 
     if (oldLogoToDelete) {

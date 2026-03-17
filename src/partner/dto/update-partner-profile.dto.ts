@@ -1,4 +1,11 @@
-import { ArrayMaxSize, IsArray, IsOptional, IsString, Matches, ValidateIf } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsOptional,
+  IsString,
+  Matches,
+  ValidateIf,
+} from 'class-validator';
 
 export class UpdatePartnerProfileDto {
   @IsOptional()
@@ -12,6 +19,10 @@ export class UpdatePartnerProfileDto {
   @IsOptional()
   @IsString()
   fullDescription?: string;
+
+  @IsOptional()
+  @IsString()
+  whatsapp?: string;
 
   @IsOptional()
   @IsString()
