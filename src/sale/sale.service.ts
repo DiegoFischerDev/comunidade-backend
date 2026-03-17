@@ -328,12 +328,22 @@ export class SaleService {
       );
     }
 
-    return this.prisma.sale.update({
+    const updated = await this.prisma.sale.update({
       where: { id: sale.id },
       data: {
         status: params.status,
+        // Depois de aprovada, não precisamos mais manter o comprovativo em disco
+        ...(params.status === 'APPROVED' && sale.paymentProofUrl
+          ? { paymentProofUrl: null }
+          : {}),
       },
     });
+
+    if (params.status === 'APPROVED' && sale.paymentProofUrl) {
+      await this.deleteUploadFileIfLocal(sale.paymentProofUrl);
+    }
+
+    return updated;
   }
 
   async getUserLookup() {
