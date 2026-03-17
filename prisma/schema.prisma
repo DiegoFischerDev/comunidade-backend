@@ -44,6 +44,8 @@ model User {
   membershipExpiresAt        DateTime? @map("membership_expires_at")
   name                       String
   whatsapp                   String    @map("whatsapp")
+  instagram                  String?   @map("instagram")
+  profileImageUrl            String?   @map("profile_image_url")
   emailVerifiedAt            DateTime? @map("email_verified_at")
   emailVerificationCode      String?   @map("email_verification_code")
   emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")

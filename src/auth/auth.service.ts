@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import { join } from 'path';
+import { unlink } from 'fs/promises';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -26,6 +28,36 @@ export class AuthService {
 
   private normalizeWhatsapp(value: string): string {
     return value.replace(/\s+/g, '');
+  }
+
+  private async deleteUploadFileIfLocal(url?: string | null) {
+    if (!url) return;
+
+    let pathname = url;
+    if (pathname.startsWith('http://') || pathname.startsWith('https://')) {
+      try {
+        pathname = new URL(pathname).pathname;
+      } catch {
+        return;
+      }
+    }
+
+    if (!pathname.startsWith('/uploads/')) {
+      return;
+    }
+
+    const filename = pathname.replace('/uploads/', '');
+    if (!filename) return;
+
+    const filePath = join(process.cwd(), 'uploads', filename);
+
+    try {
+      await unlink(filePath);
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') {
+        // ignoramos outros erros para não quebrar o fluxo de negócio
+      }
+    }
   }
 
   private generateVerificationCode(): string {
@@ -367,6 +399,8 @@ Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
         role: true,
         name: true,
         whatsapp: true,
+        instagram: true,
+        profileImageUrl: true,
         tier: true,
         membershipExpiresAt: true,
       },
@@ -387,7 +421,32 @@ Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {
-    const data: { email?: string } = {};
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        name: true,
+        email: true,
+        whatsapp: true,
+        instagram: true,
+        profileImageUrl: true,
+      },
+    });
+
+    if (!existing) {
+      throw new UnauthorizedException('Utilizador não encontrado.');
+    }
+
+    const data: {
+      name?: string;
+      email?: string;
+      whatsapp?: string;
+      instagram?: string;
+      profileImageUrl?: string;
+    } = {};
+
+    if (dto.name !== undefined) {
+      data.name = dto.name.trim();
+    }
 
     if (dto.email !== undefined) {
       const email = dto.email.toLowerCase().trim();
@@ -400,14 +459,34 @@ Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
       data.email = email;
     }
 
+    if (dto.whatsapp !== undefined) {
+      data.whatsapp = this.normalizeWhatsapp(dto.whatsapp);
+    }
+
+    if (dto.instagram !== undefined) {
+      data.instagram = dto.instagram.trim();
+    }
+
+    if (dto.profileImageUrl !== undefined) {
+      data.profileImageUrl = dto.profileImageUrl;
+    }
+
     if (!Object.keys(data).length) {
       return this.validateUserById(userId);
     }
 
-    await this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id: userId },
       data,
     });
+
+    // Remove a imagem de perfil antiga se foi substituída
+    if (
+      dto.profileImageUrl &&
+      dto.profileImageUrl !== existing.profileImageUrl
+    ) {
+      await this.deleteUploadFileIfLocal(existing.profileImageUrl);
+    }
 
     return this.validateUserById(userId);
   }
