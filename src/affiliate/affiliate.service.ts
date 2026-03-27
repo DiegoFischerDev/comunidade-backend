@@ -204,7 +204,11 @@ export class AffiliateService {
       where: { userId: params.userId },
       select: { id: true },
     });
-    if (!affiliate) throw new NotFoundException('Perfil de afiliado não encontrado.');
+    if (!affiliate) {
+      throw new BadRequestException(
+        'Ative primeiro o programa de afiliados para guardar dados de pagamento.',
+      );
+    }
     const payout = this.validatePayoutData(
       params.payoutMethod,
       params.mbwayNumber,
@@ -234,14 +238,16 @@ export class AffiliateService {
       where: { userId },
       select: { id: true, affiliateCode: true },
     });
-    if (!affiliate) throw new NotFoundException('Perfil de afiliado não encontrado.');
+    if (!affiliate) {
+      return { affiliateCode: '', referrals: [] };
+    }
     const users = await this.prisma.user.findMany({
       where: { referredByAffiliateId: affiliate.id },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
         name: true,
-        email: true,
+        instagram: true,
         tier: true,
         role: true,
         createdAt: true,
@@ -258,7 +264,9 @@ export class AffiliateService {
       where: { userId },
       select: { id: true },
     });
-    if (!affiliate) throw new NotFoundException('Perfil de afiliado não encontrado.');
+    if (!affiliate) {
+      return { commissions: [], totals: { pending: 0, paid: 0 } };
+    }
     const commissions = await this.prisma.affiliateCommission.findMany({
       where: { affiliateId: affiliate.id },
       orderBy: { createdAt: 'desc' },
