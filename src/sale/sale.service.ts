@@ -101,6 +101,7 @@ export class SaleService {
           price: true,
           priceOnRequest: true,
           commission: true,
+          cashbackEuro: true,
         },
       }),
     ]);
