@@ -11,9 +11,10 @@ import { SaleModule } from './sale/sale.module';
 import { UsersModule } from './users/users.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { StripeModule } from './stripe/stripe.module';
+import { AffiliateModule } from './affiliate/affiliate.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule, UploadsModule, SaleModule, StripeModule],
+  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule, UploadsModule, SaleModule, StripeModule, AffiliateModule],
   controllers: [AppController],
   providers: [
     AppService,

@@ -84,6 +84,21 @@ export class AuthService {
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
+    const rawAffiliateCode = (dto.affiliateCode ?? '').trim().toLowerCase();
+    let referredByAffiliateId: string | null = null;
+    let referredByCodeSnapshot: string | null = null;
+    if (rawAffiliateCode && rawAffiliateCode !== 'nenhum') {
+      const affiliate = await this.prisma.affiliateProfile.findUnique({
+        where: { affiliateCode: rawAffiliateCode },
+        select: { id: true, isActive: true },
+      });
+      if (!affiliate || !affiliate.isActive) {
+        throw new BadRequestException('Código de afiliado inválido.');
+      }
+      referredByAffiliateId = affiliate.id;
+      referredByCodeSnapshot = rawAffiliateCode;
+    }
+
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
     const verificationCode = this.generateVerificationCode();
     const verificationExpiresAt = this.getVerificationExpiryDate();
@@ -97,6 +112,9 @@ export class AuthService {
         role: Role.USER,
         emailVerificationCode: verificationCode,
         emailVerificationExpiresAt: verificationExpiresAt,
+        referredByAffiliateId,
+        referredByCodeSnapshot,
+        referredAt: referredByAffiliateId ? new Date() : null,
       },
       select: {
         id: true,

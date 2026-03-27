@@ -40,6 +40,16 @@ enum CashbackPayoutMethod {
   PIX
 }
 
+enum AffiliateCommissionStatus {
+  PENDING
+  PAID
+}
+
+enum AffiliateCommissionCurrency {
+  EUR
+  BRL
+}
+
 model User {
   id                         String    @id @default(cuid())
   email                      String    @unique
@@ -56,14 +66,20 @@ model User {
   emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
   resetPasswordCode          String?   @map("reset_password_code")
   resetPasswordExpiresAt     DateTime? @map("reset_password_expires_at")
+  referredByAffiliateId      String?   @map("referred_by_affiliate_id")
+  referredAt                 DateTime? @map("referred_at")
+  referredByCodeSnapshot     String?   @map("referred_by_code_snapshot")
   createdAt                  DateTime  @default(now()) @map("created_at")
   updatedAt                  DateTime  @updatedAt @map("updated_at")
 
   subscription Subscription?
   partner      Partner?
+  affiliateProfile AffiliateProfile?
+  referredByAffiliate AffiliateProfile? @relation("AffiliateReferrals", fields: [referredByAffiliateId], references: [id], onDelete: SetNull)
   leads        Lead[]
   sales        Sale[]
   salesCreated Sale[]   @relation("SaleCreatedBy")
+  affiliateCommissionsFromReferrals AffiliateCommission[] @relation("AffiliateCommissionReferredUser")
 }
 
 model Subscription {
@@ -208,4 +224,41 @@ model Sale {
   @@index([userId])
   @@index([status])
   @@index([commissionPaymentStatus])
+}
+
+model AffiliateProfile {
+  id               String               @id @default(cuid())
+  userId           String               @unique @map("user_id")
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instagramHandle  String               @map("instagram_handle")
+  affiliateCode    String               @unique @map("affiliate_code")
+  payoutMethod     CashbackPayoutMethod @default(MBWAY) @map("payout_method")
+  mbwayNumber      String?              @map("mbway_number")
+  mbwayName        String?              @map("mbway_name")
+  pixKey           String?              @map("pix_key")
+  pixName          String?              @map("pix_name")
+  termsAcceptedAt  DateTime             @map("terms_accepted_at")
+  isActive         Boolean              @default(true) @map("is_active")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  referredUsers User[] @relation("AffiliateReferrals")
+  commissions  AffiliateCommission[]
+}
+
+model AffiliateCommission {
+  id             String                    @id @default(cuid())
+  affiliateId    String                    @map("affiliate_id")
+  affiliate      AffiliateProfile          @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  referredUserId String                    @unique @map("referred_user_id")
+  referredUser   User                      @relation("AffiliateCommissionReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
+  amount         Float
+  currency       AffiliateCommissionCurrency
+  status         AffiliateCommissionStatus @default(PENDING)
+  paymentProofUrl String?                  @map("payment_proof_url")
+  paidAt         DateTime?                 @map("paid_at")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+
+  @@index([affiliateId, status])
 }

@@ -43,6 +43,52 @@ export class StripeService {
     return n;
   }
 
+  private async createAffiliateCommissionIfEligible(
+    referredUserId: string,
+  ): Promise<void> {
+    const referredUser = await this.prisma.user.findUnique({
+      where: { id: referredUserId },
+      select: {
+        id: true,
+        referredByAffiliateId: true,
+      },
+    });
+    const affiliateId = referredUser?.referredByAffiliateId;
+    if (!affiliateId) return;
+
+    const affiliate = await this.prisma.affiliateProfile.findUnique({
+      where: { id: affiliateId },
+      include: {
+        user: {
+          select: { role: true },
+        },
+      },
+    });
+    if (!affiliate || !affiliate.isActive) return;
+    // Regra de negócio: admin pode ser afiliado, mas não recebe comissão.
+    if (affiliate.user.role === 'ADMIN') return;
+
+    const amount =
+      affiliate.payoutMethod === 'PIX' ? 60 : 10;
+    const currency = affiliate.payoutMethod === 'PIX' ? 'BRL' : 'EUR';
+
+    try {
+      await this.prisma.affiliateCommission.create({
+        data: {
+          affiliateId,
+          referredUserId,
+          amount,
+          currency,
+          status: 'PENDING',
+        },
+      });
+    } catch (error: any) {
+      // idempotência: se já existe comissão para esse indicado, ignorar
+      if (error?.code === 'P2002') return;
+      throw error;
+    }
+  }
+
   /** Valores atuais da anuidade (para exibir no frontend). */
   getMembershipAmounts(): { eurCents: number; pixCentavos: number } {
     return {
@@ -456,6 +502,7 @@ export class StripeService {
         data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
       }),
     ]);
+    await this.createAffiliateCommissionIfEligible(userId);
 
     try {
       const user = await this.prisma.user.findUnique({
@@ -529,6 +576,9 @@ export class StripeService {
         membershipExpiresAt: isActive ? validUntil : null,
       },
     });
+    if (isActive) {
+      await this.createAffiliateCommissionIfEligible(userId);
+    }
   }
 
   private async handleInvoicePaid(invoice: Stripe.Invoice): Promise<void> {
@@ -557,6 +607,7 @@ export class StripeService {
       where: { id: userId },
       data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
     });
+    await this.createAffiliateCommissionIfEligible(userId);
   }
 }
 
