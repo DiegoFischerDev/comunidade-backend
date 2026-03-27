@@ -198,6 +198,32 @@ export class SaleController {
     return this.saleService.markCashbackPaid(saleId);
   }
 
+  // Admin - pagar cashback (upload comprovante + marcar como pago)
+  @Post('admin/:id/cashback/pay')
+  @Roles(Role.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          const uploadPath = join(process.cwd(), 'uploads');
+          mkdirSync(uploadPath, { recursive: true });
+          cb(null, uploadPath);
+        },
+        filename: (_req, file, cb) => {
+          const unique = Date.now();
+          const ext = extname(file.originalname) || '';
+          cb(null, `cashback-proof-${unique}${ext}`);
+        },
+      }),
+    }),
+  )
+  async payCashbackWithProof(
+    @Param('id') saleId: string,
+    @UploadedFile() file: any,
+  ) {
+    return this.saleService.payCashbackWithProofAdmin({ saleId, file });
+  }
+
   // Admin - excluir registro de compra
   @Delete('admin/:id')
   @Roles(Role.ADMIN)

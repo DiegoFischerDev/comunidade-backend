@@ -6,6 +6,5 @@
 
 */
 -- AlterTable
-ALTER TABLE "Sale"
-  DROP COLUMN IF EXISTS "invoice_city",
-  DROP COLUMN IF EXISTS "invoice_email";
+ALTER TABLE "Sale" DROP COLUMN "invoice_city",
+DROP COLUMN "invoice_email";

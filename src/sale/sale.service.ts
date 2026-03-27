@@ -679,6 +679,48 @@ export class SaleService {
     });
   }
 
+  async payCashbackWithProofAdmin(params: { saleId: string; file: any }) {
+    const { saleId, file } = params;
+    if (!file) {
+      throw new BadRequestException('Comprovante é obrigatório.');
+    }
+
+    const sale = await this.prisma.sale.findUnique({
+      where: { id: saleId },
+    });
+
+    if (!sale) {
+      throw new NotFoundException('Compra não encontrada.');
+    }
+
+    if (!sale.cashbackRequestedAt) {
+      throw new BadRequestException(
+        'Só pode pagar um cashback que foi solicitado.',
+      );
+    }
+
+    const oldUrl = sale.cashbackPaymentProofUrl;
+    const url = `/uploads/${file.filename}`;
+
+    const updated = await this.prisma.sale.update({
+      where: { id: sale.id },
+      data: {
+        cashbackPaymentProofUrl: url,
+        cashbackPaidAt: new Date(),
+      },
+    });
+
+    if (oldUrl && oldUrl !== url) {
+      await this.deleteUploadFileIfLocal(oldUrl);
+    }
+
+    return {
+      id: updated.id,
+      cashbackPaidAt: updated.cashbackPaidAt,
+      cashbackPaymentProofUrl: updated.cashbackPaymentProofUrl,
+    };
+  }
+
   async deleteSaleForAdmin(saleId: string) {
     const sale = await this.prisma.sale.findUnique({
       where: { id: saleId },
@@ -734,6 +776,8 @@ export class SaleService {
       );
     }
 
+    const oldInvoiceUrl = sale.invoicePdfUrl;
+
     const url = `/uploads/${file.filename}`;
     const absoluteFilePath = join(process.cwd(), 'uploads', file.filename);
     const partnerEmail = sale.partner?.user?.email;
@@ -777,6 +821,10 @@ export class SaleService {
         invoiceSentAt: new Date(),
       },
     });
+
+    if (oldInvoiceUrl && oldInvoiceUrl !== url) {
+      await this.deleteUploadFileIfLocal(oldInvoiceUrl);
+    }
 
     return {
       id: updated.id,
