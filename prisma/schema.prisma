@@ -122,6 +122,8 @@ model Service {
   price                   String?
   priceOnRequest          Boolean          @default(false) @map("price_on_request")
   commission              String?          @map("commission")
+  /// Valor de cashback em euros definido pelo admin para este serviço
+  cashbackEuro            Float?           @map("cashback_euro")
   whatsappMessageTemplate String?          @map("whatsapp_message_template")
   sortOrder               Int              @default(0) @map("sort_order")
   createdAt               DateTime         @default(now()) @map("created_at")

@@ -456,6 +456,7 @@ export class SaleService {
         service: {
           select: {
             title: true,
+            cashbackEuro: true,
           },
         },
       },
@@ -578,6 +579,7 @@ export class SaleService {
         service: {
           select: {
             title: true,
+            cashbackEuro: true,
           },
         },
       },

@@ -235,6 +235,7 @@ export class PartnerService {
             price: true,
             priceOnRequest: true,
             commission: true,
+            cashbackEuro: true,
           },
         },
       },
@@ -449,6 +450,7 @@ export class PartnerService {
         price: true,
         priceOnRequest: true,
         commission: true,
+        cashbackEuro: true,
         createdAt: true,
       },
     });
@@ -610,6 +612,10 @@ export class PartnerService {
       data: {
         commission:
           dto.commission !== undefined ? dto.commission : service.commission,
+        cashbackEuro:
+          dto.cashbackEuro !== undefined
+            ? dto.cashbackEuro
+            : service.cashbackEuro,
       },
     });
   }
