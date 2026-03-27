@@ -35,6 +35,11 @@ enum CommissionPaymentStatus {
   PAID
 }
 
+enum CashbackPayoutMethod {
+  MBWAY
+  PIX
+}
+
 model User {
   id                         String    @id @default(cuid())
   email                      String    @unique
@@ -187,8 +192,11 @@ model Sale {
   /// Data/hora em que a fatura foi enviada ao parceiro
   invoiceSentAt          DateTime?               @map("invoice_sent_at")
   cashbackRequestedAt    DateTime?               @map("cashback_requested_at")
+  cashbackPayoutMethod   CashbackPayoutMethod?   @map("cashback_payout_method")
   cashbackMbwayNumber    String?                 @map("cashback_mbway_number")
   cashbackMbwayName      String?                 @map("cashback_mbway_name")
+  cashbackPixKey         String?                 @map("cashback_pix_key")
+  cashbackPixName        String?                 @map("cashback_pix_name")
   /// Comprovante do pagamento do cashback (admin → usuário)
   cashbackPaymentProofUrl String?                @map("cashback_payment_proof_url")
   cashbackPaidAt         DateTime?               @map("cashback_paid_at")

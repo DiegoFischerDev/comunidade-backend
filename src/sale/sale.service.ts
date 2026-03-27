@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import type { SaleStatus } from '@prisma/client';
+import type { CashbackPayoutMethod, SaleStatus } from '@prisma/client';
 import { StripeService } from '../stripe/stripe.service';
 import { join } from 'path';
 import { unlink } from 'fs/promises';
@@ -534,8 +534,11 @@ export class SaleService {
   async requestCashback(params: {
     userId: string;
     saleId: string;
+    method: 'MBWAY' | 'PIX';
     mbwayNumber: string;
     mbwayName: string;
+    pixKey: string;
+    pixName: string;
   }) {
     const sale = await this.prisma.sale.findFirst({
       where: {
@@ -558,18 +561,35 @@ export class SaleService {
       throw new BadRequestException('Cashback já foi solicitado para esta compra.');
     }
 
+    const method = params.method as CashbackPayoutMethod;
+    if (method !== 'MBWAY' && method !== 'PIX') {
+      throw new BadRequestException('Método de pagamento inválido.');
+    }
+
     const mbwayNumber = params.mbwayNumber.replace(/\s/g, '').trim();
     const mbwayName = params.mbwayName.trim();
-    if (!mbwayNumber || !mbwayName) {
-      throw new BadRequestException('Número e nome MB Way são obrigatórios.');
+    const pixKey = params.pixKey.trim();
+    const pixName = params.pixName.trim();
+
+    if (method === 'MBWAY') {
+      if (!mbwayNumber || !mbwayName) {
+        throw new BadRequestException('Número e nome MB Way são obrigatórios.');
+      }
+    } else if (method === 'PIX') {
+      if (!pixKey || !pixName) {
+        throw new BadRequestException('Chave e nome do PIX são obrigatórios.');
+      }
     }
 
     return this.prisma.sale.update({
       where: { id: params.saleId },
       data: {
         cashbackRequestedAt: new Date(),
-        cashbackMbwayNumber: mbwayNumber,
-        cashbackMbwayName: mbwayName,
+        cashbackPayoutMethod: method,
+        cashbackMbwayNumber: method === 'MBWAY' ? mbwayNumber : null,
+        cashbackMbwayName: method === 'MBWAY' ? mbwayName : null,
+        cashbackPixKey: method === 'PIX' ? pixKey : null,
+        cashbackPixName: method === 'PIX' ? pixName : null,
       },
     });
   }

@@ -377,6 +377,26 @@ docker compose exec backend npx prisma migrate deploy
 
 Teste: **https://stage.rafaapelomundo.com** e **https://api-stage.rafaapelomundo.com**.
 
+### Troubleshooting Postgres (usuário e database)
+
+Se você precisar executar `psql` dentro do container (para debugar migrations, checar tabelas/colunas, etc.), **não assuma** que o usuário é `postgres`. Neste projeto, normalmente o container sobe com:
+
+- **`POSTGRES_USER=comunidade`**
+- **`POSTGRES_DB=comunidade`**
+
+Para confirmar pelo próprio container:
+
+```bash
+cd /opt/comunidade-stage
+docker compose exec postgres sh -lc 'echo "USER=$POSTGRES_USER DB=$POSTGRES_DB"'
+```
+
+E para rodar um comando SQL usando esses valores:
+
+```bash
+docker compose exec postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1;"'
+```
+
 ---
 
 ## 13. GitHub Actions (secrets)

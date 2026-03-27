@@ -151,13 +151,23 @@ export class SaleController {
   async requestCashback(
     @CurrentUser() user: { id: string },
     @Param('id') saleId: string,
-    @Body() body: { mbwayNumber: string; mbwayName: string },
+    @Body()
+    body: {
+      method: 'MBWAY' | 'PIX';
+      mbwayNumber?: string;
+      mbwayName?: string;
+      pixKey?: string;
+      pixName?: string;
+    },
   ) {
     return this.saleService.requestCashback({
       userId: user.id,
       saleId,
+      method: body.method,
       mbwayNumber: body.mbwayNumber ?? '',
       mbwayName: body.mbwayName ?? '',
+      pixKey: body.pixKey ?? '',
+      pixName: body.pixName ?? '',
     });
   }
 
