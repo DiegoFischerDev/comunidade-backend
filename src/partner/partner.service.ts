@@ -402,6 +402,18 @@ export class PartnerService {
           catalogImageUrls: newCatalogImages,
           instagram:
             dto.instagram !== undefined ? dto.instagram : partner.instagram,
+          billingName:
+            dto.billingName !== undefined ? dto.billingName : partner.billingName,
+          billingNif:
+            dto.billingNif !== undefined ? dto.billingNif : partner.billingNif,
+          billingAddress:
+            dto.billingAddress !== undefined
+              ? dto.billingAddress
+              : partner.billingAddress,
+          billingPostalCode:
+            dto.billingPostalCode !== undefined
+              ? dto.billingPostalCode
+              : partner.billingPostalCode,
           ...(whatsappToSet !== undefined && { whatsapp: whatsappToSet }),
         },
       });

@@ -225,14 +225,6 @@ export class SaleService {
     successUrl: string;
     cancelUrl: string;
     wantsInvoice?: boolean;
-    invoice?: {
-      name: string;
-      nif: string;
-      email?: string;
-      address: string;
-      postalCode: string;
-      city: string;
-    };
   }) {
     const {
       userId,
@@ -241,7 +233,6 @@ export class SaleService {
       successUrl,
       cancelUrl,
       wantsInvoice,
-      invoice,
     } = params;
 
     if (!amountEuro || Number.isNaN(amountEuro) || amountEuro <= 0) {
@@ -280,21 +271,31 @@ export class SaleService {
       throw new BadRequestException('Comissão já foi marcada como paga.');
     }
 
-    if (wantsInvoice) {
-      const name = invoice?.name?.trim();
-      const nif = invoice?.nif?.replace(/\s+/g, '').trim();
-      const email = invoice?.email?.trim();
-      const address = invoice?.address?.trim();
-      const postalCode = invoice?.postalCode?.trim();
-      const city = invoice?.city?.trim();
+    const partnerBilling = await this.prisma.partner.findUnique({
+      where: { id: sale.partnerId },
+      select: {
+        billingName: true,
+        billingNif: true,
+        billingAddress: true,
+        billingPostalCode: true,
+      },
+    });
 
-      if (!name || !nif || !address || !postalCode || !city) {
+    if (wantsInvoice) {
+      const name = partnerBilling?.billingName?.trim() ?? '';
+      const nif = partnerBilling?.billingNif?.replace(/\s+/g, '').trim() ?? '';
+      const address = partnerBilling?.billingAddress?.trim() ?? '';
+      const postalCode = partnerBilling?.billingPostalCode?.trim() ?? '';
+
+      if (!name || !nif || !address || !postalCode) {
         throw new BadRequestException(
-          'Preencha os dados obrigatórios para emissão de fatura.',
+          'Para solicitar fatura, preencha os dados de faturação no seu perfil (Parceiro).',
         );
       }
       if (!/^\d{9}$/.test(nif)) {
-        throw new BadRequestException('NIF inválido. Deve conter 9 dígitos.');
+        throw new BadRequestException(
+          'NIF inválido no perfil do parceiro. Deve conter 9 dígitos.',
+        );
       }
 
       await this.prisma.sale.update({
@@ -303,25 +304,20 @@ export class SaleService {
           wantsInvoice: true,
           invoiceName: name,
           invoiceNif: nif,
-          invoiceEmail: email || null,
           invoiceAddress: address,
           invoicePostalCode: postalCode,
-          invoiceCity: city,
           invoiceRequestedAt: new Date(),
         },
       });
     } else {
-      // Se o parceiro desmarcar, limpamos os dados anteriores para evitar lixo
       await this.prisma.sale.update({
         where: { id: sale.id },
         data: {
           wantsInvoice: false,
           invoiceName: null,
           invoiceNif: null,
-          invoiceEmail: null,
           invoiceAddress: null,
           invoicePostalCode: null,
-          invoiceCity: null,
           invoiceRequestedAt: null,
         },
       });

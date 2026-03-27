@@ -73,14 +73,6 @@ export class SaleController {
       successUrl: string;
       cancelUrl: string;
       wantsInvoice?: boolean;
-      invoice?: {
-        name: string;
-        nif: string;
-        email?: string;
-        address: string;
-        postalCode: string;
-        city: string;
-      };
     },
   ) {
     return this.saleService.createPartnerCommissionPayment({
@@ -90,7 +82,6 @@ export class SaleController {
       successUrl: body.successUrl,
       cancelUrl: body.cancelUrl,
       wantsInvoice: body.wantsInvoice ?? false,
-      invoice: body.invoice,
     });
   }
 

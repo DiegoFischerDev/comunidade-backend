@@ -39,5 +39,22 @@ export class UpdatePartnerProfileDto {
   @ValidateIf((_o, v) => v !== undefined && v !== null && v !== '')
   @Matches(/^@.+$/, { message: 'O Instagram deve começar com @ (ex: @utilizador)' })
   instagram?: string;
+
+  // Dados para faturação (Portugal)
+  @IsOptional()
+  @IsString()
+  billingName?: string;
+
+  @IsOptional()
+  @IsString()
+  billingNif?: string;
+
+  @IsOptional()
+  @IsString()
+  billingAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  billingPostalCode?: string;
 }
 
