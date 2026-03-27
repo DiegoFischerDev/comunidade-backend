@@ -7,11 +7,17 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import { SaleService } from './sale.service';
 import { Roles } from '../auth/roles.decorator';
 import { Role } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { mkdirSync } from 'fs';
 
 @Controller('sales')
 export class SaleController {
@@ -66,6 +72,15 @@ export class SaleController {
       amountEuro: number;
       successUrl: string;
       cancelUrl: string;
+      wantsInvoice?: boolean;
+      invoice?: {
+        name: string;
+        nif: string;
+        email?: string;
+        address: string;
+        postalCode: string;
+        city: string;
+      };
     },
   ) {
     return this.saleService.createPartnerCommissionPayment({
@@ -74,6 +89,8 @@ export class SaleController {
       amountEuro: body.amountEuro,
       successUrl: body.successUrl,
       cancelUrl: body.cancelUrl,
+      wantsInvoice: body.wantsInvoice ?? false,
+      invoice: body.invoice,
     });
   }
 
@@ -195,6 +212,32 @@ export class SaleController {
   @Roles(Role.ADMIN)
   async deleteSaleForAdmin(@Param('id') saleId: string) {
     return this.saleService.deleteSaleForAdmin(saleId);
+  }
+
+  // Admin - enviar fatura (upload PDF + email ao parceiro)
+  @Post('admin/:id/invoice')
+  @Roles(Role.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          const uploadPath = join(process.cwd(), 'uploads');
+          mkdirSync(uploadPath, { recursive: true });
+          cb(null, uploadPath);
+        },
+        filename: (_req, file, cb) => {
+          const unique = Date.now();
+          const ext = extname(file.originalname) || '.pdf';
+          cb(null, `invoice-${unique}${ext}`);
+        },
+      }),
+    }),
+  )
+  async uploadAndSendInvoice(
+    @Param('id') saleId: string,
+    @UploadedFile() file: any,
+  ) {
+    return this.saleService.uploadAndSendInvoiceAdmin({ saleId, file });
   }
 }
 

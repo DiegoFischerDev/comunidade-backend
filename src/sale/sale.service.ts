@@ -9,6 +9,7 @@ import type { SaleStatus } from '@prisma/client';
 import { StripeService } from '../stripe/stripe.service';
 import { join } from 'path';
 import { unlink } from 'fs/promises';
+import { sendEmailWithPdfAttachment } from '../email/resend.client';
 
 @Injectable()
 export class SaleService {
@@ -223,8 +224,25 @@ export class SaleService {
     amountEuro: number;
     successUrl: string;
     cancelUrl: string;
+    wantsInvoice?: boolean;
+    invoice?: {
+      name: string;
+      nif: string;
+      email?: string;
+      address: string;
+      postalCode: string;
+      city: string;
+    };
   }) {
-    const { userId, saleId, amountEuro, successUrl, cancelUrl } = params;
+    const {
+      userId,
+      saleId,
+      amountEuro,
+      successUrl,
+      cancelUrl,
+      wantsInvoice,
+      invoice,
+    } = params;
 
     if (!amountEuro || Number.isNaN(amountEuro) || amountEuro <= 0) {
       throw new BadRequestException('Valor da comissão inválido.');
@@ -260,6 +278,53 @@ export class SaleService {
 
     if (sale.commissionPaymentStatus === 'PAID') {
       throw new BadRequestException('Comissão já foi marcada como paga.');
+    }
+
+    if (wantsInvoice) {
+      const name = invoice?.name?.trim();
+      const nif = invoice?.nif?.replace(/\s+/g, '').trim();
+      const email = invoice?.email?.trim();
+      const address = invoice?.address?.trim();
+      const postalCode = invoice?.postalCode?.trim();
+      const city = invoice?.city?.trim();
+
+      if (!name || !nif || !address || !postalCode || !city) {
+        throw new BadRequestException(
+          'Preencha os dados obrigatórios para emissão de fatura.',
+        );
+      }
+      if (!/^\d{9}$/.test(nif)) {
+        throw new BadRequestException('NIF inválido. Deve conter 9 dígitos.');
+      }
+
+      await this.prisma.sale.update({
+        where: { id: sale.id },
+        data: {
+          wantsInvoice: true,
+          invoiceName: name,
+          invoiceNif: nif,
+          invoiceEmail: email || null,
+          invoiceAddress: address,
+          invoicePostalCode: postalCode,
+          invoiceCity: city,
+          invoiceRequestedAt: new Date(),
+        },
+      });
+    } else {
+      // Se o parceiro desmarcar, limpamos os dados anteriores para evitar lixo
+      await this.prisma.sale.update({
+        where: { id: sale.id },
+        data: {
+          wantsInvoice: false,
+          invoiceName: null,
+          invoiceNif: null,
+          invoiceEmail: null,
+          invoiceAddress: null,
+          invoicePostalCode: null,
+          invoiceCity: null,
+          invoiceRequestedAt: null,
+        },
+      });
     }
 
     const descriptionParts: string[] = [];
@@ -460,6 +525,7 @@ export class SaleService {
             cashbackEuro: true,
           },
         },
+        // Campos de fatura ficam no root do Sale, já retornados por padrão
       },
     });
 
@@ -631,6 +697,96 @@ export class SaleService {
     });
 
     return { id: saleId };
+  }
+
+  async uploadAndSendInvoiceAdmin(params: { saleId: string; file: any }) {
+    const { saleId, file } = params;
+    if (!file) {
+      throw new BadRequestException('Arquivo PDF é obrigatório.');
+    }
+    const mimetype = (file.mimetype as string | undefined) ?? '';
+    const originalname = (file.originalname as string | undefined) ?? '';
+    const isPdf =
+      mimetype === 'application/pdf' ||
+      originalname.toLowerCase().endsWith('.pdf') ||
+      (file.filename as string | undefined)?.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      throw new BadRequestException('A fatura deve ser um arquivo PDF.');
+    }
+
+    const sale = await this.prisma.sale.findUnique({
+      where: { id: saleId },
+      include: {
+        partner: {
+          include: {
+            user: true,
+          },
+        },
+      },
+    });
+    if (!sale) {
+      throw new NotFoundException('Compra não encontrada.');
+    }
+    if (!sale.wantsInvoice) {
+      throw new BadRequestException(
+        'Esta compra não está marcada como "quero fatura".',
+      );
+    }
+    if (sale.commissionPaymentStatus !== 'PAID') {
+      throw new BadRequestException(
+        'Só é possível enviar fatura após o pagamento da comissão.',
+      );
+    }
+
+    const url = `/uploads/${file.filename}`;
+    const absoluteFilePath = join(process.cwd(), 'uploads', file.filename);
+    const partnerEmail = sale.partner?.user?.email;
+    if (!partnerEmail) {
+      throw new BadRequestException('Email do parceiro não encontrado.');
+    }
+
+    const amount = sale.commissionPaidEuro ?? null;
+    const amountLabel = amount != null ? `${amount.toFixed(2)} €` : '—';
+
+    await sendEmailWithPdfAttachment({
+      to: partnerEmail,
+      subject: 'Fatura da comissão – Comunidade RPM',
+      text:
+        `Olá,\n\n` +
+        `Segue em anexo a fatura da comissão.\n\n` +
+        `Valor da fatura: ${amountLabel}\n` +
+        `Referência: ${sale.month.toString().padStart(2, '0')}/${sale.year}\n\n` +
+        `Equipa Comunidade RPM`,
+      html: `
+        <div style="max-width:640px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827;">
+          <h1 style="font-size:18px;margin:0 0 12px;">Fatura da comissão</h1>
+          <p style="margin:0 0 12px;">Segue em anexo a fatura da comissão.</p>
+          <ul style="margin:0 0 12px;padding-left:20px;">
+            <li><strong>Valor da fatura:</strong> ${amountLabel}</li>
+            <li><strong>Referência:</strong> ${sale.month
+              .toString()
+              .padStart(2, '0')}/${sale.year}</li>
+          </ul>
+          <p style="margin:0;">Equipa Comunidade RPM</p>
+        </div>
+      `,
+      filename: `fatura-comissao-${sale.id}.pdf`,
+      absoluteFilePath,
+    });
+
+    const updated = await this.prisma.sale.update({
+      where: { id: sale.id },
+      data: {
+        invoicePdfUrl: url,
+        invoiceSentAt: new Date(),
+      },
+    });
+
+    return {
+      id: updated.id,
+      invoicePdfUrl: updated.invoicePdfUrl,
+      invoiceSentAt: updated.invoiceSentAt,
+    };
   }
 }
 

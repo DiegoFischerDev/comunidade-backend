@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import { readFile } from 'fs/promises';
 
 export function getResendClient() {
   const apiKey = process.env.RESEND_API_KEY;
@@ -15,6 +16,7 @@ export async function sendEmailBase(params: {
   subject: string;
   text?: string;
   html?: string;
+  attachments?: { filename: string; content: Buffer; contentType?: string }[];
 }) {
   const resend = getResendClient();
 
@@ -31,7 +33,28 @@ export async function sendEmailBase(params: {
       subject: params.subject,
       text: params.text,
       html: params.html,
+      attachments: params.attachments,
     } as any,
   );
+}
+
+export async function sendEmailWithPdfAttachment(params: {
+  to: string | string[];
+  subject: string;
+  text?: string;
+  html?: string;
+  filename: string;
+  absoluteFilePath: string;
+}) {
+  const buf = await readFile(params.absoluteFilePath);
+  return sendEmailBase({
+    to: params.to,
+    subject: params.subject,
+    text: params.text,
+    html: params.html,
+    attachments: [
+      { filename: params.filename, content: buf, contentType: 'application/pdf' },
+    ],
+  });
 }
 

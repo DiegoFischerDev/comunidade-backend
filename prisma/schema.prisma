@@ -169,6 +169,20 @@ model Sale {
   commissionPaymentStatus CommissionPaymentStatus @default(PENDING) @map("commission_payment_status")
   /// Valor efetivamente pago pelo parceiro de comissão, em euros
   commissionPaidEuro     Float?                  @map("commission_paid_euro")
+  /// Se o parceiro solicitou emissão de fatura pela comissão
+  wantsInvoice           Boolean                 @default(false) @map("wants_invoice")
+  /// Dados para emissão de fatura (Portugal)
+  invoiceName            String?                 @map("invoice_name")
+  invoiceNif             String?                 @map("invoice_nif")
+  invoiceEmail           String?                 @map("invoice_email")
+  invoiceAddress         String?                 @map("invoice_address")
+  invoicePostalCode      String?                 @map("invoice_postal_code")
+  invoiceCity            String?                 @map("invoice_city")
+  invoiceRequestedAt     DateTime?               @map("invoice_requested_at")
+  /// URL do PDF da fatura enviada ao parceiro
+  invoicePdfUrl          String?                 @map("invoice_pdf_url")
+  /// Data/hora em que a fatura foi enviada ao parceiro
+  invoiceSentAt          DateTime?               @map("invoice_sent_at")
   cashbackRequestedAt    DateTime?               @map("cashback_requested_at")
   cashbackMbwayNumber    String?                 @map("cashback_mbway_number")
   cashbackMbwayName      String?                 @map("cashback_mbway_name")

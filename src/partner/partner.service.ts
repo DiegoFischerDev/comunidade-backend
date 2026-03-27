@@ -236,6 +236,7 @@ export class PartnerService {
             priceOnRequest: true,
             commission: true,
             cashbackEuro: true,
+            pendingApproval: true,
           },
         },
       },
