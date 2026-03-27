@@ -12,6 +12,55 @@ import { UpdateUserTierDto } from './dto/update-user-tier.dto';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Métricas para o painel admin. Total de inscrições = soma de `MembershipPayment.amountCreditedEur`
+   * (histórico à data de cada pagamento; mudar `STRIPE_AMOUNT_EUR_CENTS` no env não altera o passado).
+   * `membershipPriceEurUsed` é só o preço anual EUR atual (referência na UI).
+   */
+  async getAdminStats() {
+    const eurCentsRaw = process.env.STRIPE_AMOUNT_EUR_CENTS;
+    const eurCents = eurCentsRaw ? parseInt(eurCentsRaw, 10) : 2300;
+    const membershipPriceEurUsed =
+      Number.isFinite(eurCents) && eurCents > 0 ? eurCents / 100 : 23;
+
+    const [
+      totalUsers,
+      partners,
+      visitors,
+      members,
+      subscriptionsCount,
+      paySum,
+      membershipPaymentsCount,
+    ] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { role: Role.PARTNER } }),
+      this.prisma.user.count({ where: { tier: UserTier.VISITOR } }),
+      this.prisma.user.count({ where: { tier: UserTier.MEMBER } }),
+      this.prisma.subscription.count(),
+      this.prisma.membershipPayment.aggregate({
+        _sum: { amountCreditedEur: true },
+      }),
+      this.prisma.membershipPayment.count(),
+    ]);
+
+    const rawSum = paySum._sum.amountCreditedEur;
+    const totalMembershipRevenueEur =
+      rawSum != null
+        ? Math.round(Number(rawSum) * 100) / 100
+        : 0;
+
+    return {
+      totalUsers,
+      partners,
+      visitors,
+      members,
+      totalMembershipRevenueEur,
+      subscriptionsCount,
+      membershipPaymentsCount,
+      membershipPriceEurUsed,
+    };
+  }
+
   findAll() {
     return this.prisma.user.findMany({
       orderBy: { createdAt: 'desc' },

@@ -357,7 +357,6 @@ export class AffiliateService {
         paidAt: true,
         createdAt: true,
         paymentProofUrl: true,
-        referredUser: { select: { name: true, email: true } },
       },
     });
   }

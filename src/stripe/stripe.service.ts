@@ -502,6 +502,7 @@ export class StripeService {
         data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
       }),
     ]);
+    await this.recordMembershipPaymentFromCheckoutSession(userId, session);
     await this.createAffiliateCommissionIfEligible(userId);
 
     try {
@@ -607,7 +608,92 @@ export class StripeService {
       where: { id: userId },
       data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
     });
+
+    if (
+      inv.billing_reason === 'subscription_cycle' &&
+      typeof inv.amount_paid === 'number' &&
+      inv.amount_paid > 0
+    ) {
+      await this.recordMembershipPaymentFromInvoice(userId, invoice);
+    }
+
     await this.createAffiliateCommissionIfEligible(userId);
+  }
+
+  /**
+   * EUR/MB: usa o valor pago na sessão (amount_total). BRL: contabiliza o preço EUR em vigor
+   * (mesma regra de negócio que o painel admin).
+   */
+  private creditedEurFromCheckoutSession(session: Stripe.Checkout.Session): number {
+    const cur =
+      ((session as any).currency as string | undefined)?.toLowerCase() ?? 'eur';
+    if (cur === 'brl') {
+      return Math.round(this.eurAmountCents) / 100;
+    }
+    const total = (session as any).amount_total as number | null | undefined;
+    if (total != null && Number.isFinite(total) && total >= 0) {
+      return Math.round(total) / 100;
+    }
+    return Math.round(this.eurAmountCents) / 100;
+  }
+
+  private creditedEurFromInvoice(invoice: Stripe.Invoice): number {
+    const inv = invoice as any;
+    const cur = (inv.currency as string | undefined)?.toLowerCase() ?? 'eur';
+    const paid = inv.amount_paid as number | undefined;
+    if (paid != null && paid <= 0) return 0;
+    if (cur === 'brl') {
+      return Math.round(this.eurAmountCents) / 100;
+    }
+    if (paid != null && Number.isFinite(paid)) {
+      return Math.round(paid) / 100;
+    }
+    return 0;
+  }
+
+  private async recordMembershipPaymentFromCheckoutSession(
+    userId: string,
+    session: Stripe.Checkout.Session,
+  ): Promise<void> {
+    const sessionId = session.id;
+    if (!sessionId) return;
+    const amountCreditedEur = this.creditedEurFromCheckoutSession(session);
+    try {
+      await this.prisma.membershipPayment.create({
+        data: {
+          userId,
+          stripeCheckoutSessionId: sessionId,
+          amountCreditedEur,
+          stripeCurrency: (session as any).currency ?? null,
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002') return;
+      throw err;
+    }
+  }
+
+  private async recordMembershipPaymentFromInvoice(
+    userId: string,
+    invoice: Stripe.Invoice,
+  ): Promise<void> {
+    const inv = invoice as any;
+    const invoiceId = inv.id as string | undefined;
+    if (!invoiceId) return;
+    const amountCreditedEur = this.creditedEurFromInvoice(invoice);
+    try {
+      await this.prisma.membershipPayment.create({
+        data: {
+          userId,
+          stripeInvoiceId: invoiceId,
+          amountCreditedEur,
+          stripeCurrency: inv.currency ?? null,
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002') return;
+      throw err;
+    }
   }
 }
 

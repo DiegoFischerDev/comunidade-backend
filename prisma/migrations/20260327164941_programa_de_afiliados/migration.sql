@@ -1,11 +1,4 @@
-/*
-  Warnings:
-
-  - You are about to drop the column `invoice_city` on the `Sale` table. All the data in the column will be lost.
-  - You are about to drop the column `invoice_email` on the `Sale` table. All the data in the column will be lost.
-
-*/
--- AlterTable
-ALTER TABLE "Sale"
-DROP COLUMN IF EXISTS "invoice_city",
-DROP COLUMN IF EXISTS "invoice_email";
+-- Corrigido: este ficheiro tinha sido preenchido por engano com o mesmo SQL de
+-- 20260327115607_remover_campos_fatura. O programa de afiliados está em 20260328012000_add_affiliates.
+-- No-op para manter a ordem do histórico sem duplicar ALTER TABLE na "Sale".
+SELECT 1;

@@ -72,8 +72,9 @@ model User {
   createdAt                  DateTime  @default(now()) @map("created_at")
   updatedAt                  DateTime  @updatedAt @map("updated_at")
 
-  subscription Subscription?
-  partner      Partner?
+  subscription       Subscription?
+  membershipPayments MembershipPayment[]
+  partner            Partner?
   affiliateProfile AffiliateProfile?
   referredByAffiliate AffiliateProfile? @relation("AffiliateReferrals", fields: [referredByAffiliateId], references: [id], onDelete: SetNull)
   leads        Lead[]
@@ -92,6 +93,21 @@ model Subscription {
   validUntil           DateTime           @map("valid_until")
   createdAt            DateTime           @default(now()) @map("created_at")
   updatedAt            DateTime           @updatedAt @map("updated_at")
+}
+
+/// Pagamento de anuidade contabilizado no total admin (histórico imune a mudanças de preço em env).
+model MembershipPayment {
+  id                      String   @id @default(cuid())
+  userId                  String   @map("user_id")
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stripeCheckoutSessionId String?  @unique @map("stripe_checkout_session_id")
+  stripeInvoiceId         String?  @unique @map("stripe_invoice_id")
+  amountCreditedEur       Decimal  @map("amount_credited_eur") @db.Decimal(12, 2)
+  stripeCurrency          String?  @map("stripe_currency")
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("membership_payments")
 }
 
 model Partner {
