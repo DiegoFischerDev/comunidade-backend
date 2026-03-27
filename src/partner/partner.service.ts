@@ -451,6 +451,7 @@ export class PartnerService {
         priceOnRequest: true,
         commission: true,
         cashbackEuro: true,
+        pendingApproval: true,
         createdAt: true,
       },
     });
@@ -476,6 +477,7 @@ export class PartnerService {
         description: dto.description?.trim() ?? '',
         price: priceOnRequest ? null : (dto.price?.trim() || null),
         priceOnRequest,
+        pendingApproval: true,
       },
     });
   }
@@ -508,6 +510,10 @@ export class PartnerService {
       );
     }
 
+    const priceChanged =
+      priceOnRequest !== service.priceOnRequest ||
+      (price ?? null) !== (service.price ?? null);
+
     return this.prisma.service.update({
       where: { id: service.id },
       data: {
@@ -515,6 +521,7 @@ export class PartnerService {
         description: description ?? service.description,
         price: price?.trim() || null,
         priceOnRequest,
+        ...(priceChanged ? { pendingApproval: true } : {}),
       },
     });
   }
@@ -598,6 +605,21 @@ export class PartnerService {
     });
   }
 
+  async listPendingServicesAdmin() {
+    return this.prisma.service.findMany({
+      where: { pendingApproval: true },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        partner: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+  }
+
   async updateServiceAdmin(id: string, dto: UpdateServiceAdminDto) {
     const service = await this.prisma.service.findUnique({
       where: { id },
@@ -616,6 +638,23 @@ export class PartnerService {
           dto.cashbackEuro !== undefined
             ? dto.cashbackEuro
             : service.cashbackEuro,
+      },
+    });
+  }
+
+  async approveServiceAdmin(id: string) {
+    const service = await this.prisma.service.findUnique({
+      where: { id },
+    });
+
+    if (!service) {
+      throw new NotFoundException('Serviço não encontrado.');
+    }
+
+    return this.prisma.service.update({
+      where: { id },
+      data: {
+        pendingApproval: false,
       },
     });
   }

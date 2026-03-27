@@ -124,6 +124,8 @@ model Service {
   commission              String?          @map("commission")
   /// Valor de cashback em euros definido pelo admin para este serviço
   cashbackEuro            Float?           @map("cashback_euro")
+  /// Indica se o serviço (ou o seu preço) está pendente de aprovação do admin
+  pendingApproval         Boolean          @default(false) @map("pending_approval")
   whatsappMessageTemplate String?          @map("whatsapp_message_template")
   sortOrder               Int              @default(0) @map("sort_order")
   createdAt               DateTime         @default(now()) @map("created_at")

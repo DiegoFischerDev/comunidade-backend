@@ -86,6 +86,12 @@ export class PartnerController {
     return this.partnerService.listAllServicesAdmin();
   }
 
+  @Get('admin/services/pending')
+  @Roles(Role.ADMIN)
+  async listPendingServicesAdmin() {
+    return this.partnerService.listPendingServicesAdmin();
+  }
+
   @Patch('admin/services/:id')
   @Roles(Role.ADMIN)
   async updateServiceAdmin(
@@ -93,6 +99,12 @@ export class PartnerController {
     @Body() dto: UpdateServiceAdminDto,
   ) {
     return this.partnerService.updateServiceAdmin(id, dto);
+  }
+
+  @Patch('admin/services/:id/approve')
+  @Roles(Role.ADMIN)
+  async approveServiceAdmin(@Param('id') id: string) {
+    return this.partnerService.approveServiceAdmin(id);
   }
 
   @Public()
