@@ -251,11 +251,29 @@ export class AffiliateService {
         tier: true,
         role: true,
         createdAt: true,
+        affiliateCommissionsFromReferrals: {
+          select: { amount: true, currency: true },
+          take: 1,
+        },
       },
     });
     return {
       affiliateCode: affiliate.affiliateCode,
-      referrals: users,
+      referrals: users.map((u) => {
+        const row = u.affiliateCommissionsFromReferrals[0];
+        return {
+          id: u.id,
+          name: u.name,
+          instagram: u.instagram,
+          tier: u.tier,
+          role: u.role,
+          createdAt: u.createdAt,
+          commission:
+            row != null
+              ? { amount: row.amount, currency: row.currency }
+              : null,
+        };
+      }),
     };
   }
 
