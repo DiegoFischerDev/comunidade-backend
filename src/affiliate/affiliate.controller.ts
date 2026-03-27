@@ -95,6 +95,12 @@ export class AffiliateController {
     return this.affiliateService.adminList();
   }
 
+  @Get('admin/:affiliateId/paid-commissions')
+  @Roles(Role.ADMIN)
+  async adminPaidCommissions(@Param('affiliateId') affiliateId: string) {
+    return this.affiliateService.adminPaidCommissionsHistory(affiliateId);
+  }
+
   @Post('admin/:affiliateId/pay')
   @Roles(Role.ADMIN)
   @UseInterceptors(

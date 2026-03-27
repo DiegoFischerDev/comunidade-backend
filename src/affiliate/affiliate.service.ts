@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CashbackPayoutMethod } from '@prisma/client';
+import { AffiliateCommissionCurrency, CashbackPayoutMethod } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { join } from 'path';
 import { unlink } from 'fs/promises';
@@ -13,6 +13,24 @@ import { unlink } from 'fs/promises';
 @Injectable()
 export class AffiliateService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Totais de comissão em painéis de afiliado consideram apenas montantes em EUR. */
+  private sumEurCommissionTotals(
+    commissions: { status: string; currency: string; amount: number }[],
+  ): { pending: number; paid: number } {
+    const pending = commissions
+      .filter(
+        (c) =>
+          c.status === 'PENDING' && c.currency === AffiliateCommissionCurrency.EUR,
+      )
+      .reduce((acc, c) => acc + c.amount, 0);
+    const paid = commissions
+      .filter(
+        (c) => c.status === 'PAID' && c.currency === AffiliateCommissionCurrency.EUR,
+      )
+      .reduce((acc, c) => acc + c.amount, 0);
+    return { pending, paid };
+  }
 
   private normalizeInstagram(value: string): string {
     const clean = value.trim().replace(/\s+/g, '');
@@ -180,15 +198,10 @@ export class AffiliateService {
       },
     });
     if (!affiliate) return null;
-    const pending = affiliate.commissions
-      .filter((c) => c.status === 'PENDING')
-      .reduce((acc, c) => acc + c.amount, 0);
-    const paid = affiliate.commissions
-      .filter((c) => c.status === 'PAID')
-      .reduce((acc, c) => acc + c.amount, 0);
+    const totals = this.sumEurCommissionTotals(affiliate.commissions);
     return {
       ...affiliate,
-      totals: { pending, paid },
+      totals,
     };
   }
 
@@ -294,13 +307,8 @@ export class AffiliateService {
         },
       },
     });
-    const pending = commissions
-      .filter((c) => c.status === 'PENDING')
-      .reduce((acc, c) => acc + c.amount, 0);
-    const paid = commissions
-      .filter((c) => c.status === 'PAID')
-      .reduce((acc, c) => acc + c.amount, 0);
-    return { commissions, totals: { pending, paid } };
+    const totals = this.sumEurCommissionTotals(commissions);
+    return { commissions, totals };
   }
 
   async adminList() {
@@ -317,12 +325,7 @@ export class AffiliateService {
       },
     });
     return affiliates.map((a) => {
-      const pending = a.commissions
-        .filter((c) => c.status === 'PENDING')
-        .reduce((acc, c) => acc + c.amount, 0);
-      const paid = a.commissions
-        .filter((c) => c.status === 'PAID')
-        .reduce((acc, c) => acc + c.amount, 0);
+      const totals = this.sumEurCommissionTotals(a.commissions);
       return {
         ...a,
         referralsByTier: {
@@ -331,8 +334,31 @@ export class AffiliateService {
           partner: a.referredUsers.filter((u) => u.role === 'PARTNER').length,
           admin: a.referredUsers.filter((u) => u.role === 'ADMIN').length,
         },
-        totals: { pending, paid },
+        totals,
       };
+    });
+  }
+
+  async adminPaidCommissionsHistory(affiliateId: string) {
+    const affiliate = await this.prisma.affiliateProfile.findUnique({
+      where: { id: affiliateId },
+      select: { id: true },
+    });
+    if (!affiliate) {
+      throw new NotFoundException('Afiliado não encontrado.');
+    }
+    return this.prisma.affiliateCommission.findMany({
+      where: { affiliateId, status: 'PAID' },
+      orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        paidAt: true,
+        createdAt: true,
+        paymentProofUrl: true,
+        referredUser: { select: { name: true, email: true } },
+      },
     });
   }
 
