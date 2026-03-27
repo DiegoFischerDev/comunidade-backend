@@ -316,7 +316,14 @@ export class AffiliateService {
       orderBy: { createdAt: 'desc' },
       include: {
         user: {
-          select: { id: true, name: true, email: true, role: true, tier: true },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            tier: true,
+            instagram: true,
+          },
         },
         referredUsers: {
           select: { id: true, tier: true, role: true },
