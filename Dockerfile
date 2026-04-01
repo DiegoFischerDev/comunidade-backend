@@ -3,11 +3,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# prisma/ antes de npm ci: o postinstall corre prisma generate e precisa do schema
 COPY package.json package-lock.json* ./
-RUN npm ci
-
 COPY prisma ./prisma/
-RUN npx prisma generate
+RUN npm ci
 
 COPY . .
 RUN npm run build
