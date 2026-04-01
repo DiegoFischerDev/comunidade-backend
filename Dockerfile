@@ -29,4 +29,4 @@ EXPOSE 3001
 
 # Migrações: correr no deploy (ex.: docker compose run --rm … migrate deploy), não aqui —
 # em VPS pequenas, migrate no arranque + Node levava a OOM (exit 137).
-CMD ["node", "dist/main.js"]
+CMD ["node", "dist/src/main.js"]
