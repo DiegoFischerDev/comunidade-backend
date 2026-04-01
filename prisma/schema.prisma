@@ -39,6 +39,11 @@ enum AffiliateCommissionCurrency {
   BRL
 }
 
+enum RegistrationChannel {
+  EMAIL
+  WHATSAPP
+}
+
 model User {
   id                         String    @id @default(cuid())
   email                      String    @unique
@@ -53,6 +58,9 @@ model User {
   emailVerifiedAt            DateTime? @map("email_verified_at")
   emailVerificationCode      String?   @map("email_verification_code")
   emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
+  registrationChannel        RegistrationChannel @default(EMAIL) @map("registration_channel")
+  whatsappVerificationCode      String?   @map("whatsapp_verification_code")
+  whatsappVerificationExpiresAt DateTime? @map("whatsapp_verification_expires_at")
   resetPasswordCode          String?   @map("reset_password_code")
   resetPasswordExpiresAt     DateTime? @map("reset_password_expires_at")
   referredByAffiliateId      String?   @map("referred_by_affiliate_id")

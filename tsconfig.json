@@ -1,4 +1,6 @@
 {
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist"],
   "compilerOptions": {
     "module": "nodenext",
     "moduleResolution": "nodenext",
@@ -15,6 +17,7 @@
     "outDir": "./dist",
     "baseUrl": "./",
     "incremental": true,
+    "composite": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
     "forceConsistentCasingInFileNames": true,
