@@ -10,6 +10,12 @@ import { UpdateUserTierDto } from './dto/update-user-tier.dto';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  @Get('admin/stats')
+  @Roles(Role.ADMIN)
+  adminStats() {
+    return this.usersService.getAdminStats();
+  }
+
   @Get()
   @Roles(Role.ADMIN)
   findAll() {

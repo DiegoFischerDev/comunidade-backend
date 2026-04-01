@@ -1,8 +1,11 @@
+# Usado quando este diretório é a raiz do repositório GitHub (repo só backend).
+
 name: Deploy stage (homologação)
 
 on:
   push:
     branches: [stage]
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
@@ -38,7 +41,10 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          command_timeout: 25m
           script: |
+            set -e
             cd /opt/comunidade-stage
             docker compose pull backend
             docker compose up -d backend
+            docker compose exec -T backend npx prisma migrate deploy

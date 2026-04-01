@@ -2,7 +2,6 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  CommissionPaymentStatus,
   SubscriptionStatus,
   UserTier,
 } from '@prisma/client';
@@ -43,62 +42,58 @@ export class StripeService {
     return n;
   }
 
+  private async createAffiliateCommissionIfEligible(
+    referredUserId: string,
+  ): Promise<void> {
+    const referredUser = await this.prisma.user.findUnique({
+      where: { id: referredUserId },
+      select: {
+        id: true,
+        referredByAffiliateId: true,
+      },
+    });
+    const affiliateId = referredUser?.referredByAffiliateId;
+    if (!affiliateId) return;
+
+    const affiliate = await this.prisma.affiliateProfile.findUnique({
+      where: { id: affiliateId },
+      include: {
+        user: {
+          select: { role: true },
+        },
+      },
+    });
+    if (!affiliate || !affiliate.isActive) return;
+    // Regra de negócio: admin pode ser afiliado, mas não recebe comissão.
+    if (affiliate.user.role === 'ADMIN') return;
+
+    const amount =
+      affiliate.payoutMethod === 'PIX' ? 60 : 10;
+    const currency = affiliate.payoutMethod === 'PIX' ? 'BRL' : 'EUR';
+
+    try {
+      await this.prisma.affiliateCommission.create({
+        data: {
+          affiliateId,
+          referredUserId,
+          amount,
+          currency,
+          status: 'PENDING',
+        },
+      });
+    } catch (error: any) {
+      // idempotência: se já existe comissão para esse indicado, ignorar
+      if (error?.code === 'P2002') return;
+      throw error;
+    }
+  }
+
   /** Valores atuais da anuidade (para exibir no frontend). */
   getMembershipAmounts(): { eurCents: number; pixCentavos: number } {
     return {
       eurCents: this.eurAmountCents,
       pixCentavos: this.pixAmountCentavos,
     };
-  }
-
-  /**
-   * Checkout de comissão (parceiro → RPM) via MB WAY em EUR.
-   */
-  async createMbWayCommissionCheckoutSession(params: {
-    partnerUserId: string;
-    partnerEmail: string;
-    saleId: string;
-    amountCents: number;
-    description: string;
-    successUrl: string;
-    cancelUrl: string;
-  }): Promise<{ url: string }> {
-    const stripe = this.getClient();
-
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      customer_email: params.partnerEmail,
-      line_items: [
-        {
-          price_data: {
-            currency: 'eur',
-            unit_amount: params.amountCents,
-            product_data: {
-              name: 'Pagamento de comissão Comunidade RPM',
-              description: params.description,
-            },
-          },
-          quantity: 1,
-        },
-      ],
-      payment_method_types: ['mb_way'],
-      success_url: params.successUrl,
-      cancel_url: params.cancelUrl,
-      client_reference_id: params.partnerUserId,
-      metadata: {
-        type: 'commission',
-        saleId: params.saleId,
-        partnerUserId: params.partnerUserId,
-      },
-    });
-
-    if (!session.url) {
-      throw new BadRequestException(
-        'Não foi possível criar a sessão de pagamento de comissão.',
-      );
-    }
-
-    return { url: session.url };
   }
 
   /**
@@ -275,22 +270,12 @@ export class StripeService {
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
-        const meta = (session as any).metadata as Stripe.Metadata | undefined;
-        if (meta?.type === 'commission') {
-          await this.handleCommissionCheckoutCompleted(session);
-        } else {
-          await this.handleCheckoutCompleted(session);
-        }
+        await this.handleCheckoutCompleted(session);
         break;
       }
       case 'checkout.session.async_payment_succeeded': {
         const session = event.data.object as Stripe.Checkout.Session;
-        const meta = (session as any).metadata as Stripe.Metadata | undefined;
-        if (meta?.type === 'commission') {
-          await this.handleCommissionCheckoutCompleted(session);
-        } else {
-          await this.handleCheckoutCompleted(session);
-        }
+        await this.handleCheckoutCompleted(session);
         break;
       }
       case 'customer.subscription.updated':
@@ -310,115 +295,6 @@ export class StripeService {
     }
   }
 
-  private async handleCommissionCheckoutCompleted(
-    session: Stripe.Checkout.Session,
-  ): Promise<void> {
-    const sess = session as any;
-    if (sess.payment_status !== 'paid') return;
-
-    const saleId = (sess.metadata?.saleId as string | undefined) || undefined;
-    if (!saleId) return;
-
-    const amountTotal = (sess.amount_total as number | undefined) ?? undefined;
-    const amountEuro =
-      typeof amountTotal === 'number' ? amountTotal / 100 : undefined;
-
-    const sale = await this.prisma.sale.findUnique({
-      where: { id: saleId },
-      include: {
-        user: true,
-        service: true,
-        partner: {
-          include: {
-            user: true,
-          },
-        },
-      },
-    });
-
-    if (!sale) {
-      return;
-    }
-
-    if (sale.commissionPaymentStatus === 'PAID') {
-      return;
-    }
-
-    const updated = await this.prisma.sale.update({
-      where: { id: sale.id },
-      data: {
-        commissionPaymentStatus: CommissionPaymentStatus.PAID,
-        commissionPaidEuro:
-          typeof amountEuro === 'number' ? amountEuro : sale.commissionEuro,
-      },
-      include: {
-        user: true,
-        service: true,
-        partner: {
-          include: {
-            user: true,
-          },
-        },
-      },
-    });
-
-    try {
-      const partnerUser = updated.partner?.user;
-      if (partnerUser?.email) {
-        const methodLabel = 'MB WAY';
-        const clientName = updated.user?.name ?? updated.user?.email ?? '—';
-        const serviceTitle =
-          updated.service?.title ?? updated.serviceTitle ?? '—';
-        const mesAno = `${updated.month.toString().padStart(2, '0')}/${updated.year}`;
-        const valorVenda = updated.amount.toFixed(2);
-        const comissaoEsperada = updated.commissionEuro.toFixed(2);
-        const comissaoPaga = (updated.commissionPaidEuro ?? 0).toFixed(2);
-
-        await sendEmailBase({
-          to: partnerUser.email,
-          subject: 'Confirmação de pagamento de comissão – Comunidade RPM',
-          text:
-            `Olá ${partnerUser.name || ''},\n\n` +
-            `Recebemos o teu pagamento de comissão.\n\n` +
-            `Dados da venda:\n` +
-            `- Cliente: ${clientName}\n` +
-            `- Serviço: ${serviceTitle}\n` +
-            `- Mês/ano: ${mesAno}\n` +
-            `- Valor da venda: ${valorVenda} €\n` +
-            `- Comissão prevista: ${comissaoEsperada} €\n\n` +
-            `Pagamento efetuado:\n` +
-            `- Comissão paga: ${comissaoPaga} €\n` +
-            `- Método: ${methodLabel}\n\n` +
-            `Obrigado pela parceria.\n` +
-            `Equipa Comunidade RPM`,
-          html: `
-            <div style="max-width:640px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827;">
-              <h1 style="font-size:20px;margin-bottom:12px;">Pagamento de comissão confirmado</h1>
-              <p style="margin:0 0 12px;">Olá <strong>${partnerUser.name || ''}</strong>,</p>
-              <p style="margin:0 0 12px;">Recebemos o teu pagamento de comissão para a Comunidade RPM.</p>
-              <h2 style="font-size:16px;margin:16px 0 8px;">Dados da venda</h2>
-              <ul style="margin:0 0 12px;padding-left:20px;">
-                <li>Cliente: <strong>${clientName}</strong></li>
-                <li>Serviço: <strong>${serviceTitle}</strong></li>
-                <li>Mês/ano: <strong>${mesAno}</strong></li>
-                <li>Valor da venda: <strong>${valorVenda} €</strong></li>
-                <li>Comissão prevista: <strong>${comissaoEsperada} €</strong></li>
-              </ul>
-              <h2 style="font-size:16px;margin:16px 0 8px;">Pagamento efetuado</h2>
-              <ul style="margin:0 0 12px;padding-left:20px;">
-                <li>Comissão paga: <strong>${comissaoPaga} €</strong></li>
-                <li>Método de pagamento: <strong>${methodLabel}</strong></li>
-              </ul>
-              <p style="margin:16px 0 0;">Obrigado pela tua parceria.</p>
-              <p style="margin:4px 0 0;">Equipa Comunidade RPM</p>
-            </div>
-          `,
-        });
-      }
-    } catch {
-      // Não falhar o webhook se o email falhar
-    }
-  }
   private async handleCheckoutCompleted(session: Stripe.Checkout.Session): Promise<void> {
     const sess = session as any;
     if (sess.payment_status !== 'paid') return;
@@ -456,6 +332,8 @@ export class StripeService {
         data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
       }),
     ]);
+    await this.recordMembershipPaymentFromCheckoutSession(userId, session);
+    await this.createAffiliateCommissionIfEligible(userId);
 
     try {
       const user = await this.prisma.user.findUnique({
@@ -529,6 +407,9 @@ export class StripeService {
         membershipExpiresAt: isActive ? validUntil : null,
       },
     });
+    if (isActive) {
+      await this.createAffiliateCommissionIfEligible(userId);
+    }
   }
 
   private async handleInvoicePaid(invoice: Stripe.Invoice): Promise<void> {
@@ -557,6 +438,92 @@ export class StripeService {
       where: { id: userId },
       data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
     });
+
+    if (
+      inv.billing_reason === 'subscription_cycle' &&
+      typeof inv.amount_paid === 'number' &&
+      inv.amount_paid > 0
+    ) {
+      await this.recordMembershipPaymentFromInvoice(userId, invoice);
+    }
+
+    await this.createAffiliateCommissionIfEligible(userId);
+  }
+
+  /**
+   * EUR/MB: usa o valor pago na sessão (amount_total). BRL: contabiliza o preço EUR em vigor
+   * (mesma regra de negócio que o painel admin).
+   */
+  private creditedEurFromCheckoutSession(session: Stripe.Checkout.Session): number {
+    const cur =
+      ((session as any).currency as string | undefined)?.toLowerCase() ?? 'eur';
+    if (cur === 'brl') {
+      return Math.round(this.eurAmountCents) / 100;
+    }
+    const total = (session as any).amount_total as number | null | undefined;
+    if (total != null && Number.isFinite(total) && total >= 0) {
+      return Math.round(total) / 100;
+    }
+    return Math.round(this.eurAmountCents) / 100;
+  }
+
+  private creditedEurFromInvoice(invoice: Stripe.Invoice): number {
+    const inv = invoice as any;
+    const cur = (inv.currency as string | undefined)?.toLowerCase() ?? 'eur';
+    const paid = inv.amount_paid as number | undefined;
+    if (paid != null && paid <= 0) return 0;
+    if (cur === 'brl') {
+      return Math.round(this.eurAmountCents) / 100;
+    }
+    if (paid != null && Number.isFinite(paid)) {
+      return Math.round(paid) / 100;
+    }
+    return 0;
+  }
+
+  private async recordMembershipPaymentFromCheckoutSession(
+    userId: string,
+    session: Stripe.Checkout.Session,
+  ): Promise<void> {
+    const sessionId = session.id;
+    if (!sessionId) return;
+    const amountCreditedEur = this.creditedEurFromCheckoutSession(session);
+    try {
+      await this.prisma.membershipPayment.create({
+        data: {
+          userId,
+          stripeCheckoutSessionId: sessionId,
+          amountCreditedEur,
+          stripeCurrency: (session as any).currency ?? null,
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002') return;
+      throw err;
+    }
+  }
+
+  private async recordMembershipPaymentFromInvoice(
+    userId: string,
+    invoice: Stripe.Invoice,
+  ): Promise<void> {
+    const inv = invoice as any;
+    const invoiceId = inv.id as string | undefined;
+    if (!invoiceId) return;
+    const amountCreditedEur = this.creditedEurFromInvoice(invoice);
+    try {
+      await this.prisma.membershipPayment.create({
+        data: {
+          userId,
+          stripeInvoiceId: invoiceId,
+          amountCreditedEur,
+          stripeCurrency: inv.currency ?? null,
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002') return;
+      throw err;
+    }
   }
 }
 

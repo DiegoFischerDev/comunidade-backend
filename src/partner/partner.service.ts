@@ -12,7 +12,6 @@ import { CreatePartnerDto } from './dto/create-partner.dto';
 import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
-import { UpdateServiceAdminDto } from './dto/update-service-admin.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
@@ -234,7 +233,6 @@ export class PartnerService {
             description: true,
             price: true,
             priceOnRequest: true,
-            commission: true,
           },
         },
       },
@@ -400,6 +398,18 @@ export class PartnerService {
           catalogImageUrls: newCatalogImages,
           instagram:
             dto.instagram !== undefined ? dto.instagram : partner.instagram,
+          billingName:
+            dto.billingName !== undefined ? dto.billingName : partner.billingName,
+          billingNif:
+            dto.billingNif !== undefined ? dto.billingNif : partner.billingNif,
+          billingAddress:
+            dto.billingAddress !== undefined
+              ? dto.billingAddress
+              : partner.billingAddress,
+          billingPostalCode:
+            dto.billingPostalCode !== undefined
+              ? dto.billingPostalCode
+              : partner.billingPostalCode,
           ...(whatsappToSet !== undefined && { whatsapp: whatsappToSet }),
         },
       });
@@ -448,7 +458,6 @@ export class PartnerService {
         description: true,
         price: true,
         priceOnRequest: true,
-        commission: true,
         createdAt: true,
       },
     });
@@ -582,36 +591,6 @@ export class PartnerService {
     });
   }
 
-  async listAllServicesAdmin() {
-    return this.prisma.service.findMany({
-      orderBy: { createdAt: 'desc' },
-      include: {
-        partner: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
-    });
-  }
-
-  async updateServiceAdmin(id: string, dto: UpdateServiceAdminDto) {
-    const service = await this.prisma.service.findUnique({
-      where: { id },
-    });
-
-    if (!service) {
-      throw new NotFoundException('Serviço não encontrado.');
-    }
-
-    return this.prisma.service.update({
-      where: { id },
-      data: {
-        commission:
-          dto.commission !== undefined ? dto.commission : service.commission,
-      },
-    });
-  }
+  // Endpoints admin/services removidos (sem aprovação e sem comissão/cashback).
 }
 

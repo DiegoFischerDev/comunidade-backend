@@ -24,15 +24,19 @@ enum SubscriptionStatus {
   EXPIRED
 }
 
-enum SaleStatus {
-  PENDING_PARTNER
-  APPROVED
-  REJECTED
+enum CashbackPayoutMethod {
+  MBWAY
+  PIX
 }
 
-enum CommissionPaymentStatus {
+enum AffiliateCommissionStatus {
   PENDING
   PAID
+}
+
+enum AffiliateCommissionCurrency {
+  EUR
+  BRL
 }
 
 model User {
@@ -44,19 +48,26 @@ model User {
   membershipExpiresAt        DateTime? @map("membership_expires_at")
   name                       String
   whatsapp                   String    @map("whatsapp")
+  instagram                  String?   @map("instagram")
+  profileImageUrl            String?   @map("profile_image_url")
   emailVerifiedAt            DateTime? @map("email_verified_at")
   emailVerificationCode      String?   @map("email_verification_code")
   emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
   resetPasswordCode          String?   @map("reset_password_code")
   resetPasswordExpiresAt     DateTime? @map("reset_password_expires_at")
+  referredByAffiliateId      String?   @map("referred_by_affiliate_id")
+  referredAt                 DateTime? @map("referred_at")
+  referredByCodeSnapshot     String?   @map("referred_by_code_snapshot")
   createdAt                  DateTime  @default(now()) @map("created_at")
   updatedAt                  DateTime  @updatedAt @map("updated_at")
 
-  subscription Subscription?
-  partner      Partner?
+  subscription       Subscription?
+  membershipPayments MembershipPayment[]
+  partner            Partner?
+  affiliateProfile AffiliateProfile?
+  referredByAffiliate AffiliateProfile? @relation("AffiliateReferrals", fields: [referredByAffiliateId], references: [id], onDelete: SetNull)
   leads        Lead[]
-  sales        Sale[]
-  salesCreated Sale[]   @relation("SaleCreatedBy")
+  affiliateCommissionsFromReferrals AffiliateCommission[] @relation("AffiliateCommissionReferredUser")
 }
 
 model Subscription {
@@ -69,6 +80,21 @@ model Subscription {
   validUntil           DateTime           @map("valid_until")
   createdAt            DateTime           @default(now()) @map("created_at")
   updatedAt            DateTime           @updatedAt @map("updated_at")
+}
+
+/// Pagamento de anuidade contabilizado no total admin (histórico imune a mudanças de preço em env).
+model MembershipPayment {
+  id                      String   @id @default(cuid())
+  userId                  String   @map("user_id")
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stripeCheckoutSessionId String?  @unique @map("stripe_checkout_session_id")
+  stripeInvoiceId         String?  @unique @map("stripe_invoice_id")
+  amountCreditedEur       Decimal  @map("amount_credited_eur") @db.Decimal(12, 2)
+  stripeCurrency          String?  @map("stripe_currency")
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("membership_payments")
 }
 
 model Partner {
@@ -84,6 +110,11 @@ model Partner {
   backgroundImageUrl   String?          @map("background_image_url")
   catalogImageUrls     String[]         @default([]) @map("catalog_image_urls")
   instagram            String?          @map("instagram")
+  /// Dados de faturação (para emissão de fatura da comissão em Portugal)
+  billingName          String?          @map("billing_name")
+  billingNif           String?          @map("billing_nif")
+  billingAddress       String?          @map("billing_address")
+  billingPostalCode    String?          @map("billing_postal_code")
   categoryId           String?          @map("category_id")
   category             ProductCategory? @relation(fields: [categoryId], references: [id])
   createdAt            DateTime         @default(now()) @map("created_at")
@@ -91,7 +122,6 @@ model Partner {
 
   services Service[]
   leads    Lead[]
-  sales    Sale[]
 }
 
 model ProductCategory {
@@ -119,13 +149,10 @@ model Service {
   imageUrl                String?          @map("image_url")
   price                   String?
   priceOnRequest          Boolean          @default(false) @map("price_on_request")
-  commission              String?          @map("commission")
   whatsappMessageTemplate String?          @map("whatsapp_message_template")
   sortOrder               Int              @default(0) @map("sort_order")
   createdAt               DateTime         @default(now()) @map("created_at")
   updatedAt               DateTime         @updatedAt @map("updated_at")
-
-  sales Sale[]
 
   @@index([categoryId])
   @@index([partnerId])
@@ -144,34 +171,39 @@ model Lead {
   @@unique([partnerId, userId], name: "lead_partner_user_unique")
 }
 
-model Sale {
-  id                     String                  @id @default(cuid())
-  partnerId              String                  @map("partner_id")
-  partner                Partner                 @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  userId                 String?                 @map("user_id")
-  user                   User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
-  createdByUserId        String?                 @map("created_by_user_id")
-  createdByUser          User?                   @relation("SaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  serviceId              String?                 @map("service_id")
-  service                Service?               @relation(fields: [serviceId], references: [id], onDelete: SetNull)
-  serviceTitle           String?                 @map("service_title")
-  month                  Int
-  year                   Int
-  amount                 Float                   @map("amount")
-  commissionEuro         Float                   @map("commission_euro")
-  status                 SaleStatus              @default(PENDING_PARTNER)
-  commissionPaymentStatus CommissionPaymentStatus @default(PENDING) @map("commission_payment_status")
-  /// Valor efetivamente pago pelo parceiro de comissão, em euros
-  commissionPaidEuro     Float?                  @map("commission_paid_euro")
-  cashbackRequestedAt    DateTime?               @map("cashback_requested_at")
-  cashbackMbwayNumber    String?                 @map("cashback_mbway_number")
-  cashbackMbwayName      String?                 @map("cashback_mbway_name")
-  cashbackPaidAt         DateTime?               @map("cashback_paid_at")
-  createdAt              DateTime                @default(now()) @map("created_at")
-  updatedAt              DateTime                @updatedAt @map("updated_at")
+model AffiliateProfile {
+  id               String               @id @default(cuid())
+  userId           String               @unique @map("user_id")
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instagramHandle  String               @map("instagram_handle")
+  affiliateCode    String               @unique @map("affiliate_code")
+  payoutMethod     CashbackPayoutMethod @default(MBWAY) @map("payout_method")
+  mbwayNumber      String?              @map("mbway_number")
+  mbwayName        String?              @map("mbway_name")
+  pixKey           String?              @map("pix_key")
+  pixName          String?              @map("pix_name")
+  termsAcceptedAt  DateTime             @map("terms_accepted_at")
+  isActive         Boolean              @default(true) @map("is_active")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
 
-  @@index([partnerId])
-  @@index([userId])
-  @@index([status])
-  @@index([commissionPaymentStatus])
+  referredUsers User[] @relation("AffiliateReferrals")
+  commissions  AffiliateCommission[]
+}
+
+model AffiliateCommission {
+  id             String                    @id @default(cuid())
+  affiliateId    String                    @map("affiliate_id")
+  affiliate      AffiliateProfile          @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  referredUserId String                    @unique @map("referred_user_id")
+  referredUser   User                      @relation("AffiliateCommissionReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
+  amount         Float
+  currency       AffiliateCommissionCurrency
+  status         AffiliateCommissionStatus @default(PENDING)
+  paymentProofUrl String?                  @map("payment_proof_url")
+  paidAt         DateTime?                 @map("paid_at")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+
+  @@index([affiliateId, status])
 }
