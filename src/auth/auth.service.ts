@@ -159,11 +159,20 @@ export class AuthService {
         },
       });
 
+      const registrationDigits = (
+        process.env.WHATSAPP_REGISTRATION_NUMBER || '351927398547'
+      ).replace(/\D/g, '');
+
       return {
         user,
         requiresEmailVerification: false,
         requiresWhatsappVerification: true,
-        whatsappOpenUrl: this.buildWhatsappRegistrationUrl(user.name, verificationCode),
+        whatsappVerificationCode: verificationCode,
+        whatsappRegistrationNumber: registrationDigits,
+        whatsappOpenUrl: this.buildWhatsappRegistrationUrl(
+          user.name,
+          verificationCode,
+        ),
       };
     }
 
