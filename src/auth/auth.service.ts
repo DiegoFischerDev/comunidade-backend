@@ -171,7 +171,7 @@ export class AuthService {
       data: {
         email: dto.email.toLowerCase().trim(),
         name: dto.name,
-        whatsapp: this.normalizeWhatsapp(dto.whatsapp!),
+        whatsapp: '',
         passwordHash,
         role: Role.USER,
         registrationChannel: $Enums.RegistrationChannel.EMAIL,
