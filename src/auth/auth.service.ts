@@ -93,7 +93,7 @@ export class AuthService {
         select: { id: true, isActive: true },
       });
       if (!affiliate || !affiliate.isActive) {
-        throw new BadRequestException('Código de afiliado inválido.');
+        throw new BadRequestException('@ de quem te indicou inválido.');
       }
       referredByAffiliateId = affiliate.id;
       referredByCodeSnapshot = rawAffiliateCode;
