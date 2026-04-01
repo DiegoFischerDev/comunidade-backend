@@ -415,6 +415,17 @@ docker compose exec -T backend npx prisma migrate deploy
 docker compose exec -T backend npm run seed:admin
 ```
 
+### Seed do admin (requer variáveis no .env da VPS)
+
+Para o `npm run seed:admin` funcionar dentro do container (imagem de produção), defina no `.env` do ambiente:
+
+```env
+ADMIN_EMAIL="admin@seudominio.com"
+ADMIN_PASSWORD="SENHA_FORTE"
+ADMIN_NAME="Admin"
+ADMIN_WHATSAPP=""
+```
+
 ### Troubleshooting Postgres (usuário e database)
 
 Se você precisar executar `psql` dentro do container (para debugar migrations, checar tabelas/colunas, etc.), **não assuma** que o usuário é `postgres`. Neste projeto, normalmente o container sobe com:
