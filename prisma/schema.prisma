@@ -24,17 +24,6 @@ enum SubscriptionStatus {
   EXPIRED
 }
 
-enum SaleStatus {
-  PENDING_PARTNER
-  APPROVED
-  REJECTED
-}
-
-enum CommissionPaymentStatus {
-  PENDING
-  PAID
-}
-
 enum CashbackPayoutMethod {
   MBWAY
   PIX
@@ -78,8 +67,6 @@ model User {
   affiliateProfile AffiliateProfile?
   referredByAffiliate AffiliateProfile? @relation("AffiliateReferrals", fields: [referredByAffiliateId], references: [id], onDelete: SetNull)
   leads        Lead[]
-  sales        Sale[]
-  salesCreated Sale[]   @relation("SaleCreatedBy")
   affiliateCommissionsFromReferrals AffiliateCommission[] @relation("AffiliateCommissionReferredUser")
 }
 
@@ -135,7 +122,6 @@ model Partner {
 
   services Service[]
   leads    Lead[]
-  sales    Sale[]
 }
 
 model ProductCategory {
@@ -163,17 +149,10 @@ model Service {
   imageUrl                String?          @map("image_url")
   price                   String?
   priceOnRequest          Boolean          @default(false) @map("price_on_request")
-  commission              String?          @map("commission")
-  /// Valor de cashback em euros definido pelo admin para este serviço
-  cashbackEuro            Float?           @map("cashback_euro")
-  /// Indica se o serviço (ou o seu preço) está pendente de aprovação do admin
-  pendingApproval         Boolean          @default(false) @map("pending_approval")
   whatsappMessageTemplate String?          @map("whatsapp_message_template")
   sortOrder               Int              @default(0) @map("sort_order")
   createdAt               DateTime         @default(now()) @map("created_at")
   updatedAt               DateTime         @updatedAt @map("updated_at")
-
-  sales Sale[]
 
   @@index([categoryId])
   @@index([partnerId])
@@ -190,56 +169,6 @@ model Lead {
   @@index([partnerId])
   @@index([userId])
   @@unique([partnerId, userId], name: "lead_partner_user_unique")
-}
-
-model Sale {
-  id                     String                  @id @default(cuid())
-  partnerId              String                  @map("partner_id")
-  partner                Partner                 @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  userId                 String?                 @map("user_id")
-  user                   User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
-  createdByUserId        String?                 @map("created_by_user_id")
-  createdByUser          User?                   @relation("SaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  serviceId              String?                 @map("service_id")
-  service                Service?               @relation(fields: [serviceId], references: [id], onDelete: SetNull)
-  serviceTitle           String?                 @map("service_title")
-  month                  Int
-  year                   Int
-  amount                 Float                   @map("amount")
-  commissionEuro         Float                   @map("commission_euro")
-  status                 SaleStatus              @default(PENDING_PARTNER)
-  commissionPaymentStatus CommissionPaymentStatus @default(PENDING) @map("commission_payment_status")
-  /// Valor efetivamente pago pelo parceiro de comissão, em euros
-  commissionPaidEuro     Float?                  @map("commission_paid_euro")
-  /// Se o parceiro solicitou emissão de fatura pela comissão
-  wantsInvoice           Boolean                 @default(false) @map("wants_invoice")
-  /// Dados para emissão de fatura (Portugal)
-  invoiceName            String?                 @map("invoice_name")
-  invoiceNif             String?                 @map("invoice_nif")
-  invoiceAddress         String?                 @map("invoice_address")
-  invoicePostalCode      String?                 @map("invoice_postal_code")
-  invoiceRequestedAt     DateTime?               @map("invoice_requested_at")
-  /// URL do PDF da fatura enviada ao parceiro
-  invoicePdfUrl          String?                 @map("invoice_pdf_url")
-  /// Data/hora em que a fatura foi enviada ao parceiro
-  invoiceSentAt          DateTime?               @map("invoice_sent_at")
-  cashbackRequestedAt    DateTime?               @map("cashback_requested_at")
-  cashbackPayoutMethod   CashbackPayoutMethod?   @map("cashback_payout_method")
-  cashbackMbwayNumber    String?                 @map("cashback_mbway_number")
-  cashbackMbwayName      String?                 @map("cashback_mbway_name")
-  cashbackPixKey         String?                 @map("cashback_pix_key")
-  cashbackPixName        String?                 @map("cashback_pix_name")
-  /// Comprovante do pagamento do cashback (admin → usuário)
-  cashbackPaymentProofUrl String?                @map("cashback_payment_proof_url")
-  cashbackPaidAt         DateTime?               @map("cashback_paid_at")
-  paymentProofUrl        String?                 @map("payment_proof_url")
-  createdAt              DateTime                @default(now()) @map("created_at")
-  updatedAt              DateTime                @updatedAt @map("updated_at")
-
-  @@index([partnerId])
-  @@index([userId])
-  @@index([status])
-  @@index([commissionPaymentStatus])
 }
 
 model AffiliateProfile {

@@ -12,7 +12,6 @@ import { CreatePartnerDto } from './dto/create-partner.dto';
 import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
-import { UpdateServiceAdminDto } from './dto/update-service-admin.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
@@ -234,9 +233,6 @@ export class PartnerService {
             description: true,
             price: true,
             priceOnRequest: true,
-            commission: true,
-            cashbackEuro: true,
-            pendingApproval: true,
           },
         },
       },
@@ -462,9 +458,6 @@ export class PartnerService {
         description: true,
         price: true,
         priceOnRequest: true,
-        commission: true,
-        cashbackEuro: true,
-        pendingApproval: true,
         createdAt: true,
       },
     });
@@ -490,7 +483,6 @@ export class PartnerService {
         description: dto.description?.trim() ?? '',
         price: priceOnRequest ? null : (dto.price?.trim() || null),
         priceOnRequest,
-        pendingApproval: true,
       },
     });
   }
@@ -523,10 +515,6 @@ export class PartnerService {
       );
     }
 
-    const priceChanged =
-      priceOnRequest !== service.priceOnRequest ||
-      (price ?? null) !== (service.price ?? null);
-
     return this.prisma.service.update({
       where: { id: service.id },
       data: {
@@ -534,7 +522,6 @@ export class PartnerService {
         description: description ?? service.description,
         price: price?.trim() || null,
         priceOnRequest,
-        ...(priceChanged ? { pendingApproval: true } : {}),
       },
     });
   }
@@ -604,72 +591,6 @@ export class PartnerService {
     });
   }
 
-  async listAllServicesAdmin() {
-    return this.prisma.service.findMany({
-      orderBy: { createdAt: 'desc' },
-      include: {
-        partner: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
-    });
-  }
-
-  async listPendingServicesAdmin() {
-    return this.prisma.service.findMany({
-      where: { pendingApproval: true },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        partner: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
-    });
-  }
-
-  async updateServiceAdmin(id: string, dto: UpdateServiceAdminDto) {
-    const service = await this.prisma.service.findUnique({
-      where: { id },
-    });
-
-    if (!service) {
-      throw new NotFoundException('Serviço não encontrado.');
-    }
-
-    return this.prisma.service.update({
-      where: { id },
-      data: {
-        commission:
-          dto.commission !== undefined ? dto.commission : service.commission,
-        cashbackEuro:
-          dto.cashbackEuro !== undefined
-            ? dto.cashbackEuro
-            : service.cashbackEuro,
-      },
-    });
-  }
-
-  async approveServiceAdmin(id: string) {
-    const service = await this.prisma.service.findUnique({
-      where: { id },
-    });
-
-    if (!service) {
-      throw new NotFoundException('Serviço não encontrado.');
-    }
-
-    return this.prisma.service.update({
-      where: { id },
-      data: {
-        pendingApproval: false,
-      },
-    });
-  }
+  // Endpoints admin/services removidos (sem aprovação e sem comissão/cashback).
 }
 

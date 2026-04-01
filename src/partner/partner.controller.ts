@@ -15,7 +15,6 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
-import { UpdateServiceAdminDto } from './dto/update-service-admin.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
@@ -78,33 +77,6 @@ export class PartnerController {
   @Roles(Role.ADMIN)
   async deleteCategory(@Param('id') id: string) {
     return this.partnerService.deleteCategory(id);
-  }
-
-  @Get('admin/services')
-  @Roles(Role.ADMIN)
-  async listAllServicesAdmin() {
-    return this.partnerService.listAllServicesAdmin();
-  }
-
-  @Get('admin/services/pending')
-  @Roles(Role.ADMIN)
-  async listPendingServicesAdmin() {
-    return this.partnerService.listPendingServicesAdmin();
-  }
-
-  @Patch('admin/services/:id')
-  @Roles(Role.ADMIN)
-  async updateServiceAdmin(
-    @Param('id') id: string,
-    @Body() dto: UpdateServiceAdminDto,
-  ) {
-    return this.partnerService.updateServiceAdmin(id, dto);
-  }
-
-  @Patch('admin/services/:id/approve')
-  @Roles(Role.ADMIN)
-  async approveServiceAdmin(@Param('id') id: string) {
-    return this.partnerService.approveServiceAdmin(id);
   }
 
   @Public()

@@ -377,6 +377,44 @@ docker compose exec backend npx prisma migrate deploy
 
 Teste: **https://stage.rafaapelomundo.com** e **https://api-stage.rafaapelomundo.com**.
 
+---
+
+## Banco de dados (Postgres) na VPS
+
+Neste projeto, **o Postgres roda em container na própria VPS**, dentro do `docker compose` de cada ambiente:
+
+- **Produção**: `/opt/comunidade-prod` com volume **`postgres_data_prod`**
+- **Stage**: `/opt/comunidade-stage` com volume **`postgres_data_stage`**
+
+O backend liga ao Postgres via rede do compose:
+
+- `DATABASE_URL=postgresql://comunidade:${POSTGRES_PASSWORD}@postgres:5432/comunidade?schema=public`
+
+Isso significa que:
+
+- Os dados **persistem** enquanto o volume existir
+- Um **reset total** do banco (para eliminar inconsistências/drift) é feito removendo o volume (`docker compose down -v`)
+
+### Reset total do banco (Stage)
+
+```bash
+cd /opt/comunidade-stage
+docker compose down -v
+docker compose up -d
+docker compose exec -T backend npx prisma migrate deploy
+docker compose exec -T backend npm run seed:admin
+```
+
+### Reset total do banco (Produção)
+
+```bash
+cd /opt/comunidade-prod
+docker compose down -v
+docker compose up -d
+docker compose exec -T backend npx prisma migrate deploy
+docker compose exec -T backend npm run seed:admin
+```
+
 ### Troubleshooting Postgres (usuário e database)
 
 Se você precisar executar `psql` dentro do container (para debugar migrations, checar tabelas/colunas, etc.), **não assuma** que o usuário é `postgres`. Neste projeto, normalmente o container sobe com:
