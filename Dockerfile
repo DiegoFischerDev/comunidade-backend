@@ -27,4 +27,6 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+# Migrações: correr no deploy (ex.: docker compose run --rm … migrate deploy), não aqui —
+# em VPS pequenas, migrate no arranque + Node levava a OOM (exit 137).
+CMD ["node", "dist/main.js"]
