@@ -201,6 +201,11 @@ export class AuthService {
     });
 
     try {
+      if (!user.email) {
+        throw new ServiceUnavailableException(
+          'E-mail do utilizador não está configurado.',
+        );
+      }
       const subject = 'Confirme o seu e-mail na Comunidade RPM';
       const text = `Olá ${user.name},
 
@@ -417,6 +422,11 @@ Se não foi você que iniciou este registo, pode ignorar esta mensagem.`;
     });
 
     try {
+      if (!user.email) {
+        throw new ServiceUnavailableException(
+          'E-mail do utilizador não está configurado.',
+        );
+      }
       const subject = 'Pedido de redefinição de senha – Comunidade RPM';
       const text = `Olá ${user.name},
 
@@ -529,6 +539,11 @@ Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
     });
 
     try {
+      if (!user.email) {
+        throw new ServiceUnavailableException(
+          'E-mail do utilizador não está configurado.',
+        );
+      }
       const subject = 'Novo código de confirmação da Comunidade RPM';
       const text = `Olá ${user.name},
 
