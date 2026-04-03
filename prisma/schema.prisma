@@ -44,6 +44,21 @@ enum RegistrationChannel {
   WHATSAPP
 }
 
+model WhatsappRegistrationRequest {
+  id                    String   @id @default(cuid())
+  code                  String   @unique
+  name                  String
+  passwordHash          String   @map("password_hash")
+  affiliateCodeSnapshot String?  @map("affiliate_code_snapshot")
+  indicadoPor           String?  @map("indicado_por")
+  referredByAffiliateId String?  @map("referred_by_affiliate_id")
+  expiresAt             DateTime @map("expires_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("whatsapp_registration_requests")
+}
+
 model User {
   id                         String    @id @default(cuid())
   email                      String?   @unique
