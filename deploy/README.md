@@ -57,12 +57,15 @@ NEXT_PUBLIC_API_URL=https://api-stage.seudominio.com
 # Cal.com (webhook na API — mesmo segredo que no painel Cal.com)
 CALCOM_WEBHOOK_SECRET=whsec_...
 
+# Mesmo valor no secret do GitHub Actions do frontend (build-arg). O compose abaixo repete para o container.
+NEXT_PUBLIC_CALCOM_EMBED_URL=https://cal.com/seu-usuario/30min
+
 # Opcional — preços da taxa “novo agendamento Rafa” (default 2000 se omitir no compose antigo)
 STRIPE_RAFA_CALL_EUR_CENTS=2000
 STRIPE_RAFA_CALL_PIX_BRL=2000
 ```
 
-A URL do embed Cal.com (`NEXT_PUBLIC_CALCOM_EMBED_URL`) entra no **build** da imagem do frontend: defina o secret `NEXT_PUBLIC_CALCOM_EMBED_URL_STAGE` no GitHub Actions do repositório do frontend e faça push na branch `stage` para rebuild.
+A URL do Cal.com (`NEXT_PUBLIC_CALCOM_EMBED_URL`) tem de existir no **build** da imagem do frontend (`ARG` no Dockerfile). No GitHub: secret `NEXT_PUBLIC_CALCOM_EMBED_URL_STAGE` (branch `stage`) ou `NEXT_PUBLIC_CALCOM_EMBED_URL` (main), depois push para gerar nova imagem. O `docker-compose` na VPS também pode declarar `NEXT_PUBLIC_CALCOM_EMBED_URL` no serviço `frontend` (lido do `.env`) para manter documentação alinhada; sem rebuild da imagem, o valor não entra no JavaScript do browser.
 
 - Ajuste os `server_name` em `nginx.stage.conf`. Stage usa portas **8080** e **8443** no host para não conflitar com produção.
 
