@@ -1,7 +1,7 @@
-import { IsEmail } from 'class-validator';
+import { IsString, MinLength } from 'class-validator';
 
 export class ForgotPasswordDto {
-  @IsEmail()
-  email: string;
+  @IsString()
+  @MinLength(1, { message: 'WhatsApp é obrigatório' })
+  whatsapp: string;
 }
-

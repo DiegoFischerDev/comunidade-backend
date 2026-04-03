@@ -325,11 +325,16 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
+    const normalizedWhatsapp = dto.whatsapp.replace(/\D/g, '');
+    if (!normalizedWhatsapp) {
+      throw new UnauthorizedException('WhatsApp ou senha inválidos.');
+    }
+
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase().trim() },
+      where: { whatsapp: normalizedWhatsapp },
     });
     if (!user) {
-      throw new UnauthorizedException('E-mail ou senha inválidos.');
+      throw new UnauthorizedException('WhatsApp ou senha inválidos.');
     }
 
     if (!user.emailVerifiedAt) {
@@ -350,7 +355,7 @@ export class AuthService {
 
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) {
-      throw new UnauthorizedException('E-mail ou senha inválidos.');
+      throw new UnauthorizedException('WhatsApp ou senha inválidos.');
     }
     const token = this.signAuthJwt({
       id: user.id,
@@ -362,6 +367,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         role: user.role,
+        whatsapp: user.whatsapp,
       },
       token,
     };
@@ -408,15 +414,18 @@ export class AuthService {
     return { success: true };
   }
 
-  async requestPasswordReset(email: string) {
-    const normalizedEmail = email.toLowerCase().trim();
+  async requestPasswordReset(whatsappRaw: string) {
+    const normalizedWhatsapp = whatsappRaw.replace(/\D/g, '');
+
+    if (!normalizedWhatsapp) {
+      return { success: true };
+    }
 
     const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
+      where: { whatsapp: normalizedWhatsapp },
     });
 
     if (!user) {
-      // Não expomos que o utilizador não existe
       return { success: true };
     }
 
@@ -431,14 +440,20 @@ export class AuthService {
       },
     });
 
-    try {
-      if (!user.email) {
-        throw new ServiceUnavailableException(
-          'E-mail do utilizador não está configurado.',
-        );
-      }
-      const subject = 'Pedido de redefinição de senha – Comunidade RPM';
-      const text = `Olá ${user.name},
+    const waText = `Olá ${user.name},
+
+Recebemos um pedido para redefinir a sua palavra-passe na Comunidade RPM.
+
+Utilize este código no site (válido por 30 minutos): ${resetCode}
+
+Se não foi você, ignore esta mensagem.`;
+
+    await this.sendEvolutionText(normalizedWhatsapp, waText);
+
+    if (user.email) {
+      try {
+        const subject = 'Pedido de redefinição de senha – Comunidade RPM';
+        const text = `Olá ${user.name},
 
 Recebemos um pedido para redefinir a sua senha na Comunidade RPM.
 
@@ -450,37 +465,36 @@ Este código é válido por 30 minutos.
 
 Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
 
-      const html = `<p>Olá ${user.name},</p>
+        const html = `<p>Olá ${user.name},</p>
 <p>Recebemos um pedido para redefinir a sua senha na <strong>Comunidade RPM</strong>.</p>
 <p>Utilize o código abaixo para criar uma nova senha:</p>
 <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${resetCode}</p>
 <p>Este código é válido por 30 minutos.</p>
 <p>Se não foi você que fez este pedido, pode ignorar esta mensagem.</p>`;
 
-      await sendEmailBase({
-        to: user.email,
-        subject,
-        text,
-        html,
-      });
-    } catch {
-      throw new ServiceUnavailableException(
-        'Não foi possível enviar o e-mail de recuperação de senha. Tente novamente mais tarde.',
-      );
+        await sendEmailBase({
+          to: user.email,
+          subject,
+          text,
+          html,
+        });
+      } catch {
+        // WhatsApp já foi tentado; e-mail é opcional
+      }
     }
 
     return { success: true };
   }
 
   async resetPassword(
-    email: string,
+    whatsappRaw: string,
     code: string,
     newPassword: string,
   ) {
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedWhatsapp = whatsappRaw.replace(/\D/g, '');
 
     const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
+      where: { whatsapp: normalizedWhatsapp },
     });
 
     if (

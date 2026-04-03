@@ -77,14 +77,14 @@ export class AuthController {
   @Public()
   @Post('forgot-password')
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.requestPasswordReset(dto.email);
+    return this.authService.requestPasswordReset(dto.whatsapp);
   }
 
   @Public()
   @Post('reset-password')
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(
-      dto.email,
+      dto.whatsapp,
       dto.code,
       dto.newPassword,
     );
