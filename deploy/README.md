@@ -53,7 +53,16 @@ POSTGRES_PASSWORD=outra_senha_postgres_stage
 JWT_SECRET=outro_jwt_stage
 FRONTEND_URL=https://stage.seudominio.com
 NEXT_PUBLIC_API_URL=https://api-stage.seudominio.com
+
+# Cal.com (webhook na API — mesmo segredo que no painel Cal.com)
+CALCOM_WEBHOOK_SECRET=whsec_...
+
+# Opcional — preços da taxa “novo agendamento Rafa” (default 2000 se omitir no compose antigo)
+STRIPE_RAFA_CALL_EUR_CENTS=2000
+STRIPE_RAFA_CALL_PIX_BRL=2000
 ```
+
+A URL do embed Cal.com (`NEXT_PUBLIC_CALCOM_EMBED_URL`) entra no **build** da imagem do frontend: defina o secret `NEXT_PUBLIC_CALCOM_EMBED_URL_STAGE` no GitHub Actions do repositório do frontend e faça push na branch `stage` para rebuild.
 
 - Ajuste os `server_name` em `nginx.stage.conf`. Stage usa portas **8080** e **8443** no host para não conflitar com produção.
 

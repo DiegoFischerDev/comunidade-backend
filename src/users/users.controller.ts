@@ -5,6 +5,7 @@ import { Role } from '@prisma/client';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { UpdateUserTierDto } from './dto/update-user-tier.dto';
+import { UpdateUserRafacallDto } from './dto/update-user-rafacall.dto';
 
 @Controller('users')
 export class UsersController {
@@ -38,6 +39,12 @@ export class UsersController {
   @Roles(Role.ADMIN)
   updateTier(@Param('id') id: string, @Body() dto: UpdateUserTierDto) {
     return this.usersService.updateTier(id, dto);
+  }
+
+  @Patch(':id/rafacall')
+  @Roles(Role.ADMIN)
+  updateRafacall(@Param('id') id: string, @Body() dto: UpdateUserRafacallDto) {
+    return this.usersService.updateRafacall(id, dto);
   }
 
   @Delete(':id')

@@ -7,6 +7,22 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Role, UserTier } from '@prisma/client';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserTierDto } from './dto/update-user-tier.dto';
+import { UpdateUserRafacallDto } from './dto/update-user-rafacall.dto';
+
+const adminUserSelect = {
+  id: true,
+  name: true,
+  email: true,
+  whatsapp: true,
+  instagram: true,
+  profileImageUrl: true,
+  role: true,
+  tier: true,
+  membershipExpiresAt: true,
+  rafaCallSchedulingUnlocked: true,
+  rafaCallSlotEndsAt: true,
+  createdAt: true,
+} as const;
 
 @Injectable()
 export class UsersService {
@@ -64,18 +80,7 @@ export class UsersService {
   findAll() {
     return this.prisma.user.findMany({
       orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        whatsapp: true,
-        instagram: true,
-        profileImageUrl: true,
-        role: true,
-        tier: true,
-        membershipExpiresAt: true,
-        createdAt: true,
-      },
+      select: adminUserSelect,
     });
   }
 
@@ -107,18 +112,7 @@ export class UsersService {
         }),
         ...(dto.whatsapp !== undefined && { whatsapp: dto.whatsapp }),
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        whatsapp: true,
-        instagram: true,
-        profileImageUrl: true,
-        role: true,
-        tier: true,
-        membershipExpiresAt: true,
-        createdAt: true,
-      },
+      select: adminUserSelect,
     });
   }
 
@@ -136,18 +130,38 @@ export class UsersService {
         membershipExpiresAt:
           dto.tier === 'MEMBER' ? oneYearFromNow : null,
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        whatsapp: true,
-        instagram: true,
-        profileImageUrl: true,
-        role: true,
-        tier: true,
-        membershipExpiresAt: true,
-        createdAt: true,
-      },
+      select: adminUserSelect,
+    });
+  }
+
+  async updateRafacall(id: string, dto: UpdateUserRafacallDto) {
+    const existing = await this.prisma.user.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+    const data: {
+      rafaCallSchedulingUnlocked?: boolean;
+      rafaCallSlotEndsAt?: Date | null;
+    } = {};
+    if (dto.rafaCallSchedulingUnlocked !== undefined) {
+      data.rafaCallSchedulingUnlocked = dto.rafaCallSchedulingUnlocked;
+    }
+    if (dto.rafaCallSlotEndsAt !== undefined) {
+      data.rafaCallSlotEndsAt =
+        dto.rafaCallSlotEndsAt === null
+          ? null
+          : new Date(dto.rafaCallSlotEndsAt);
+    }
+    if (Object.keys(data).length === 0) {
+      return this.prisma.user.findUniqueOrThrow({
+        where: { id },
+        select: adminUserSelect,
+      });
+    }
+    return this.prisma.user.update({
+      where: { id },
+      data,
+      select: adminUserSelect,
     });
   }
 
@@ -155,18 +169,7 @@ export class UsersService {
     return this.prisma.user.update({
       where: { id },
       data: { role },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        whatsapp: true,
-        instagram: true,
-        profileImageUrl: true,
-        role: true,
-        tier: true,
-        membershipExpiresAt: true,
-        createdAt: true,
-      },
+      select: adminUserSelect,
     });
   }
 
