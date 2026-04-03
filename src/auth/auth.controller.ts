@@ -3,6 +3,7 @@ import {
   Post,
   Body,
   Get,
+  Query,
   UseGuards,
   Patch,
   Headers,
@@ -46,6 +47,13 @@ export class AuthController {
       dto.code,
       dto.whatsapp,
     );
+  }
+
+  /** Polling do browser após registo: devolve JWT quando a conta for criada no WhatsApp. */
+  @Public()
+  @Get('whatsapp/registration-poll')
+  async pollWhatsappRegistration(@Query('token') token?: string) {
+    return this.authService.pollWhatsappRegistrationBrowser(token ?? '');
   }
 
   @Public()

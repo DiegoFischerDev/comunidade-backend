@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { join } from 'path';
 import { unlink } from 'fs/promises';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -62,6 +63,22 @@ export class AuthService {
 
   private generateVerificationCode(): string {
     return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  private generateBrowserSessionToken(): string {
+    return randomBytes(32).toString('hex');
+  }
+
+  private signAuthJwt(user: {
+    id: string;
+    email: string | null;
+    role: Role;
+  }): string {
+    return this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    });
   }
 
   private getVerificationExpiryDate(): Date {
@@ -123,12 +140,14 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
     const verificationCode = this.generateVerificationCode();
+    const browserSessionToken = this.generateBrowserSessionToken();
     const verificationExpiresAt = this.getVerificationExpiryDate();
     // Em vez de criar o utilizador agora, criamos um "pedido de registo" e só
     // criamos o User quando o Evolution confirmar o WhatsApp com este código.
     await this.prisma.whatsappRegistrationRequest.create({
       data: {
         code: verificationCode,
+        browserSessionToken,
         name: dto.name.trim(),
         passwordHash,
         affiliateCodeSnapshot: referredByCodeSnapshot,
@@ -159,6 +178,7 @@ export class AuthService {
         dto.name.trim(),
         verificationCode,
       ),
+      whatsappBrowserSessionToken: browserSessionToken,
     };
   }
 
@@ -176,8 +196,10 @@ export class AuthService {
     const duplicateMsg =
       'Esse número de WhatsApp já está em uso — já tem conta ativa. Se perdeu a palavra-passe, use "Esqueci a senha" no site.';
 
+    const communityUrl =
+      process.env.FRONTEND_URL?.replace(/\/$/, '') || 'http://localhost:3000';
     const welcomeMsg =
-      'Bem-vindo(a) à Comunidade RPM! A sua conta foi ativada. Já pode entrar no site com o seu WhatsApp e palavra-passe.';
+      `Bem-vindo(a) à Comunidade RPM! A sua conta foi ativada. Já pode acessar a comunidade com o seu WhatsApp e palavra-passe.\n\n${communityUrl}`;
 
     const req = await this.prisma.whatsappRegistrationRequest.findUnique({
       where: { code: trimmedCode },
@@ -205,8 +227,11 @@ export class AuthService {
       return { ok: true };
     }
 
+    const handoffExpires = new Date();
+    handoffExpires.setMinutes(handoffExpires.getMinutes() + 30);
+
     await this.prisma.$transaction(async (tx) => {
-      await tx.user.create({
+      const created = await tx.user.create({
         data: {
           email: null,
           name: req.name,
@@ -222,6 +247,14 @@ export class AuthService {
         },
       });
 
+      await tx.whatsappRegistrationBrowserHandoff.create({
+        data: {
+          sessionToken: req.browserSessionToken,
+          userId: created.id,
+          expiresAt: handoffExpires,
+        },
+      });
+
       await tx.whatsappRegistrationRequest.delete({
         where: { id: req.id },
       });
@@ -229,6 +262,66 @@ export class AuthService {
 
     await this.sendEvolutionText(normalizedFrom, welcomeMsg);
     return { ok: true };
+  }
+
+  /**
+   * O browser faz polling com o token opaco recebido em /auth/register até a conta
+   * ser criada no WhatsApp; devolve JWT uma única vez.
+   */
+  async pollWhatsappRegistrationBrowser(rawToken: string) {
+    const token = rawToken.trim();
+    if (!token) {
+      throw new BadRequestException('Token em falta.');
+    }
+
+    const handoff = await this.prisma.whatsappRegistrationBrowserHandoff.findUnique(
+      {
+        where: { sessionToken: token },
+        include: {
+          user: { select: { id: true, email: true, role: true, whatsapp: true } },
+        },
+      },
+    );
+
+    if (handoff) {
+      if (handoff.consumedAt) {
+        return { status: 'consumed' as const };
+      }
+      const now = new Date();
+      if (handoff.expiresAt < now) {
+        return { status: 'expired' as const };
+      }
+      await this.prisma.whatsappRegistrationBrowserHandoff.update({
+        where: { id: handoff.id },
+        data: { consumedAt: now },
+      });
+      const u = handoff.user;
+      const jwt = this.signAuthJwt({
+        id: u.id,
+        email: u.email,
+        role: u.role,
+      });
+      return {
+        status: 'ready' as const,
+        token: jwt,
+        user: {
+          id: u.id,
+          email: u.email,
+          role: u.role,
+          whatsapp: u.whatsapp,
+        },
+      };
+    }
+
+    const pending = await this.prisma.whatsappRegistrationRequest.findUnique({
+      where: { browserSessionToken: token },
+      select: { id: true },
+    });
+    if (pending) {
+      return { status: 'pending' as const };
+    }
+
+    return { status: 'invalid' as const };
   }
 
   async login(dto: LoginDto) {
@@ -259,8 +352,8 @@ export class AuthService {
     if (!ok) {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
-    const token = this.jwtService.sign({
-      sub: user.id,
+    const token = this.signAuthJwt({
+      id: user.id,
       email: user.email,
       role: user.role,
     });

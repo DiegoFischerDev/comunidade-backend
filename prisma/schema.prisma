@@ -47,6 +47,8 @@ enum RegistrationChannel {
 model WhatsappRegistrationRequest {
   id                    String   @id @default(cuid())
   code                  String   @unique
+  /** Token opaco devolvido ao browser para polling após confirmação no WhatsApp */
+  browserSessionToken   String   @unique @map("browser_session_token")
   name                  String
   passwordHash          String   @map("password_hash")
   affiliateCodeSnapshot String?  @map("affiliate_code_snapshot")
@@ -57,6 +59,19 @@ model WhatsappRegistrationRequest {
 
   @@index([expiresAt])
   @@map("whatsapp_registration_requests")
+}
+
+/** Ligação temporária browser ↔ utilizador após confirmação WA (troca única por JWT) */
+model WhatsappRegistrationBrowserHandoff {
+  id            String    @id @default(cuid())
+  sessionToken  String    @unique @map("session_token")
+  userId        String    @map("user_id")
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt     DateTime  @map("expires_at")
+  consumedAt    DateTime? @map("consumed_at")
+
+  @@index([expiresAt])
+  @@map("whatsapp_registration_browser_handoffs")
 }
 
 model User {
@@ -92,6 +107,7 @@ model User {
   referredByAffiliate AffiliateProfile? @relation("AffiliateReferrals", fields: [referredByAffiliateId], references: [id], onDelete: SetNull)
   leads        Lead[]
   affiliateCommissionsFromReferrals AffiliateCommission[] @relation("AffiliateCommissionReferredUser")
+  whatsappRegistrationBrowserHandoffs WhatsappRegistrationBrowserHandoff[]
 }
 
 model Subscription {
