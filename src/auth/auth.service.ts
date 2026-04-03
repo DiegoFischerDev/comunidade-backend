@@ -626,7 +626,12 @@ Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
     ) {
       await this.prisma.user.update({
         where: { id: userId },
-        data: { tier: UserTier.VISITOR, membershipExpiresAt: null },
+        data: {
+          tier: UserTier.VISITOR,
+          membershipExpiresAt: null,
+          rafaCallSchedulingUnlocked: false,
+          rafaCallSlotEndsAt: null,
+        },
       });
       user = { ...user, tier: UserTier.VISITOR, membershipExpiresAt: null };
     }

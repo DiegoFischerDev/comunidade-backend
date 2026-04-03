@@ -11,9 +11,19 @@ import { UsersModule } from './users/users.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { StripeModule } from './stripe/stripe.module';
 import { AffiliateModule } from './affiliate/affiliate.module';
+import { RafacallModule } from './rafacall/rafacall.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule, UploadsModule, StripeModule, AffiliateModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    PartnerModule,
+    UsersModule,
+    UploadsModule,
+    StripeModule,
+    AffiliateModule,
+    RafacallModule,
+  ],
   controllers: [AppController],
   providers: [
     AppService,

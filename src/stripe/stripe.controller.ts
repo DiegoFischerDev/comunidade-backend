@@ -16,15 +16,21 @@ export class StripeController {
     return this.stripeService.getMembershipAmounts();
   }
 
+  @Public()
+  @Get('rafa-call-amounts')
+  getRafaCallAmounts() {
+    return this.stripeService.getRafaCallAmounts();
+  }
+
   @Post('create-checkout-session')
   @UseGuards(JwtAuthGuard)
   async createCheckoutSession(
-    @CurrentUser() user: { id: string; email: string },
+    @CurrentUser() user: { id: string; email?: string | null },
     @Body() dto: CreateCheckoutSessionDto,
   ) {
     return this.stripeService.createCheckoutSession(
       user.id,
-      user.email,
+      user.email ?? '',
       dto.successUrl,
       dto.cancelUrl,
     );
@@ -33,12 +39,12 @@ export class StripeController {
   @Post('create-mbway-checkout-session')
   @UseGuards(JwtAuthGuard)
   async createMbWayCheckoutSession(
-    @CurrentUser() user: { id: string; email: string },
+    @CurrentUser() user: { id: string; email?: string | null },
     @Body() dto: CreateCheckoutSessionDto,
   ) {
     return this.stripeService.createMbWayCheckoutSession(
       user.id,
-      user.email,
+      user.email ?? '',
       dto.successUrl,
       dto.cancelUrl,
     );
@@ -47,10 +53,52 @@ export class StripeController {
   @Post('create-pix-checkout-session')
   @UseGuards(JwtAuthGuard)
   async createPixCheckoutSession(
-    @CurrentUser() user: { id: string; email: string },
+    @CurrentUser() user: { id: string; email?: string | null },
     @Body() dto: CreateCheckoutSessionDto,
   ) {
     return this.stripeService.createPixCheckoutSession(
+      user.id,
+      user.email ?? '',
+      dto.successUrl,
+      dto.cancelUrl,
+    );
+  }
+
+  @Post('create-rafa-call-unlock-session')
+  @UseGuards(JwtAuthGuard)
+  async createRafaCallUnlockSession(
+    @CurrentUser() user: { id: string; email?: string | null },
+    @Body() dto: CreateCheckoutSessionDto,
+  ) {
+    return this.stripeService.createRafaCallUnlockCheckoutSession(
+      user.id,
+      user.email,
+      dto.successUrl,
+      dto.cancelUrl,
+    );
+  }
+
+  @Post('create-rafa-call-unlock-mbway-session')
+  @UseGuards(JwtAuthGuard)
+  async createRafaCallUnlockMbWaySession(
+    @CurrentUser() user: { id: string; email?: string | null },
+    @Body() dto: CreateCheckoutSessionDto,
+  ) {
+    return this.stripeService.createRafaCallUnlockMbWayCheckoutSession(
+      user.id,
+      user.email,
+      dto.successUrl,
+      dto.cancelUrl,
+    );
+  }
+
+  @Post('create-rafa-call-unlock-pix-session')
+  @UseGuards(JwtAuthGuard)
+  async createRafaCallUnlockPixSession(
+    @CurrentUser() user: { id: string; email?: string | null },
+    @Body() dto: CreateCheckoutSessionDto,
+  ) {
+    return this.stripeService.createRafaCallUnlockPixCheckoutSession(
       user.id,
       user.email,
       dto.successUrl,

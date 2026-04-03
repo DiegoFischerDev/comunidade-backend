@@ -42,6 +42,29 @@ export class StripeService {
     return n;
   }
 
+  /** Taxa para novo agendamento Cal.com após consumir a chamada (EUR). */
+  private get rafaCallEurCents(): number {
+    const raw = process.env.STRIPE_RAFA_CALL_EUR_CENTS;
+    const n = raw ? parseInt(raw, 10) : 2000;
+    if (!Number.isFinite(n) || n < 1) return 2000;
+    return n;
+  }
+
+  /** Taxa de reagendamento (Pix BRL). */
+  private get rafaCallPixCentavos(): number {
+    const raw = process.env.STRIPE_RAFA_CALL_PIX_BRL;
+    const n = raw ? parseInt(raw, 10) : 2000;
+    if (!Number.isFinite(n) || n < 1) return 2000;
+    return n;
+  }
+
+  getRafaCallAmounts(): { eurCents: number; pixCentavos: number } {
+    return {
+      eurCents: this.rafaCallEurCents,
+      pixCentavos: this.rafaCallPixCentavos,
+    };
+  }
+
   private async createAffiliateCommissionIfEligible(
     referredUserId: string,
   ): Promise<void> {
@@ -94,6 +117,150 @@ export class StripeService {
       eurCents: this.eurAmountCents,
       pixCentavos: this.pixAmountCentavos,
     };
+  }
+
+  private stripeCustomerEmail(
+    userId: string,
+    email: string | null | undefined,
+  ): string {
+    const t = email?.trim();
+    if (t) return t;
+    return `rafacall-${userId}@guest.rpm.invalid`;
+  }
+
+  async assertUserCanPayRafaUnlock(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { tier: true, rafaCallSchedulingUnlocked: true },
+    });
+    if (!user) {
+      throw new BadRequestException('Utilizador não encontrado.');
+    }
+    if (user.tier !== UserTier.MEMBER) {
+      throw new BadRequestException(
+        'Apenas membros VIP podem pagar a taxa de novo agendamento.',
+      );
+    }
+    if (user.rafaCallSchedulingUnlocked) {
+      throw new BadRequestException(
+        'Já tem o agendamento disponível — use o Cal.com para marcar.',
+      );
+    }
+  }
+
+  async createRafaCallUnlockCheckoutSession(
+    userId: string,
+    userEmail: string | null | undefined,
+    successUrl: string,
+    cancelUrl: string,
+  ): Promise<{ url: string }> {
+    await this.assertUserCanPayRafaUnlock(userId);
+    const stripe = this.getClient();
+    const amount = this.rafaCallEurCents;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: this.stripeCustomerEmail(userId, userEmail),
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            unit_amount: amount,
+            product_data: {
+              name: 'Taxa de agendamento — chamada com a Rafa',
+              description:
+                'Novo acesso ao Cal.com para marcar 30 minutos de vídeo (após chamada anterior)',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['card'],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: userId,
+      metadata: { userId, checkoutType: 'rafa_call_unlock' },
+    });
+    if (!session.url) {
+      throw new BadRequestException('Não foi possível criar a sessão de pagamento.');
+    }
+    return { url: session.url };
+  }
+
+  async createRafaCallUnlockMbWayCheckoutSession(
+    userId: string,
+    userEmail: string | null | undefined,
+    successUrl: string,
+    cancelUrl: string,
+  ): Promise<{ url: string }> {
+    await this.assertUserCanPayRafaUnlock(userId);
+    const stripe = this.getClient();
+    const amount = this.rafaCallEurCents;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: this.stripeCustomerEmail(userId, userEmail),
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            unit_amount: amount,
+            product_data: {
+              name: 'Taxa de agendamento — chamada com a Rafa',
+              description: 'Novo acesso ao Cal.com (MB WAY)',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['mb_way'],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: userId,
+      metadata: { userId, checkoutType: 'rafa_call_unlock' },
+    });
+    if (!session.url) {
+      throw new BadRequestException('Não foi possível criar a sessão MB WAY.');
+    }
+    return { url: session.url };
+  }
+
+  async createRafaCallUnlockPixCheckoutSession(
+    userId: string,
+    userEmail: string | null | undefined,
+    successUrl: string,
+    cancelUrl: string,
+  ): Promise<{ url: string }> {
+    await this.assertUserCanPayRafaUnlock(userId);
+    const stripe = this.getClient();
+    const amount = this.rafaCallPixCentavos;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: this.stripeCustomerEmail(userId, userEmail),
+      line_items: [
+        {
+          price_data: {
+            currency: 'brl',
+            unit_amount: amount,
+            product_data: {
+              name: 'Taxa de agendamento — chamada com a Rafa',
+              description: 'Novo acesso ao Cal.com (Pix)',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['pix'],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: userId,
+      metadata: { userId, checkoutType: 'rafa_call_unlock' },
+      payment_method_options: {
+        pix: { expires_after_seconds: 30 * 60 },
+      },
+    });
+    if (!session.url) {
+      throw new BadRequestException('Não foi possível criar a sessão Pix.');
+    }
+    return { url: session.url };
   }
 
   /**
@@ -306,9 +473,24 @@ export class StripeService {
       (subIdFromSession ? await this.getUserIdFromSubscription(subIdFromSession) : null);
     if (!userId) return;
 
+    const checkoutType = sess.metadata?.checkoutType as string | undefined;
+    if (checkoutType === 'rafa_call_unlock') {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { rafaCallSchedulingUnlocked: true },
+      });
+      return;
+    }
+
+    const prev = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { tier: true },
+    });
+
     const customerId = typeof sess.customer === 'string' ? sess.customer : sess.customer?.id;
     const subscriptionId = resolveSubscriptionId(session.subscription);
     const validUntil = addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
+    const grantRafaUnlock = prev?.tier !== UserTier.MEMBER;
 
     await this.prisma.$transaction([
       this.prisma.subscription.upsert({
@@ -329,7 +511,11 @@ export class StripeService {
       }),
       this.prisma.user.update({
         where: { id: userId },
-        data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
+        data: {
+          tier: UserTier.MEMBER,
+          membershipExpiresAt: validUntil,
+          ...(grantRafaUnlock ? { rafaCallSchedulingUnlocked: true } : {}),
+        },
       }),
     ]);
     await this.recordMembershipPaymentFromCheckoutSession(userId, session);
@@ -405,6 +591,12 @@ export class StripeService {
       data: {
         tier: isActive ? UserTier.MEMBER : UserTier.VISITOR,
         membershipExpiresAt: isActive ? validUntil : null,
+        ...(!isActive
+          ? {
+              rafaCallSchedulingUnlocked: false,
+              rafaCallSlotEndsAt: null,
+            }
+          : {}),
       },
     });
     if (isActive) {
