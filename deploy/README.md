@@ -65,7 +65,7 @@ STRIPE_RAFA_CALL_EUR_CENTS=2000
 STRIPE_RAFA_CALL_PIX_BRL=2000
 ```
 
-A URL do Cal.com (`NEXT_PUBLIC_CALCOM_EMBED_URL`) tem de existir no **build** da imagem do frontend (`ARG` no Dockerfile). No GitHub: secret `NEXT_PUBLIC_CALCOM_EMBED_URL_STAGE` (branch `stage`) ou `NEXT_PUBLIC_CALCOM_EMBED_URL` (main), depois push para gerar nova imagem. O `docker-compose` na VPS também pode declarar `NEXT_PUBLIC_CALCOM_EMBED_URL` no serviço `frontend` (lido do `.env`) para manter documentação alinhada; sem rebuild da imagem, o valor não entra no JavaScript do browser.
+A URL do Cal.com pode ser: **(A)** embutida no build do Next (`ARG` + secret no GitHub Actions), ou **(B)** servida em runtime pelo backend: no `docker-compose`, injete no serviço **backend** as variáveis `CALCOM_EMBED_URL` e/ou `NEXT_PUBLIC_CALCOM_EMBED_URL` (o mesmo `.env` da VPS), conforme `deploy/docker-compose.stage.yml`. O frontend chama `GET /rafacall/cal-embed-url` quando o bundle não tem `NEXT_PUBLIC_CALCOM_EMBED_URL`. É preciso imagem de backend atualizada com esse endpoint.
 
 - Ajuste os `server_name` em `nginx.stage.conf`. Stage usa portas **8080** e **8443** no host para não conflitar com produção.
 
