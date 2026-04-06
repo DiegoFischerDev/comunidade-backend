@@ -630,6 +630,7 @@ Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
           tier: UserTier.VISITOR,
           membershipExpiresAt: null,
           rafaCallSchedulingUnlocked: false,
+          rafaCallSlotStartsAt: null,
           rafaCallSlotEndsAt: null,
         },
       });

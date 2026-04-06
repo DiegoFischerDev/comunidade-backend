@@ -20,6 +20,7 @@ const adminUserSelect = {
   tier: true,
   membershipExpiresAt: true,
   rafaCallSchedulingUnlocked: true,
+  rafaCallSlotStartsAt: true,
   rafaCallSlotEndsAt: true,
   createdAt: true,
 } as const;
@@ -141,6 +142,7 @@ export class UsersService {
     }
     const data: {
       rafaCallSchedulingUnlocked?: boolean;
+      rafaCallSlotStartsAt?: Date | null;
       rafaCallSlotEndsAt?: Date | null;
     } = {};
     if (dto.rafaCallSchedulingUnlocked !== undefined) {
@@ -151,6 +153,7 @@ export class UsersService {
         dto.rafaCallSlotEndsAt === null
           ? null
           : new Date(dto.rafaCallSlotEndsAt);
+      data.rafaCallSlotStartsAt = null;
     }
     if (Object.keys(data).length === 0) {
       return this.prisma.user.findUniqueOrThrow({

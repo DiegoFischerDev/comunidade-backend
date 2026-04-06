@@ -63,6 +63,7 @@ export class RafacallService {
       where: { id: userId },
       data: {
         rafaCallSchedulingUnlocked: false,
+        rafaCallSlotStartsAt: null,
         rafaCallSlotEndsAt: null,
       },
     });
@@ -78,6 +79,7 @@ export class RafacallService {
         name: true,
         whatsapp: true,
         rafaCallSchedulingUnlocked: true,
+        rafaCallSlotStartsAt: true,
         rafaCallSlotEndsAt: true,
       },
     });
@@ -89,6 +91,7 @@ export class RafacallService {
     return {
       isMember,
       schedulingUnlocked: user.rafaCallSchedulingUnlocked,
+      slotStartsAt: user.rafaCallSlotStartsAt?.toISOString() ?? null,
       slotEndsAt: user.rafaCallSlotEndsAt?.toISOString() ?? null,
       canOpenCalEmbed:
         isMember &&
@@ -171,6 +174,21 @@ export class RafacallService {
     return null;
   }
 
+  /** Cruza convidado (API/webhook Calendly) com `User` por e-mail ou telefone. */
+  async resolveUserForCalendlyInvitee(
+    invitee: Record<string, unknown>,
+  ): Promise<{ id: string; name: string; whatsapp: string } | null> {
+    const email =
+      typeof invitee.email === 'string' ? invitee.email : undefined;
+    const phone = this.extractInviteePhone(invitee);
+    const userId = await this.findUserIdByInvitee(email, phone);
+    if (!userId) return null;
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, whatsapp: true },
+    });
+  }
+
   async handleCalendlyWebhookPayload(body: unknown): Promise<void> {
     const root = body as Record<string, unknown>;
     const event = String(root.event ?? root.type ?? root.triggerEvent ?? '').toLowerCase();
@@ -211,7 +229,7 @@ export class RafacallService {
     if (event.includes('canceled') || event.includes('cancelled')) {
       await this.prisma.user.update({
         where: { id: userId },
-        data: { rafaCallSlotEndsAt: null },
+        data: { rafaCallSlotStartsAt: null, rafaCallSlotEndsAt: null },
       });
       this.logger.log(`Calendly: marcação cancelada, user ${userId}`);
       return;
@@ -219,28 +237,33 @@ export class RafacallService {
 
     // Criação / reagendamento
     if (event.includes('created') || event.includes('rescheduled')) {
-      if (endRaw) {
-        const end = new Date(endRaw);
-        if (!Number.isNaN(end.getTime())) {
-          await this.prisma.user.update({
-            where: { id: userId },
-            data: { rafaCallSlotEndsAt: end },
-          });
-          this.logger.log(
-            `Calendly: slot atualizado user ${userId} até ${end.toISOString()}`,
-          );
-          return;
-        }
-      }
+      let start: Date | undefined;
+      let end: Date | undefined;
       if (startRaw) {
-        const start = new Date(startRaw);
-        if (!Number.isNaN(start.getTime())) {
-          const end = new Date(start.getTime() + 30 * 60 * 1000);
-          await this.prisma.user.update({
-            where: { id: userId },
-            data: { rafaCallSlotEndsAt: end },
-          });
-        }
+        const s = new Date(startRaw);
+        if (!Number.isNaN(s.getTime())) start = s;
+      }
+      if (endRaw) {
+        const e = new Date(endRaw);
+        if (!Number.isNaN(e.getTime())) end = e;
+      }
+      if (start && !end) {
+        end = new Date(start.getTime() + 30 * 60 * 1000);
+      }
+      if (end && !start) {
+        start = new Date(end.getTime() - 30 * 60 * 1000);
+      }
+      if (end) {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: {
+            rafaCallSlotStartsAt: start ?? null,
+            rafaCallSlotEndsAt: end,
+          },
+        });
+        this.logger.log(
+          `Calendly: slot user ${userId} ${start?.toISOString() ?? '—'} → ${end.toISOString()}`,
+        );
       }
     }
   }

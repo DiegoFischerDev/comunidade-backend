@@ -594,6 +594,7 @@ export class StripeService {
         ...(!isActive
           ? {
               rafaCallSchedulingUnlocked: false,
+              rafaCallSlotStartsAt: null,
               rafaCallSlotEndsAt: null,
             }
           : {}),
