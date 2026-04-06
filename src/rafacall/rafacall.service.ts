@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { UserTier } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** E-mail sintético para Cal.com quando o utilizador não tem e-mail (match no webhook). */
+/** E-mail sintético para Stripe/metadata quando o utilizador não tem e-mail (webhook Calendly usa telefone). */
 export function rafacallGuestEmailForUser(user: {
   id: string;
   email: string | null;
@@ -10,6 +10,21 @@ export function rafacallGuestEmailForUser(user: {
   const e = user.email?.trim().toLowerCase();
   if (e) return e;
   return `rafacall-${user.id}@guest.rpm.invalid`;
+}
+
+/** WhatsApp da BD → formato E.164 para prefill no Calendly (+351…). */
+function formatWhatsappForCalendlyPrefill(whatsapp: string): string {
+  const w = whatsapp.trim();
+  if (!w) return '';
+  const digits = w.replace(/\D/g, '');
+  if (!digits) return '';
+  if (w.startsWith('+')) return `+${digits}`;
+  return `+${digits}`;
+}
+
+function normalizePhoneDigits(input: string | undefined | null): string {
+  if (!input) return '';
+  return String(input).replace(/\D/g, '');
 }
 
 export function parseUserIdFromRafacallGuestEmail(
@@ -61,6 +76,7 @@ export class RafacallService {
         tier: true,
         email: true,
         name: true,
+        whatsapp: true,
         rafaCallSchedulingUnlocked: true,
         rafaCallSlotEndsAt: true,
       },
@@ -69,10 +85,7 @@ export class RafacallService {
       return null;
     }
     const isMember = user.tier === UserTier.MEMBER;
-    const guestEmail = rafacallGuestEmailForUser({
-      id: userId,
-      email: user.email,
-    });
+    const emailTrim = user.email?.trim() || null;
     return {
       isMember,
       schedulingUnlocked: user.rafaCallSchedulingUnlocked,
@@ -80,7 +93,9 @@ export class RafacallService {
       canOpenCalEmbed:
         isMember &&
         user.rafaCallSchedulingUnlocked,
-      calGuestEmail: guestEmail,
+      /** Só e-mail “real” para o Calendly; se null, o campo fica vazio no popup. */
+      calPrefillEmail: emailTrim,
+      calPrefillPhone: formatWhatsappForCalendlyPrefill(user.whatsapp),
       calGuestName: user.name?.trim() || 'Membro',
     };
   }
@@ -105,6 +120,57 @@ export class RafacallService {
     return u?.id ?? null;
   }
 
+  private async findUserIdByPhoneDigits(digits: string): Promise<string | null> {
+    if (!digits) return null;
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "User"
+      WHERE regexp_replace(whatsapp, '[^0-9]', '', 'g') = ${digits}
+      LIMIT 1
+    `;
+    return rows[0]?.id ?? null;
+  }
+
+  private extractInviteePhone(
+    invitee: Record<string, unknown> | undefined,
+  ): string | undefined {
+    if (!invitee) return undefined;
+    const tr = invitee.text_reminder_number;
+    if (typeof tr === 'string' && tr.trim()) return tr.trim();
+    const pn = invitee.phone_number;
+    if (typeof pn === 'string' && pn.trim()) return pn.trim();
+    const qa = invitee.questions_and_answers as
+      | { question?: string; answer?: string }[]
+      | undefined;
+    if (Array.isArray(qa)) {
+      for (const item of qa) {
+        const q = String(item?.question ?? '').toLowerCase();
+        if (
+          q.includes('phone') ||
+          q.includes('telefone') ||
+          q.includes('telemóvel') ||
+          q.includes('mobile')
+        ) {
+          const a = item?.answer?.trim();
+          if (a) return a;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private async findUserIdByInvitee(
+    inviteeEmail: string | undefined,
+    inviteePhone: string | undefined,
+  ): Promise<string | null> {
+    const byEmail = await this.findUserIdByAttendeeEmail(inviteeEmail);
+    if (byEmail) return byEmail;
+    const digits = normalizePhoneDigits(inviteePhone);
+    if (digits) {
+      return this.findUserIdByPhoneDigits(digits);
+    }
+    return null;
+  }
+
   async handleCalendlyWebhookPayload(body: unknown): Promise<void> {
     const root = body as Record<string, unknown>;
     const event = String(root.event ?? root.type ?? root.triggerEvent ?? '').toLowerCase();
@@ -117,6 +183,7 @@ export class RafacallService {
     const inviteeEmail =
       (invitee?.email as string | undefined) ||
       (payload.email as string | undefined);
+    const inviteePhone = this.extractInviteePhone(invitee);
 
     const eventObj = (payload.event ?? payload['scheduled_event']) as
       | Record<string, unknown>
@@ -132,10 +199,10 @@ export class RafacallService {
       (payload.end_time as string | undefined) ||
       (payload.endTime as string | undefined);
 
-    const userId = await this.findUserIdByAttendeeEmail(inviteeEmail);
+    const userId = await this.findUserIdByInvitee(inviteeEmail, inviteePhone);
     if (!userId) {
       this.logger.warn(
-        `Calendly webhook: utilizador não encontrado para e-mail ${inviteeEmail}`,
+        `Calendly webhook: utilizador não encontrado (email=${inviteeEmail ?? '—'}, phone=${inviteePhone ?? '—'})`,
       );
       return;
     }
