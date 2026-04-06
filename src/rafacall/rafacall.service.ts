@@ -105,49 +105,53 @@ export class RafacallService {
     return u?.id ?? null;
   }
 
-  async handleCalWebhookPayload(body: unknown): Promise<void> {
+  async handleCalendlyWebhookPayload(body: unknown): Promise<void> {
     const root = body as Record<string, unknown>;
-    const triggerEvent = String(root.triggerEvent ?? root.type ?? '');
+    const event = String(root.event ?? root.type ?? root.triggerEvent ?? '').toLowerCase();
     const payload = (root.payload ?? root) as Record<string, unknown>;
 
-    const attendees = payload.attendees as
-      | { email?: string }[]
+    // Calendly (v2 webhooks) costuma vir como payload.invitee / payload.event
+    const invitee = (payload.invitee ?? payload.invitees ?? payload['invitee']) as
+      | Record<string, unknown>
       | undefined;
-    const attendeeEmail = attendees?.[0]?.email;
+    const inviteeEmail =
+      (invitee?.email as string | undefined) ||
+      (payload.email as string | undefined);
 
+    const eventObj = (payload.event ?? payload['scheduled_event']) as
+      | Record<string, unknown>
+      | undefined;
     const startRaw =
-      (payload.startTime as string) ||
-      (payload.start as string) ||
-      (payload.start_time as string);
+      (eventObj?.start_time as string | undefined) ||
+      (eventObj?.startTime as string | undefined) ||
+      (payload.start_time as string | undefined) ||
+      (payload.startTime as string | undefined);
     const endRaw =
-      (payload.endTime as string) ||
-      (payload.end as string) ||
-      (payload.end_time as string);
+      (eventObj?.end_time as string | undefined) ||
+      (eventObj?.endTime as string | undefined) ||
+      (payload.end_time as string | undefined) ||
+      (payload.endTime as string | undefined);
 
-    const userId = await this.findUserIdByAttendeeEmail(attendeeEmail);
+    const userId = await this.findUserIdByAttendeeEmail(inviteeEmail);
     if (!userId) {
       this.logger.warn(
-        `Cal.com webhook: utilizador não encontrado para e-mail ${attendeeEmail}`,
+        `Calendly webhook: utilizador não encontrado para e-mail ${inviteeEmail}`,
       );
       return;
     }
 
-    const te = triggerEvent.toUpperCase();
-    if (te.includes('CANCELLED') || te === 'BOOKING_CANCELLED') {
+    // Cancelamento
+    if (event.includes('canceled') || event.includes('cancelled')) {
       await this.prisma.user.update({
         where: { id: userId },
         data: { rafaCallSlotEndsAt: null },
       });
-      this.logger.log(`Cal.com: marcação cancelada, user ${userId}`);
+      this.logger.log(`Calendly: marcação cancelada, user ${userId}`);
       return;
     }
 
-    if (
-      te.includes('CREATED') ||
-      te.includes('RESCHEDULED') ||
-      te === 'BOOKING_CREATED' ||
-      te === 'BOOKING_RESCHEDULED'
-    ) {
+    // Criação / reagendamento
+    if (event.includes('created') || event.includes('rescheduled')) {
       if (endRaw) {
         const end = new Date(endRaw);
         if (!Number.isNaN(end.getTime())) {
@@ -156,7 +160,7 @@ export class RafacallService {
             data: { rafaCallSlotEndsAt: end },
           });
           this.logger.log(
-            `Cal.com: slot atualizado user ${userId} até ${end.toISOString()}`,
+            `Calendly: slot atualizado user ${userId} até ${end.toISOString()}`,
           );
           return;
         }

@@ -26,9 +26,7 @@ services:
       DATABASE_URL: postgresql://comunidade:${POSTGRES_PASSWORD}@postgres:5432/comunidade?schema=public
       JWT_SECRET: ${JWT_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
-      CALCOM_WEBHOOK_SECRET: ${CALCOM_WEBHOOK_SECRET:-}
-      CALCOM_EMBED_URL: ${CALCOM_EMBED_URL:-}
-      NEXT_PUBLIC_CALCOM_EMBED_URL: ${NEXT_PUBLIC_CALCOM_EMBED_URL:-}
+      CALENDLY_WEBHOOK_SIGNING_KEY: ${CALENDLY_WEBHOOK_SIGNING_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,7 +36,7 @@ services:
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-      NEXT_PUBLIC_CALCOM_EMBED_URL: ${NEXT_PUBLIC_CALCOM_EMBED_URL}
+      NEXT_PUBLIC_CALENDLY_EVENT_URL: ${NEXT_PUBLIC_CALENDLY_EVENT_URL}
     depends_on:
       - backend
 

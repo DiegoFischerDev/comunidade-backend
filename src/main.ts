@@ -13,7 +13,7 @@ async function bootstrap() {
   app.use((req, res, next) => {
     if (
       req.originalUrl === '/stripe/webhook' ||
-      req.originalUrl === '/webhooks/calcom'
+      req.originalUrl === '/webhooks/calendly'
     ) {
       express.raw({ type: 'application/json' })(req, res, next);
     } else {

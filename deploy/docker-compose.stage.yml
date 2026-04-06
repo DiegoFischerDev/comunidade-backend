@@ -32,11 +32,7 @@ services:
       STRIPE_PIX_AMOUNT_BRL: ${STRIPE_PIX_AMOUNT_BRL}
       STRIPE_RAFA_CALL_EUR_CENTS: ${STRIPE_RAFA_CALL_EUR_CENTS:-2000}
       STRIPE_RAFA_CALL_PIX_BRL: ${STRIPE_RAFA_CALL_PIX_BRL:-2000}
-      CALCOM_WEBHOOK_SECRET: ${CALCOM_WEBHOOK_SECRET}
-      # Opcional: URL do Cal.com só para a API (GET /rafacall/cal-embed-url). Se vazio, usa NEXT_PUBLIC_* abaixo.
-      CALCOM_EMBED_URL: ${CALCOM_EMBED_URL:-}
-      # Mesmo valor do .env — o backend expõe em runtime para o dashboard quando a imagem Next foi buildada sem o URL.
-      NEXT_PUBLIC_CALCOM_EMBED_URL: ${NEXT_PUBLIC_CALCOM_EMBED_URL:-}
+      CALENDLY_WEBHOOK_SIGNING_KEY: ${CALENDLY_WEBHOOK_SIGNING_KEY}
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,7 +42,7 @@ services:
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-      NEXT_PUBLIC_CALCOM_EMBED_URL: ${NEXT_PUBLIC_CALCOM_EMBED_URL}
+      NEXT_PUBLIC_CALENDLY_EVENT_URL: ${NEXT_PUBLIC_CALENDLY_EVENT_URL}
     depends_on:
       - backend
 
