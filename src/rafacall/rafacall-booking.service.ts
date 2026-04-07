@@ -195,7 +195,9 @@ export class RafacallBookingService {
         const startMin = hmToMinutes(startHm);
         const endMin = hmToMinutes(endHm);
         if (startMin == null || endMin == null || endMin <= startMin) continue;
-        for (let t = startMin; t + duration <= endMin; t += duration) {
+        // Espaça os horários em (duração + buffer) para evitar "back-to-back" no UI.
+        const step = duration + buffer;
+        for (let t = startMin; t + duration <= endMin; t += step) {
           const sUtc = tzLocalToUtc(tz, y, m, d, t);
           const eUtc = new Date(sUtc.getTime() + duration * 60000);
           if (eUtc.getTime() <= Date.now()) continue;
