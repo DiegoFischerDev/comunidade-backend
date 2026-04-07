@@ -221,7 +221,6 @@ export class RafacallBookingService {
       hour: '2-digit',
       minute: '2-digit',
     });
-    const tz = booking.timezone;
     const who = user.name?.trim() || 'Olá';
     const base =
       kind === 'booked'
@@ -229,11 +228,15 @@ export class RafacallBookingService {
         : kind === 'rescheduled'
           ? `🔁 ${who}, a tua chamada com a Rafa foi reagendada!`
           : `🗑️ ${who}, a tua chamada com a Rafa foi cancelada.`;
+    const followup =
+      kind === 'cancelled'
+        ? ''
+        : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?`;
     const when =
       kind === 'cancelled'
-        ? `\n\nEstava marcada para: ${startLocal} (até ${endLocal})\nTimezone: ${tz}`
-        : `\n\nData e hora: ${startLocal} (até ${endLocal})\nTimezone: ${tz}`;
-    await this.wa.sendText(user.whatsapp, `${base}${when}`);
+        ? `\n\nEstava marcada para: ${startLocal} (até ${endLocal})\nHorário de Lisboa`
+        : `\n\nData e hora: ${startLocal} (até ${endLocal})\nHorário de Lisboa`;
+    await this.wa.sendText(user.whatsapp, `${base}${when}${followup}`);
   }
 
   async book(userId: string, input: { startsAtUtcIso: string; tz: string }) {

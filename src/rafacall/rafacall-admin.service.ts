@@ -54,17 +54,16 @@ function waDigits(value: string): string {
 export class RafacallAdminService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getToday(params?: { tz?: string }) {
+  private ymdForUtcInstant(utc: Date, tz: string): string {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(utc);
+  }
+
+  async getSchedule(params?: { tz?: string }) {
     const tz = params?.tz || 'Europe/Lisbon';
-    const now = new Date();
-    const { y, m, d } = ymdInTz(now, tz);
-    const startUtc = tzLocalToUtc(tz, y, m, d, 0);
-    const endUtc = tzLocalToUtc(tz, y, m, d, 24 * 60);
 
     const items = await this.prisma.rafaCallBooking.findMany({
       where: {
         status: RafaCallBookingStatus.SCHEDULED,
-        startsAt: { gte: startUtc, lt: endUtc },
       },
       orderBy: { startsAt: 'asc' },
       select: {
@@ -76,20 +75,30 @@ export class RafacallAdminService {
       },
     });
 
-    return {
-      tz,
-      startUtc: startUtc.toISOString(),
-      endUtc: endUtc.toISOString(),
-      items: items.map((b) => ({
-        id: b.id,
-        startsAt: b.startsAt.toISOString(),
-        endsAt: b.endsAt.toISOString(),
-        userId: b.user.id,
-        userName: b.user.name,
-        whatsappDigits: waDigits(b.user.whatsapp),
-        bookingTimezone: b.timezone,
-      })),
-    };
+    const groups = new Map<string, typeof items>();
+    for (const b of items) {
+      const key = this.ymdForUtcInstant(b.startsAt, tz);
+      const arr = groups.get(key) ?? [];
+      arr.push(b);
+      groups.set(key, arr);
+    }
+
+    const days = Array.from(groups.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, bookings]) => ({
+        date,
+        items: bookings.map((b) => ({
+          id: b.id,
+          startsAt: b.startsAt.toISOString(),
+          endsAt: b.endsAt.toISOString(),
+          userId: b.user.id,
+          userName: b.user.name,
+          whatsappDigits: waDigits(b.user.whatsapp),
+          bookingTimezone: b.timezone,
+        })),
+      }));
+
+    return { tz, days };
   }
 }
 

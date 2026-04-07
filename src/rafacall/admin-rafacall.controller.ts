@@ -8,9 +8,9 @@ import { RafacallAdminService } from './rafacall-admin.service';
 export class AdminRafacallController {
   constructor(private readonly admin: RafacallAdminService) {}
 
-  @Get('today')
-  today(@Query('tz') tz?: string) {
-    return this.admin.getToday({ tz: tz?.trim() || undefined });
+  @Get('schedule')
+  schedule(@Query('tz') tz?: string) {
+    return this.admin.getSchedule({ tz: tz?.trim() || undefined });
   }
 }
 
