@@ -113,6 +113,7 @@ model User {
   updatedAt                  DateTime  @updatedAt @map("updated_at")
 
   rafaCallBookings      RafaCallBooking[]
+  rafaCallBlockedSlotsCreated RafaCallBlockedSlot[] @relation("RafaCallBlockedSlotsCreated")
 
   subscription       Subscription?
   membershipPayments MembershipPayment[]
@@ -148,6 +149,26 @@ model RafaCallBooking {
   @@index([startsAt])
   @@index([endsAt])
   @@map("rafa_call_bookings")
+}
+
+model RafaCallBlockedSlot {
+  id              String   @id @default(cuid())
+  /** Intervalo em UTC. */
+  startsAt        DateTime @map("starts_at")
+  /** Intervalo em UTC. */
+  endsAt          DateTime @map("ends_at")
+  /** Motivo opcional (ex.: "férias", "indisponível"). */
+  reason          String?  @map("reason")
+  /** Quem bloqueou (admin). */
+  createdByUserId String   @map("created_by_user_id")
+  createdByUser   User     @relation("RafaCallBlockedSlotsCreated", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([startsAt])
+  @@index([endsAt])
+  @@index([createdByUserId])
+  @@map("rafa_call_blocked_slots")
 }
 
 model Subscription {

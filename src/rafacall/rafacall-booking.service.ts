@@ -134,11 +134,10 @@ export class RafacallBookingService {
     const toYmd = parseYmd(to);
     if (!fromYmd || !toYmd) throw new BadRequestException('from/to inválidos (use YYYY-MM-DD).');
 
-    // Se já tem booking ativo, devolvemos vazio (MVP: 1 agendamento por vez).
+    // Para reagendamento, precisamos devolver availability mesmo com booking ativo.
+    // Importante: excluir o booking atual do cálculo de conflitos, senão o buffer “come” slots adjacentes.
     const existing = await this.getCurrentBooking(userId);
-    if (existing) {
-      return { tz, days: [] };
-    }
+    const excludeBookingId = existing?.id;
 
     const duration = this.durationMinutes;
     const buffer = this.bufferMinutes;
@@ -148,7 +147,17 @@ export class RafacallBookingService {
     const maxUtc = tzLocalToUtc(tz, toYmd.y, toYmd.m, toYmd.d, 24 * 60);
     const busy = await this.prisma.rafaCallBooking.findMany({
       where: {
+        ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
         status: RafaCallBookingStatus.SCHEDULED,
+        startsAt: { lt: new Date(maxUtc.getTime() + buffer * 60000) },
+        endsAt: { gt: new Date(minUtc.getTime() - buffer * 60000) },
+      },
+      select: { startsAt: true, endsAt: true },
+    });
+
+    // Buscar bloqueios admin na janela (também em UTC), com folga de buffer.
+    const blocks = await this.prisma.rafaCallBlockedSlot.findMany({
+      where: {
         startsAt: { lt: new Date(maxUtc.getTime() + buffer * 60000) },
         endsAt: { gt: new Date(minUtc.getTime() - buffer * 60000) },
       },
@@ -159,6 +168,10 @@ export class RafacallBookingService {
       const sB = new Date(s.getTime() - buffer * 60000);
       const eB = new Date(e.getTime() + buffer * 60000);
       return busy.some((b) => {
+        const bs = new Date(b.startsAt.getTime() - buffer * 60000);
+        const be = new Date(b.endsAt.getTime() + buffer * 60000);
+        return sB < be && eB > bs;
+      }) || blocks.some((b) => {
         const bs = new Date(b.startsAt.getTime() - buffer * 60000);
         const be = new Date(b.endsAt.getTime() + buffer * 60000);
         return sB < be && eB > bs;

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RafaCallBookingStatus } from '@prisma/client';
 
@@ -99,6 +99,77 @@ export class RafacallAdminService {
       }));
 
     return { tz, days };
+  }
+
+  async listBlocks(params: { fromUtcIso: string; toUtcIso: string }) {
+    const from = new Date(params.fromUtcIso);
+    const to = new Date(params.toUtcIso);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new BadRequestException('from/to inválidos (use ISO UTC).');
+    }
+    if (to.getTime() <= from.getTime()) {
+      throw new BadRequestException('to deve ser maior que from.');
+    }
+
+    const items = await this.prisma.rafaCallBlockedSlot.findMany({
+      where: {
+        startsAt: { lt: to },
+        endsAt: { gt: from },
+      },
+      orderBy: { startsAt: 'asc' },
+      select: {
+        id: true,
+        startsAt: true,
+        endsAt: true,
+        reason: true,
+        createdAt: true,
+        createdByUserId: true,
+      },
+    });
+
+    return {
+      blocks: items.map((b) => ({
+        id: b.id,
+        startsAt: b.startsAt.toISOString(),
+        endsAt: b.endsAt.toISOString(),
+        reason: b.reason,
+        createdAt: b.createdAt.toISOString(),
+        createdByUserId: b.createdByUserId,
+      })),
+    };
+  }
+
+  async createBlock(params: { adminUserId: string; startsAtUtcIso: string; endsAtUtcIso: string; reason?: string | null }) {
+    const startsAt = new Date(params.startsAtUtcIso);
+    const endsAt = new Date(params.endsAtUtcIso);
+    if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
+      throw new BadRequestException('startsAt/endsAt inválidos (use ISO UTC).');
+    }
+    if (endsAt.getTime() <= startsAt.getTime()) {
+      throw new BadRequestException('endsAt deve ser maior que startsAt.');
+    }
+
+    const created = await this.prisma.rafaCallBlockedSlot.create({
+      data: {
+        startsAt,
+        endsAt,
+        reason: params.reason?.trim() || null,
+        createdByUserId: params.adminUserId,
+      },
+      select: { id: true, startsAt: true, endsAt: true, reason: true },
+    });
+
+    return {
+      id: created.id,
+      startsAt: created.startsAt.toISOString(),
+      endsAt: created.endsAt.toISOString(),
+      reason: created.reason,
+    };
+  }
+
+  async deleteBlock(params: { id: string }) {
+    await this.prisma.rafaCallBlockedSlot.delete({ where: { id: params.id } });
+    return { ok: true };
   }
 }
 
