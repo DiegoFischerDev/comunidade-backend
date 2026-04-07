@@ -244,7 +244,7 @@ export class RafacallBookingService {
     const followup =
       kind === 'cancelled'
         ? ''
-        : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?`;
+        : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?\n\nSe precisar reagendar, acesse www.comunidade.rafaapelomundo.com`;
     const when =
       kind === 'cancelled'
         ? `\n\nEstava marcada para: ${startLocal} (até ${endLocal})\nHorário de Lisboa`
