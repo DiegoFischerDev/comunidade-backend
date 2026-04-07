@@ -53,5 +53,16 @@ export class AdminRafacallController {
       reason: body?.reason,
     });
   }
+
+  @Post('bookings/:id/complete')
+  completeBooking(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+  ) {
+    return this.admin.completeBooking({
+      bookingId: id.trim(),
+      adminUserId: user.id,
+    });
+  }
 }
 

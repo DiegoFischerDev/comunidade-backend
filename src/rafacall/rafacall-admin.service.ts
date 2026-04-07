@@ -64,14 +64,18 @@ export class RafacallAdminService {
 
   async getSchedule(params?: { tz?: string }) {
     const tz = params?.tz || 'Europe/Lisbon';
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
     const items = await this.prisma.rafaCallBooking.findMany({
       where: {
-        status: RafaCallBookingStatus.SCHEDULED,
+        // Inclui agendamentos futuros e mantém histórico por 7 dias após a data.
+        startsAt: { gte: weekAgo },
+        status: { in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.CANCELLED, RafaCallBookingStatus.COMPLETED] },
       },
       orderBy: { startsAt: 'asc' },
       select: {
         id: true,
+        status: true,
         startsAt: true,
         endsAt: true,
         timezone: true,
@@ -93,6 +97,7 @@ export class RafacallAdminService {
         date,
         items: bookings.map((b) => ({
           id: b.id,
+          status: b.status,
           startsAt: b.startsAt.toISOString(),
           endsAt: b.endsAt.toISOString(),
           userId: b.user.id,
@@ -226,6 +231,34 @@ export class RafacallAdminService {
     void this.sendAdminCancelMessage({
       userId: booking.userId,
       booking: { startsAt: booking.startsAt, endsAt: booking.endsAt, timezone: booking.timezone },
+    });
+
+    return updated;
+  }
+
+  async completeBooking(params: { bookingId: string; adminUserId: string }) {
+    const booking = await this.prisma.rafaCallBooking.findFirst({
+      where: { id: params.bookingId, status: RafaCallBookingStatus.SCHEDULED },
+      select: { id: true, userId: true },
+    });
+    if (!booking) throw new BadRequestException('Agendamento não encontrado.');
+
+    const updated = await this.prisma.rafaCallBooking.update({
+      where: { id: booking.id },
+      data: {
+        status: RafaCallBookingStatus.COMPLETED,
+      },
+      select: { id: true, status: true },
+    });
+
+    // Ao realizar, bloqueia novo agendamento até novo pagamento.
+    await this.prisma.user.update({
+      where: { id: booking.userId },
+      data: {
+        rafaCallSchedulingUnlocked: false,
+        rafaCallSlotStartsAt: null,
+        rafaCallSlotEndsAt: null,
+      },
     });
 
     return updated;
