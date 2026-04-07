@@ -26,7 +26,10 @@ services:
       DATABASE_URL: postgresql://comunidade:${POSTGRES_PASSWORD}@postgres:5432/comunidade?schema=public
       JWT_SECRET: ${JWT_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
-      CALENDLY_WEBHOOK_SIGNING_KEY: ${CALENDLY_WEBHOOK_SIGNING_KEY:-}
+      RAFA_CALL_DURATION_MINUTES: ${RAFA_CALL_DURATION_MINUTES:-30}
+      RAFA_CALL_BUFFER_MINUTES: ${RAFA_CALL_BUFFER_MINUTES:-10}
+      RAFA_CALL_WINDOW_DAYS: ${RAFA_CALL_WINDOW_DAYS:-14}
+      RAFA_CALL_WORKING_HOURS_JSON: ${RAFA_CALL_WORKING_HOURS_JSON:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -36,7 +39,6 @@ services:
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-      NEXT_PUBLIC_CALENDLY_EVENT_URL: ${NEXT_PUBLIC_CALENDLY_EVENT_URL}
     depends_on:
       - backend
 

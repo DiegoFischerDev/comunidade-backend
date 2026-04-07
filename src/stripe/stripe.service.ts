@@ -168,7 +168,7 @@ export class StripeService {
             product_data: {
               name: 'Taxa de agendamento — chamada com a Rafa',
               description:
-                'Novo acesso ao Calendly para marcar 30 minutos de vídeo (após chamada anterior)',
+                'Novo acesso para marcar 30 minutos de vídeo (após chamada anterior)',
             },
           },
           quantity: 1,
@@ -205,7 +205,7 @@ export class StripeService {
             unit_amount: amount,
             product_data: {
               name: 'Taxa de agendamento — chamada com a Rafa',
-              description: 'Novo acesso ao Calendly (MB WAY)',
+              description: 'Novo acesso para marcar chamada (MB WAY)',
             },
           },
           quantity: 1,
@@ -242,7 +242,7 @@ export class StripeService {
             unit_amount: amount,
             product_data: {
               name: 'Taxa de agendamento — chamada com a Rafa',
-              description: 'Novo acesso ao Calendly (Pix)',
+              description: 'Novo acesso para marcar chamada (Pix)',
             },
           },
           quantity: 1,

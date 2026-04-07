@@ -2,18 +2,17 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RafacallService } from './rafacall.service';
 import { RafacallController } from './rafacall.controller';
-import { CalendlyWebhookController } from './calendly-webhook.controller';
-import { CalendlyAdminScheduleService } from './calendly-admin-schedule.service';
-import { AdminCalendlyController } from './admin-calendly.controller';
+import { RafacallBookingService } from './rafacall-booking.service';
+import { RafacallAdminService } from './rafacall-admin.service';
+import { AdminRafacallController } from './admin-rafacall.controller';
 
 @Module({
   imports: [PrismaModule],
   controllers: [
     RafacallController,
-    CalendlyWebhookController,
-    AdminCalendlyController,
+    AdminRafacallController,
   ],
-  providers: [RafacallService, CalendlyAdminScheduleService],
+  providers: [RafacallService, RafacallBookingService, RafacallAdminService],
   exports: [RafacallService],
 })
 export class RafacallModule {}

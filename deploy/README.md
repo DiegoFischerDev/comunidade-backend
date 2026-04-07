@@ -54,18 +54,17 @@ JWT_SECRET=outro_jwt_stage
 FRONTEND_URL=https://stage.seudominio.com
 NEXT_PUBLIC_API_URL=https://api-stage.seudominio.com
 
-# Calendly (webhook na API)
-CALENDLY_WEBHOOK_SIGNING_KEY=cole_a_sua_signing_key
-
-# Mesmo valor no secret do GitHub Actions do frontend (build-arg).
-NEXT_PUBLIC_CALENDLY_EVENT_URL=https://calendly.com/seu-usuario/30min
+# Rafa Call (agendamento interno)
+RAFA_CALL_DURATION_MINUTES=30
+RAFA_CALL_BUFFER_MINUTES=10
+RAFA_CALL_WINDOW_DAYS=14
+# Ex.: {"mon":[["10:00","18:00"]],"tue":[["10:00","18:00"]],"wed":[["10:00","18:00"]],"thu":[["10:00","18:00"]],"fri":[["10:00","18:00"]],"sat":[],"sun":[]}
+# RAFA_CALL_WORKING_HOURS_JSON=...
 
 # Opcional — preços da taxa “novo agendamento Rafa” (default 2000 se omitir no compose antigo)
 STRIPE_RAFA_CALL_EUR_CENTS=2000
 STRIPE_RAFA_CALL_PIX_BRL=2000
 ```
-
-A URL do Calendly (`NEXT_PUBLIC_CALENDLY_EVENT_URL`) entra no **build** da imagem do frontend (`ARG` no Dockerfile). No GitHub: secret `NEXT_PUBLIC_CALENDLY_EVENT_URL_STAGE` (branch `stage`) ou `NEXT_PUBLIC_CALENDLY_EVENT_URL` (main), depois push para gerar nova imagem.
 
 - Ajuste os `server_name` em `nginx.stage.conf`. Stage usa portas **8080** e **8443** no host para não conflitar com produção.
 

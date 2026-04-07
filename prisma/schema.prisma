@@ -44,6 +44,12 @@ enum RegistrationChannel {
   WHATSAPP
 }
 
+enum RafaCallBookingStatus {
+  SCHEDULED
+  CANCELLED
+  COMPLETED
+}
+
 model WhatsappRegistrationRequest {
   id                    String   @id @default(cuid())
   code                  String   @unique
@@ -106,6 +112,8 @@ model User {
   createdAt                  DateTime  @default(now()) @map("created_at")
   updatedAt                  DateTime  @updatedAt @map("updated_at")
 
+  rafaCallBookings      RafaCallBooking[]
+
   subscription       Subscription?
   membershipPayments MembershipPayment[]
   partner            Partner?
@@ -114,6 +122,32 @@ model User {
   leads        Lead[]
   affiliateCommissionsFromReferrals AffiliateCommission[] @relation("AffiliateCommissionReferredUser")
   whatsappRegistrationBrowserHandoffs WhatsappRegistrationBrowserHandoff[]
+}
+
+model RafaCallBooking {
+  id                     String               @id @default(cuid())
+  userId                 String               @map("user_id")
+  user                   User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status                 RafaCallBookingStatus @default(SCHEDULED)
+  /** UTC. */
+  startsAt               DateTime             @map("starts_at")
+  /** UTC. */
+  endsAt                 DateTime             @map("ends_at")
+  /** Timezone do utilizador no momento do agendamento (ex.: America/Sao_Paulo). */
+  timezone               String
+  /** Cadeia de histórico de reagendamentos (booking anterior). */
+  rescheduledFromBookingId String?            @map("rescheduled_from_booking_id")
+  rescheduledFromBooking   RafaCallBooking?   @relation("RafaCallRescheduleChain", fields: [rescheduledFromBookingId], references: [id], onDelete: SetNull)
+  reschedulesTo            RafaCallBooking[]  @relation("RafaCallRescheduleChain")
+  cancelledAt             DateTime?           @map("cancelled_at")
+  cancelReason            String?             @map("cancel_reason")
+  createdAt               DateTime            @default(now()) @map("created_at")
+  updatedAt               DateTime            @updatedAt @map("updated_at")
+
+  @@index([userId, status])
+  @@index([startsAt])
+  @@index([endsAt])
+  @@map("rafa_call_bookings")
 }
 
 model Subscription {
