@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RafaCallBookingStatus } from '@prisma/client';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 function tzOffsetMinutes(timeZone: string, at: Date): number {
   const dtf = new Intl.DateTimeFormat('en-US', {
@@ -52,7 +53,10 @@ function waDigits(value: string): string {
 
 @Injectable()
 export class RafacallAdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly wa: WhatsAppService,
+  ) {}
 
   private ymdForUtcInstant(utc: Date, tz: string): string {
     return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(utc);
@@ -170,6 +174,61 @@ export class RafacallAdminService {
   async deleteBlock(params: { id: string }) {
     await this.prisma.rafaCallBlockedSlot.delete({ where: { id: params.id } });
     return { ok: true };
+  }
+
+  private async sendAdminCancelMessage(params: { userId: string; booking: { startsAt: Date; endsAt: Date; timezone: string } }) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: params.userId },
+      select: { name: true, whatsapp: true },
+    });
+    if (!user) return;
+    const startLocal = params.booking.startsAt.toLocaleString('pt-PT', {
+      timeZone: params.booking.timezone,
+      weekday: 'long',
+      day: '2-digit',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const endLocal = params.booking.endsAt.toLocaleTimeString('pt-PT', {
+      timeZone: params.booking.timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const who = user.name?.trim() || 'Olá';
+    const msg = `🗑️ ${who}, a tua chamada com a Rafa foi cancelada.\n\nEstava marcada para: ${startLocal} (até ${endLocal})\nHorário de Lisboa`;
+    await this.wa.sendText(user.whatsapp, msg);
+  }
+
+  async cancelBooking(params: { bookingId: string; adminUserId: string; reason?: string | null }) {
+    const booking = await this.prisma.rafaCallBooking.findFirst({
+      where: { id: params.bookingId, status: RafaCallBookingStatus.SCHEDULED },
+      select: { id: true, userId: true, startsAt: true, endsAt: true, timezone: true },
+    });
+    if (!booking) throw new BadRequestException('Agendamento não encontrado.');
+
+    const updated = await this.prisma.rafaCallBooking.update({
+      where: { id: booking.id },
+      data: {
+        status: RafaCallBookingStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancelReason: params.reason?.trim() || `admin_cancel:${params.adminUserId}`,
+      },
+      select: { id: true, status: true },
+    });
+
+    // Se era o booking atual (fonte legacy em User), limpa.
+    await this.prisma.user.update({
+      where: { id: booking.userId },
+      data: { rafaCallSlotStartsAt: null, rafaCallSlotEndsAt: null },
+    });
+
+    void this.sendAdminCancelMessage({
+      userId: booking.userId,
+      booking: { startsAt: booking.startsAt, endsAt: booking.endsAt, timezone: booking.timezone },
+    });
+
+    return updated;
   }
 }
 

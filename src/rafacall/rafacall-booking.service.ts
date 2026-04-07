@@ -164,19 +164,20 @@ export class RafacallBookingService {
       select: { startsAt: true, endsAt: true },
     });
 
+    // Buffer aqui é interpretado como "gap após a chamada" (não antes+depois).
+    // Como os slots já são espaçados por (duração + buffer), não devemos "comer" slots adjacentes.
     const isConflict = (s: Date, e: Date): boolean => {
-      const sB = new Date(s.getTime() - buffer * 60000);
-      const eB = new Date(e.getTime() + buffer * 60000);
-      return busy.some((b) => {
-        const bs = new Date(b.startsAt.getTime() - buffer * 60000);
-        const be = new Date(b.endsAt.getTime() + buffer * 60000);
-        return sB < be && eB > bs;
-      }) || blocks.some((b) => {
-        // Bloqueio admin deve ser exato (sem buffer), para não "comer" slots adjacentes.
-        const bs = b.startsAt;
-        const be = b.endsAt;
-        return s < be && e > bs;
-      });
+      const eGap = new Date(e.getTime() + buffer * 60000);
+      return (
+        busy.some((b) => {
+          const beGap = new Date(b.endsAt.getTime() + buffer * 60000);
+          return s < beGap && eGap > b.startsAt;
+        }) ||
+        blocks.some((b) => {
+          // Bloqueio admin é exato (sem buffer).
+          return s < b.endsAt && e > b.startsAt;
+        })
+      );
     };
 
     const days: DayAvailability[] = [];
@@ -262,23 +263,29 @@ export class RafacallBookingService {
     if (!tz) throw new BadRequestException('tz é obrigatório.');
 
     const duration = this.durationMinutes;
-    const buffer = this.bufferMinutes;
     const endsAt = new Date(startsAt.getTime() + duration * 60000);
 
     // MVP: 1 booking ativo por utilizador
     const existing = await this.getCurrentBooking(userId);
     if (existing) throw new BadRequestException('Já existe um agendamento ativo.');
 
-    // Conflitos globais
-    const conflict = await this.prisma.rafaCallBooking.findFirst({
+    // Conflitos globais (gap após a chamada).
+    const buffer = this.bufferMinutes;
+    const candidates = await this.prisma.rafaCallBooking.findMany({
       where: {
         status: RafaCallBookingStatus.SCHEDULED,
         startsAt: { lt: new Date(endsAt.getTime() + buffer * 60000) },
-        endsAt: { gt: new Date(startsAt.getTime() - buffer * 60000) },
+        endsAt: { gt: new Date(startsAt.getTime() - duration * 60000) },
       },
-      select: { id: true },
+      select: { id: true, startsAt: true, endsAt: true },
+      take: 20,
     });
-    if (conflict) throw new BadRequestException('Este horário já não está disponível.');
+    const newEndGap = new Date(endsAt.getTime() + buffer * 60000);
+    const hasConflict = candidates.some((b) => {
+      const bEndGap = new Date(b.endsAt.getTime() + buffer * 60000);
+      return startsAt < bEndGap && newEndGap > b.startsAt;
+    });
+    if (hasConflict) throw new BadRequestException('Este horário já não está disponível.');
 
     const created = await this.prisma.rafaCallBooking.create({
       data: {
@@ -312,20 +319,26 @@ export class RafacallBookingService {
     if (!tz) throw new BadRequestException('tz é obrigatório.');
 
     const duration = this.durationMinutes;
-    const buffer = this.bufferMinutes;
     const endsAt = new Date(startsAt.getTime() + duration * 60000);
 
-    // Conflito (exclui o próprio booking atual)
-    const conflict = await this.prisma.rafaCallBooking.findFirst({
+    // Conflito (exclui o próprio booking atual) usando gap após a chamada.
+    const buffer = this.bufferMinutes;
+    const candidates = await this.prisma.rafaCallBooking.findMany({
       where: {
         id: { not: current.id },
         status: RafaCallBookingStatus.SCHEDULED,
         startsAt: { lt: new Date(endsAt.getTime() + buffer * 60000) },
-        endsAt: { gt: new Date(startsAt.getTime() - buffer * 60000) },
+        endsAt: { gt: new Date(startsAt.getTime() - duration * 60000) },
       },
-      select: { id: true },
+      select: { id: true, startsAt: true, endsAt: true },
+      take: 20,
     });
-    if (conflict) throw new BadRequestException('Este horário já não está disponível.');
+    const newEndGap = new Date(endsAt.getTime() + buffer * 60000);
+    const hasConflict = candidates.some((b) => {
+      const bEndGap = new Date(b.endsAt.getTime() + buffer * 60000);
+      return startsAt < bEndGap && newEndGap > b.startsAt;
+    });
+    if (hasConflict) throw new BadRequestException('Este horário já não está disponível.');
 
     // Estratégia: cancela o atual e cria novo ligado por rescheduledFromBookingId.
     const [cancelled, created] = await this.prisma.$transaction([

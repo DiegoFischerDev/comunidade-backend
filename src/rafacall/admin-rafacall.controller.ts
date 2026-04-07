@@ -40,5 +40,18 @@ export class AdminRafacallController {
   deleteBlock(@Param('id') id: string) {
     return this.admin.deleteBlock({ id: id.trim() });
   }
+
+  @Post('bookings/:id/cancel')
+  cancelBooking(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Body() body: { reason?: string | null },
+  ) {
+    return this.admin.cancelBooking({
+      bookingId: id.trim(),
+      adminUserId: user.id,
+      reason: body?.reason,
+    });
+  }
 }
 
