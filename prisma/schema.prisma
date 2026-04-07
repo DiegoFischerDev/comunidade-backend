@@ -123,6 +123,7 @@ model User {
   leads        Lead[]
   affiliateCommissionsFromReferrals AffiliateCommission[] @relation("AffiliateCommissionReferredUser")
   whatsappRegistrationBrowserHandoffs WhatsappRegistrationBrowserHandoff[]
+  supportTickets SupportTicket[]
 }
 
 model RafaCallBooking {
@@ -307,4 +308,16 @@ model AffiliateCommission {
   updatedAt      DateTime                  @updatedAt @map("updated_at")
 
   @@index([affiliateId, status])
+}
+
+model SupportTicket {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("support_tickets")
 }

@@ -13,6 +13,7 @@ import { StripeModule } from './stripe/stripe.module';
 import { AffiliateModule } from './affiliate/affiliate.module';
 import { RafacallModule } from './rafacall/rafacall.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
     AffiliateModule,
     RafacallModule,
     WhatsAppModule,
+    SupportModule,
   ],
   controllers: [AppController],
   providers: [
