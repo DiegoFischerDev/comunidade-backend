@@ -26,7 +26,7 @@ BEGIN
   ) THEN
     ALTER TABLE "rafa_call_blocked_slots"
     ADD CONSTRAINT "rafa_call_blocked_slots_created_by_user_id_fkey"
-    FOREIGN KEY ("created_by_user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    FOREIGN KEY ("created_by_user_id") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
 
