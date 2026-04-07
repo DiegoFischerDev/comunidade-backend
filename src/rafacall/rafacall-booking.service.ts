@@ -91,6 +91,11 @@ function weekdayKeyForDateInTz(timeZone: string, y: number, m: number, d: number
   return 'sun';
 }
 
+function ymdInTz(timeZone: string, at: Date): string {
+  // YYYY-MM-DD no timezone informado
+  return new Intl.DateTimeFormat('en-CA', { timeZone }).format(at);
+}
+
 @Injectable()
 export class RafacallBookingService {
   private readonly logger = new Logger(RafacallBookingService.name);
@@ -133,6 +138,7 @@ export class RafacallBookingService {
     const fromYmd = parseYmd(from);
     const toYmd = parseYmd(to);
     if (!fromYmd || !toYmd) throw new BadRequestException('from/to inválidos (use YYYY-MM-DD).');
+    const todayYmd = ymdInTz(tz, new Date());
 
     // Para reagendamento, precisamos devolver availability mesmo com booking ativo.
     // Importante: excluir o booking atual do cálculo de conflitos, senão o buffer “come” slots adjacentes.
@@ -193,6 +199,16 @@ export class RafacallBookingService {
       const ranges = this.workingHours[dayKey] ?? [];
       const slots: { startsAt: string; endsAt: string }[] = [];
 
+      const dateYmd = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(
+        tzLocalToUtc(tz, y, m, d, 12 * 60),
+      );
+      // Trava: não permite agendar para o mesmo dia (apenas a partir do dia seguinte).
+      if (dateYmd === todayYmd) {
+        days.push({ date: dateYmd, slots: [] });
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+        continue;
+      }
+
       for (const [startHm, endHm] of ranges) {
         const startMin = hmToMinutes(startHm);
         const endMin = hmToMinutes(endHm);
@@ -209,9 +225,6 @@ export class RafacallBookingService {
         }
       }
 
-      const dateYmd = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(
-        tzLocalToUtc(tz, y, m, d, 12 * 60),
-      );
       days.push({ date: dateYmd, slots });
       cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
@@ -261,6 +274,10 @@ export class RafacallBookingService {
     if (Number.isNaN(startsAt.getTime())) throw new BadRequestException('startsAt inválido.');
     const tz = input.tz.trim();
     if (!tz) throw new BadRequestException('tz é obrigatório.');
+    // Trava: não permite agendar para o mesmo dia (no timezone do utilizador).
+    if (ymdInTz(tz, startsAt) === ymdInTz(tz, new Date())) {
+      throw new BadRequestException('Só é possível agendar a partir do dia seguinte.');
+    }
 
     const duration = this.durationMinutes;
     const endsAt = new Date(startsAt.getTime() + duration * 60000);
@@ -317,6 +334,10 @@ export class RafacallBookingService {
     if (Number.isNaN(startsAt.getTime())) throw new BadRequestException('newStartsAt inválido.');
     const tz = input.tz.trim();
     if (!tz) throw new BadRequestException('tz é obrigatório.');
+    // Trava: não permite reagendar para o mesmo dia (no timezone do utilizador).
+    if (ymdInTz(tz, startsAt) === ymdInTz(tz, new Date())) {
+      throw new BadRequestException('Só é possível reagendar a partir do dia seguinte.');
+    }
 
     const duration = this.durationMinutes;
     const endsAt = new Date(startsAt.getTime() + duration * 60000);
