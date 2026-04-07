@@ -172,9 +172,10 @@ export class RafacallBookingService {
         const be = new Date(b.endsAt.getTime() + buffer * 60000);
         return sB < be && eB > bs;
       }) || blocks.some((b) => {
-        const bs = new Date(b.startsAt.getTime() - buffer * 60000);
-        const be = new Date(b.endsAt.getTime() + buffer * 60000);
-        return sB < be && eB > bs;
+        // Bloqueio admin deve ser exato (sem buffer), para não "comer" slots adjacentes.
+        const bs = b.startsAt;
+        const be = b.endsAt;
+        return s < be && e > bs;
       });
     };
 
