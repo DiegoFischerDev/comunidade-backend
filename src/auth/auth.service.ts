@@ -131,11 +131,11 @@ export class AuthService {
         where: { affiliateCode: rawAffiliateCode },
         select: { id: true, isActive: true },
       });
-      if (!affiliate || !affiliate.isActive) {
-        throw new BadRequestException('@ de quem te indicou inválido.');
+      // Não deve bloquear criação de conta: se inválido, ignora (considera null).
+      if (affiliate && affiliate.isActive) {
+        referredByAffiliateId = affiliate.id;
+        referredByCodeSnapshot = rawAffiliateCode;
       }
-      referredByAffiliateId = affiliate.id;
-      referredByCodeSnapshot = rawAffiliateCode;
     }
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
