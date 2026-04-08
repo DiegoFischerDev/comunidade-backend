@@ -3,6 +3,7 @@ import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
 import { PartnerSaleCommissionPaymentStatus, SubscriptionStatus, UserTier } from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 const MEMBERSHIP_DURATION_YEARS = 1;
 
@@ -10,7 +11,100 @@ const MEMBERSHIP_DURATION_YEARS = 1;
 export class StripeService {
   private stripe: Stripe | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly whatsapp: WhatsAppService,
+  ) {}
+
+  private formatMoney(amountMinor: number, currency: string): string {
+    const cur = (currency || '').toLowerCase() || 'eur';
+    const isBrl = cur === 'brl';
+    const value = amountMinor / 100;
+    return new Intl.NumberFormat(isBrl ? 'pt-BR' : 'pt-PT', {
+      style: 'currency',
+      currency: isBrl ? 'BRL' : 'EUR',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
+
+  private formatPaymentMethodFromSession(session: Stripe.Checkout.Session): string {
+    const types = ((session as any).payment_method_types as string[] | undefined) ?? [];
+    if (types.includes('mb_way')) return 'MB WAY';
+    if (types.includes('pix')) return 'Pix';
+    return 'Cartão';
+  }
+
+  private async sendPaymentConfirmationWhatsApp(input: {
+    userId: string;
+    reason: string;
+    amountLabel?: string;
+    paidAt?: Date;
+    methodLabel?: string;
+  }): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: input.userId },
+      select: { name: true, whatsapp: true },
+    });
+    const to = user?.whatsapp?.trim();
+    if (!to) return;
+
+    const when = (input.paidAt ?? new Date()).toLocaleString('pt-PT');
+    const lines = [
+      `Pagamento confirmado ✅`,
+      '',
+      `Motivo: ${input.reason}`,
+      ...(input.amountLabel ? [`Valor: ${input.amountLabel}`] : []),
+      ...(input.methodLabel ? [`Forma de pagamento: ${input.methodLabel}`] : []),
+      `Data/hora: ${when}`,
+      '',
+      `Obrigado!`,
+    ];
+    await this.whatsapp.sendText(to, lines.join('\n'));
+  }
+
+  private async notifyAdminsNewPayment(input: {
+    payerUserId: string;
+    reason: string;
+    amountLabel?: string;
+    paidAt?: Date;
+    methodLabel?: string;
+  }): Promise<void> {
+    const [payer, admins] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: input.payerUserId },
+        select: { name: true, whatsapp: true, email: true },
+      }),
+      this.prisma.user.findMany({
+        where: { role: 'ADMIN', whatsapp: { not: '' } },
+        select: { whatsapp: true },
+      }),
+    ]);
+
+    const toAdmins = admins
+      .map((a) => a.whatsapp?.trim() ?? '')
+      .filter((x) => Boolean(x));
+    if (toAdmins.length === 0) return;
+
+    const when = (input.paidAt ?? new Date()).toLocaleString('pt-PT');
+    const payerLabel =
+      payer?.name?.trim() ||
+      payer?.whatsapp?.trim() ||
+      payer?.email?.trim() ||
+      input.payerUserId;
+
+    const lines = [
+      `Novo pagamento recebido ✅`,
+      '',
+      `De: ${payerLabel}`,
+      `Motivo: ${input.reason}`,
+      ...(input.amountLabel ? [`Valor: ${input.amountLabel}`] : []),
+      ...(input.methodLabel ? [`Forma de pagamento: ${input.methodLabel}`] : []),
+      `Data/hora: ${when}`,
+    ];
+
+    await Promise.all(toAdmins.map((to) => this.whatsapp.sendText(to, lines.join('\n'))));
+  }
 
   private getClient(): Stripe {
     if (!this.stripe) {
@@ -556,7 +650,7 @@ export class StripeService {
           ? sess.payment_intent
           : sess.payment_intent?.id;
 
-      await this.prisma.partnerSale.updateMany({
+      const updated = await this.prisma.partnerSale.updateMany({
         where: {
           id: saleId,
           commissionPaymentStatus: PartnerSaleCommissionPaymentStatus.PENDING,
@@ -568,14 +662,62 @@ export class StripeService {
           paidAt: new Date(),
         },
       });
+      if (updated.count > 0) {
+        const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
+        const currency = ((sess.currency as string | undefined) ?? 'eur').toLowerCase();
+        const paidAt = new Date();
+        const methodLabel = this.formatPaymentMethodFromSession(session);
+        const amountLabel =
+          amountTotal != null && Number.isFinite(amountTotal)
+            ? this.formatMoney(amountTotal, currency)
+            : undefined;
+        await this.sendPaymentConfirmationWhatsApp({
+          userId,
+          reason: 'Pagamento de comissão RPM',
+          amountLabel,
+          paidAt,
+          methodLabel,
+        });
+        await this.notifyAdminsNewPayment({
+          payerUserId: userId,
+          reason: 'Pagamento de comissão RPM',
+          amountLabel,
+          paidAt,
+          methodLabel,
+        });
+      }
       return;
     }
 
     if (checkoutType === 'rafa_call_unlock') {
-      await this.prisma.user.update({
-        where: { id: userId },
+      const updated = await this.prisma.user.updateMany({
+        where: { id: userId, rafaCallSchedulingUnlocked: false },
         data: { rafaCallSchedulingUnlocked: true },
       });
+      if (updated.count > 0) {
+        const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
+        const currency = ((sess.currency as string | undefined) ?? 'eur').toLowerCase();
+        const paidAt = new Date();
+        const methodLabel = this.formatPaymentMethodFromSession(session);
+        const amountLabel =
+          amountTotal != null && Number.isFinite(amountTotal)
+            ? this.formatMoney(amountTotal, currency)
+            : undefined;
+        await this.sendPaymentConfirmationWhatsApp({
+          userId,
+          reason: 'Taxa de agendamento — chamada com a Rafa',
+          amountLabel,
+          paidAt,
+          methodLabel,
+        });
+        await this.notifyAdminsNewPayment({
+          payerUserId: userId,
+          reason: 'Taxa de agendamento — chamada com a Rafa',
+          amountLabel,
+          paidAt,
+          methodLabel,
+        });
+      }
       return;
     }
 
@@ -615,8 +757,36 @@ export class StripeService {
         },
       }),
     ]);
-    await this.recordMembershipPaymentFromCheckoutSession(userId, session);
+    const membershipPaymentCreated = await this.recordMembershipPaymentFromCheckoutSession(
+      userId,
+      session,
+    );
     await this.createAffiliateCommissionIfEligible(userId);
+
+    if (membershipPaymentCreated) {
+      const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
+      const currency = ((sess.currency as string | undefined) ?? 'eur').toLowerCase();
+      const paidAt = new Date();
+      const methodLabel = this.formatPaymentMethodFromSession(session);
+      const amountLabel =
+        amountTotal != null && Number.isFinite(amountTotal)
+          ? this.formatMoney(amountTotal, currency)
+          : undefined;
+      await this.sendPaymentConfirmationWhatsApp({
+        userId,
+        reason: 'Anuidade Comunidade RPM (1 ano)',
+        amountLabel,
+        paidAt,
+        methodLabel,
+      });
+      await this.notifyAdminsNewPayment({
+        payerUserId: userId,
+        reason: 'Anuidade Comunidade RPM (1 ano)',
+        amountLabel,
+        paidAt,
+        methodLabel,
+      });
+    }
 
     try {
       const user = await this.prisma.user.findUnique({
@@ -734,7 +904,27 @@ export class StripeService {
       typeof inv.amount_paid === 'number' &&
       inv.amount_paid > 0
     ) {
-      await this.recordMembershipPaymentFromInvoice(userId, invoice);
+      const created = await this.recordMembershipPaymentFromInvoice(userId, invoice);
+      if (created) {
+        const amountPaid = inv.amount_paid as number;
+        const currency = (inv.currency as string | undefined) ?? 'eur';
+        const paidAt = new Date();
+        const amountLabel = this.formatMoney(amountPaid, currency);
+        await this.sendPaymentConfirmationWhatsApp({
+          userId,
+          reason: 'Renovação — Anuidade Comunidade RPM',
+          amountLabel,
+          paidAt,
+          methodLabel: 'Stripe',
+        });
+        await this.notifyAdminsNewPayment({
+          payerUserId: userId,
+          reason: 'Renovação — Anuidade Comunidade RPM',
+          amountLabel,
+          paidAt,
+          methodLabel: 'Stripe',
+        });
+      }
     }
 
     await this.createAffiliateCommissionIfEligible(userId);
@@ -774,9 +964,9 @@ export class StripeService {
   private async recordMembershipPaymentFromCheckoutSession(
     userId: string,
     session: Stripe.Checkout.Session,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const sessionId = session.id;
-    if (!sessionId) return;
+    if (!sessionId) return false;
     const amountCreditedEur = this.creditedEurFromCheckoutSession(session);
     try {
       await this.prisma.membershipPayment.create({
@@ -787,8 +977,9 @@ export class StripeService {
           stripeCurrency: (session as any).currency ?? null,
         },
       });
+      return true;
     } catch (err: any) {
-      if (err?.code === 'P2002') return;
+      if (err?.code === 'P2002') return false;
       throw err;
     }
   }
@@ -796,10 +987,10 @@ export class StripeService {
   private async recordMembershipPaymentFromInvoice(
     userId: string,
     invoice: Stripe.Invoice,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const inv = invoice as any;
     const invoiceId = inv.id as string | undefined;
-    if (!invoiceId) return;
+    if (!invoiceId) return false;
     const amountCreditedEur = this.creditedEurFromInvoice(invoice);
     try {
       await this.prisma.membershipPayment.create({
@@ -810,8 +1001,9 @@ export class StripeService {
           stripeCurrency: inv.currency ?? null,
         },
       });
+      return true;
     } catch (err: any) {
-      if (err?.code === 'P2002') return;
+      if (err?.code === 'P2002') return false;
       throw err;
     }
   }
