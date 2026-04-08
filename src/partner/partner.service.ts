@@ -199,6 +199,7 @@ export class PartnerService {
           select: {
             id: true,
             name: true,
+            logoUrl: true,
             backgroundImageUrl: true,
             shortDescription: true,
           },
