@@ -251,7 +251,8 @@ export class PartnerService {
         data: {
           slug: dto.slug,
           name: dto.name,
-          description: dto.description,
+          shortDescription: dto.shortDescription,
+          fullDescription: dto.fullDescription,
           backgroundImageUrl: dto.backgroundImageUrl,
           sortOrder: dto.sortOrder ?? 0,
         },
@@ -289,7 +290,8 @@ export class PartnerService {
         data: {
           slug: dto.slug ?? existing.slug,
           name: dto.name ?? existing.name,
-          description: dto.description ?? existing.description,
+          shortDescription: dto.shortDescription ?? existing.shortDescription,
+          fullDescription: dto.fullDescription ?? existing.fullDescription,
           backgroundImageUrl:
             dto.backgroundImageUrl ?? existing.backgroundImageUrl,
           sortOrder: dto.sortOrder ?? existing.sortOrder,

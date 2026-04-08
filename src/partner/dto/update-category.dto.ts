@@ -11,7 +11,11 @@ export class UpdateCategoryDto {
 
   @IsOptional()
   @IsString()
-  description?: string;
+  shortDescription?: string;
+
+  @IsOptional()
+  @IsString()
+  fullDescription?: string;
 
   @IsOptional()
   @IsString()

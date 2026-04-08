@@ -236,7 +236,8 @@ model ProductCategory {
   id                 String   @id @default(cuid())
   slug               String   @unique
   name               String
-  description        String?  @map("description")
+  shortDescription   String?  @map("description")
+  fullDescription    String?  @map("full_description")
   backgroundImageUrl String?  @map("background_image_url")
   sortOrder          Int      @default(0) @map("sort_order")
   createdAt          DateTime @default(now()) @map("created_at")
