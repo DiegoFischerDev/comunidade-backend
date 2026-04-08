@@ -288,6 +288,7 @@ export class RafacallBookingService {
 
     // Conflitos globais (gap após a chamada).
     const buffer = this.bufferMinutes;
+
     const candidates = await this.prisma.rafaCallBooking.findMany({
       where: {
         status: RafaCallBookingStatus.SCHEDULED,

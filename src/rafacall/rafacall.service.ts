@@ -73,7 +73,6 @@ export class RafacallService {
       slotStartsAt: user.rafaCallSlotStartsAt?.toISOString() ?? null,
       slotEndsAt: user.rafaCallSlotEndsAt?.toISOString() ?? null,
       canOpenCalEmbed:
-        isMember &&
         user.rafaCallSchedulingUnlocked,
     };
   }

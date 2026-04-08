@@ -1,10 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  SubscriptionStatus,
-  UserTier,
-} from '@prisma/client';
+import { SubscriptionStatus, UserTier } from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
 
 const MEMBERSHIP_DURATION_YEARS = 1;
@@ -131,19 +128,14 @@ export class StripeService {
   async assertUserCanPayRafaUnlock(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { tier: true, rafaCallSchedulingUnlocked: true },
+      select: { rafaCallSchedulingUnlocked: true },
     });
     if (!user) {
       throw new BadRequestException('Utilizador não encontrado.');
     }
-    if (user.tier !== UserTier.MEMBER) {
-      throw new BadRequestException(
-        'Apenas membros VIP podem pagar a taxa de novo agendamento.',
-      );
-    }
     if (user.rafaCallSchedulingUnlocked) {
       throw new BadRequestException(
-        'Já tem o agendamento disponível — use o Cal.com para marcar.',
+        'Já tens um agendamento disponível. Vai ao dashboard para escolher data e hora.',
       );
     }
   }
@@ -490,7 +482,7 @@ export class StripeService {
     const customerId = typeof sess.customer === 'string' ? sess.customer : sess.customer?.id;
     const subscriptionId = resolveSubscriptionId(session.subscription);
     const validUntil = addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
-    const grantRafaUnlock = prev?.tier !== UserTier.MEMBER;
+    const grantRafaUnlock = false;
 
     await this.prisma.$transaction([
       this.prisma.subscription.upsert({
