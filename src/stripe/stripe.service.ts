@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
-import { SubscriptionStatus, UserTier } from '@prisma/client';
+import { PartnerSaleCommissionPaymentStatus, SubscriptionStatus, UserTier } from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
 
 const MEMBERSHIP_DURATION_YEARS = 1;
@@ -213,6 +213,88 @@ export class StripeService {
       throw new BadRequestException('Não foi possível criar a sessão MB WAY.');
     }
     return { url: session.url };
+  }
+
+  async createPartnerSaleCommissionCheckoutSession(input: {
+    saleId: string;
+    partnerUserId: string;
+    partnerEmail: string | null | undefined;
+    commissionEurCents: number;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<{ url: string; sessionId: string }> {
+    const stripe = this.getClient();
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: this.stripeCustomerEmail(input.partnerUserId, input.partnerEmail),
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            unit_amount: input.commissionEurCents,
+            product_data: {
+              name: 'Comissão RPM',
+              description: 'Pagamento de comissão referente a uma venda registrada pelo parceiro',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['card'],
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      client_reference_id: input.partnerUserId,
+      metadata: {
+        userId: input.partnerUserId,
+        checkoutType: 'partner_sale_commission',
+        saleId: input.saleId,
+      },
+    });
+    if (!session.url || !session.id) {
+      throw new BadRequestException('Não foi possível criar a sessão de pagamento.');
+    }
+    return { url: session.url, sessionId: session.id };
+  }
+
+  async createPartnerSaleCommissionMbWayCheckoutSession(input: {
+    saleId: string;
+    partnerUserId: string;
+    partnerEmail: string | null | undefined;
+    commissionEurCents: number;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<{ url: string; sessionId: string }> {
+    const stripe = this.getClient();
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: this.stripeCustomerEmail(input.partnerUserId, input.partnerEmail),
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            unit_amount: input.commissionEurCents,
+            product_data: {
+              name: 'Comissão RPM (MB WAY)',
+              description: 'Pagamento de comissão referente a uma venda registrada pelo parceiro',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['mb_way'],
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      client_reference_id: input.partnerUserId,
+      metadata: {
+        userId: input.partnerUserId,
+        checkoutType: 'partner_sale_commission',
+        saleId: input.saleId,
+      },
+    });
+    if (!session.url || !session.id) {
+      throw new BadRequestException('Não foi possível criar a sessão MB WAY.');
+    }
+    return { url: session.url, sessionId: session.id };
   }
 
   async createRafaCallUnlockPixCheckoutSession(
@@ -466,6 +548,29 @@ export class StripeService {
     if (!userId) return;
 
     const checkoutType = sess.metadata?.checkoutType as string | undefined;
+    if (checkoutType === 'partner_sale_commission') {
+      const saleId = sess.metadata?.saleId as string | undefined;
+      if (!saleId) return;
+      const paymentIntentId =
+        typeof sess.payment_intent === 'string'
+          ? sess.payment_intent
+          : sess.payment_intent?.id;
+
+      await this.prisma.partnerSale.updateMany({
+        where: {
+          id: saleId,
+          commissionPaymentStatus: PartnerSaleCommissionPaymentStatus.PENDING,
+        },
+        data: {
+          commissionPaymentStatus: PartnerSaleCommissionPaymentStatus.PAID,
+          stripeCheckoutSessionId: sess.id,
+          stripePaymentIntentId: paymentIntentId ?? null,
+          paidAt: new Date(),
+        },
+      });
+      return;
+    }
+
     if (checkoutType === 'rafa_call_unlock') {
       await this.prisma.user.update({
         where: { id: userId },

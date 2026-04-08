@@ -16,6 +16,9 @@ import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CreateLeadDto } from './dto/create-lead.dto';
+import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
+import { PartnerSaleCommissionPaymentStatus } from '@prisma/client';
+import { StripeService } from '../stripe/stripe.service';
 import { Role } from '@prisma/client';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
@@ -24,7 +27,10 @@ const SALT_ROUNDS = 10;
 
 @Injectable()
 export class PartnerService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly stripeService: StripeService,
+  ) {}
 
   private async deleteUploadFileIfLocal(url?: string | null) {
     if (!url) return;
@@ -461,6 +467,7 @@ export class PartnerService {
         description: true,
         price: true,
         priceOnRequest: true,
+        rpmCommissionEur: true,
         createdAt: true,
       },
     });
@@ -547,6 +554,59 @@ export class PartnerService {
     return { success: true };
   }
 
+  async adminListServicesGroupedByPartner() {
+    const partners = await this.prisma.partner.findMany({
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        services: {
+          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            priceOnRequest: true,
+            rpmCommissionEur: true,
+          },
+        },
+      },
+    });
+
+    return partners.filter((p) => p.services.length > 0);
+  }
+
+  async adminUpdateServiceCommission(
+    serviceId: string,
+    rpmCommissionEur: string | null | undefined,
+  ) {
+    const exists = await this.prisma.service.findUnique({
+      where: { id: serviceId },
+      select: { id: true },
+    });
+    if (!exists) {
+      throw new NotFoundException('Serviço não encontrado.');
+    }
+
+    const normalized =
+      rpmCommissionEur === undefined
+        ? undefined
+        : rpmCommissionEur === null
+          ? null
+          : rpmCommissionEur.trim() === ''
+            ? null
+            : rpmCommissionEur.trim();
+
+    return this.prisma.service.update({
+      where: { id: serviceId },
+      data: { rpmCommissionEur: normalized },
+      select: {
+        id: true,
+        rpmCommissionEur: true,
+      },
+    });
+  }
+
   async createLeadForPartner(
     partnerId: string,
     userId: string,
@@ -585,13 +645,173 @@ export class PartnerService {
       include: {
         user: {
           select: {
+            id: true,
             name: true,
             email: true,
             whatsapp: true,
+            tier: true,
           },
         },
       },
     });
+  }
+
+  async listMySales(userId: string) {
+    const partner = await this.getPartnerForUserOrThrow(userId);
+    return this.prisma.partnerSale.findMany({
+      where: { partnerId: partner.id },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: { select: { id: true, name: true, whatsapp: true, tier: true } },
+        service: { select: { id: true, title: true, rpmCommissionEur: true } },
+      },
+    });
+  }
+
+  async createMySale(userId: string, dto: CreatePartnerSaleDto) {
+    const partner = await this.getPartnerForUserOrThrow(userId);
+
+    // valida lead pertence ao parceiro
+    const lead = await this.prisma.lead.findUnique({
+      where: {
+        lead_partner_user_unique: { partnerId: partner.id, userId: dto.leadUserId },
+      },
+      select: { id: true },
+    });
+    if (!lead) {
+      throw new BadRequestException('Lead inválido para este parceiro.');
+    }
+
+    // valida serviço pertence ao parceiro
+    const service = await this.prisma.service.findFirst({
+      where: { id: dto.serviceId, partnerId: partner.id },
+      select: { id: true, rpmCommissionEur: true },
+    });
+    if (!service) {
+      throw new BadRequestException('Serviço inválido para este parceiro.');
+    }
+
+    const amount = dto.amountEur?.trim();
+    if (!amount) throw new BadRequestException('Valor da venda é obrigatório.');
+
+    return this.prisma.partnerSale.create({
+      data: {
+        partnerId: partner.id,
+        userId: dto.leadUserId,
+        serviceId: service.id,
+        amountEur: amount,
+        commissionSuggestedEur: service.rpmCommissionEur ?? null,
+      },
+      include: {
+        user: { select: { id: true, name: true, whatsapp: true, tier: true } },
+        service: { select: { id: true, title: true, rpmCommissionEur: true } },
+      },
+    });
+  }
+
+  async deleteMySale(userId: string, saleId: string) {
+    const partner = await this.getPartnerForUserOrThrow(userId);
+    const sale = await this.prisma.partnerSale.findFirst({
+      where: { id: saleId, partnerId: partner.id },
+      select: { id: true, commissionPaymentStatus: true },
+    });
+    if (!sale) throw new NotFoundException('Venda não encontrada.');
+    if (sale.commissionPaymentStatus === PartnerSaleCommissionPaymentStatus.PAID) {
+      throw new BadRequestException('Não é possível apagar uma venda já paga.');
+    }
+    await this.prisma.partnerSale.delete({ where: { id: sale.id } });
+    return { ok: true };
+  }
+
+  async adminListAllSales() {
+    return this.prisma.partnerSale.findMany({
+      orderBy: [{ createdAt: 'desc' }],
+      include: {
+        partner: { select: { id: true, name: true } },
+        user: { select: { id: true, name: true, whatsapp: true, tier: true } },
+        service: { select: { id: true, title: true } },
+      },
+    });
+  }
+
+  async startMySaleCommissionCheckout(params: {
+    partnerUserId: string;
+    partnerEmail: string | null | undefined;
+    saleId: string;
+    commissionEur: string;
+    wantsInvoice: boolean;
+    successUrl: string;
+    cancelUrl: string;
+    method: 'card' | 'mbway';
+  }) {
+    const partner = await this.getPartnerForUserOrThrow(params.partnerUserId);
+
+    const sale = await this.prisma.partnerSale.findFirst({
+      where: { id: params.saleId, partnerId: partner.id },
+      include: { service: { select: { rpmCommissionEur: true } } },
+    });
+    if (!sale) throw new NotFoundException('Venda não encontrada.');
+    if (sale.commissionPaymentStatus === PartnerSaleCommissionPaymentStatus.PAID) {
+      throw new BadRequestException('Esta comissão já foi paga.');
+    }
+
+    const commission = params.commissionEur.trim();
+    if (!commission) throw new BadRequestException('Valor da comissão é obrigatório.');
+    const commissionCents = Math.round(Number(commission.replace(',', '.')) * 100);
+    if (!Number.isFinite(commissionCents) || commissionCents <= 0) {
+      throw new BadRequestException('Valor da comissão inválido.');
+    }
+
+    // snapshot faturação do parceiro (se solicitar fatura)
+    const partnerBilling = await this.prisma.partner.findUnique({
+      where: { id: partner.id },
+      select: {
+        billingName: true,
+        billingNif: true,
+        billingAddress: true,
+        billingPostalCode: true,
+      },
+    });
+
+    await this.prisma.partnerSale.update({
+      where: { id: sale.id },
+      data: {
+        commissionSuggestedEur: sale.commissionSuggestedEur ?? sale.service.rpmCommissionEur ?? null,
+        commissionPaidEur: commission,
+        wantsInvoice: params.wantsInvoice,
+        invoiceName: params.wantsInvoice ? partnerBilling?.billingName ?? null : null,
+        invoiceNif: params.wantsInvoice ? partnerBilling?.billingNif ?? null : null,
+        invoiceAddress: params.wantsInvoice ? partnerBilling?.billingAddress ?? null : null,
+        invoicePostalCode: params.wantsInvoice ? partnerBilling?.billingPostalCode ?? null : null,
+        invoiceRequestedAt: params.wantsInvoice ? new Date() : null,
+      },
+    });
+
+    const session =
+      params.method === 'mbway'
+        ? await this.stripeService.createPartnerSaleCommissionMbWayCheckoutSession({
+            saleId: sale.id,
+            partnerUserId: params.partnerUserId,
+            partnerEmail: params.partnerEmail,
+            commissionEurCents: commissionCents,
+            successUrl: params.successUrl,
+            cancelUrl: params.cancelUrl,
+          })
+        : await this.stripeService.createPartnerSaleCommissionCheckoutSession({
+            saleId: sale.id,
+            partnerUserId: params.partnerUserId,
+            partnerEmail: params.partnerEmail,
+            commissionEurCents: commissionCents,
+            successUrl: params.successUrl,
+            cancelUrl: params.cancelUrl,
+          });
+
+    await this.prisma.partnerSale.update({
+      where: { id: sale.id },
+      data: { stripeCheckoutSessionId: session.sessionId },
+    });
+
+    return { url: session.url };
   }
 
   // Endpoints admin/services removidos (sem aprovação e sem comissão/cashback).

@@ -20,6 +20,11 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { Public } from '../auth/public.decorator';
+import { UpdateServiceCommissionDto } from './dto/update-service-commission.dto';
+import {
+  CreatePartnerSaleDto,
+  StartPartnerSaleCommissionCheckoutDto,
+} from './dto/create-partner-sale.dto';
 
 @Controller('partners')
 export class PartnerController {
@@ -79,6 +84,24 @@ export class PartnerController {
     return this.partnerService.deleteCategory(id);
   }
 
+  @Get('admin/services')
+  @Roles(Role.ADMIN)
+  async adminListServices() {
+    return this.partnerService.adminListServicesGroupedByPartner();
+  }
+
+  @Patch('admin/services/:id/commission')
+  @Roles(Role.ADMIN)
+  async adminUpdateServiceCommission(
+    @Param('id') id: string,
+    @Body() dto: UpdateServiceCommissionDto,
+  ) {
+    return this.partnerService.adminUpdateServiceCommission(
+      id,
+      dto.rpmCommissionEur,
+    );
+  }
+
   @Public()
   @Get('categories-with-partners')
   async listCategoriesWithPartners() {
@@ -116,6 +139,83 @@ export class PartnerController {
   @Roles(Role.PARTNER)
   async listMyLeads(@CurrentUser() user: { id: string }) {
     return this.partnerService.listMyLeads(user.id);
+  }
+
+  @Get('me/sales')
+  @Roles(Role.PARTNER)
+  async listMySales(@CurrentUser() user: { id: string }) {
+    return this.partnerService.listMySales(user.id);
+  }
+
+  @Post('me/sales')
+  @Roles(Role.PARTNER)
+  async createMySale(
+    @CurrentUser() user: { id: string },
+    @Body() dto: CreatePartnerSaleDto,
+  ) {
+    return this.partnerService.createMySale(user.id, dto);
+  }
+
+  @Delete('me/sales/:id')
+  @Roles(Role.PARTNER)
+  async deleteMySale(@CurrentUser() user: { id: string }, @Param('id') id: string) {
+    return this.partnerService.deleteMySale(user.id, id);
+  }
+
+  @Get('admin/sales')
+  @Roles(Role.ADMIN)
+  async adminListAllSales() {
+    return this.partnerService.adminListAllSales();
+  }
+
+  @Post('me/sales/:id/pay-commission')
+  @Roles(Role.PARTNER)
+  async startSaleCommissionCheckout(
+    @CurrentUser() user: { id: string; email?: string | null },
+    @Param('id') id: string,
+    @Body() dto: StartPartnerSaleCommissionCheckoutDto,
+  ) {
+    const frontendBase =
+      process.env.FRONTEND_URL?.replace(/\/$/, '') ||
+      'https://comunidade.rafaapelomundo.com';
+    const successUrl =
+      dto.successUrl ?? `${frontendBase}/dashboard/my-sales?paid=1`;
+    const cancelUrl = dto.cancelUrl ?? `${frontendBase}/dashboard/my-sales`;
+    return this.partnerService.startMySaleCommissionCheckout({
+      partnerUserId: user.id,
+      partnerEmail: user.email,
+      saleId: id,
+      commissionEur: dto.commissionEur,
+      wantsInvoice: dto.wantsInvoice,
+      successUrl,
+      cancelUrl,
+      method: 'card',
+    });
+  }
+
+  @Post('me/sales/:id/pay-commission-mbway')
+  @Roles(Role.PARTNER)
+  async startSaleCommissionCheckoutMbWay(
+    @CurrentUser() user: { id: string; email?: string | null },
+    @Param('id') id: string,
+    @Body() dto: StartPartnerSaleCommissionCheckoutDto,
+  ) {
+    const frontendBase =
+      process.env.FRONTEND_URL?.replace(/\/$/, '') ||
+      'https://comunidade.rafaapelomundo.com';
+    const successUrl =
+      dto.successUrl ?? `${frontendBase}/dashboard/my-sales?paid=1`;
+    const cancelUrl = dto.cancelUrl ?? `${frontendBase}/dashboard/my-sales`;
+    return this.partnerService.startMySaleCommissionCheckout({
+      partnerUserId: user.id,
+      partnerEmail: user.email,
+      saleId: id,
+      commissionEur: dto.commissionEur,
+      wantsInvoice: dto.wantsInvoice,
+      successUrl,
+      cancelUrl,
+      method: 'mbway',
+    });
   }
 
   @Post('me/services')
