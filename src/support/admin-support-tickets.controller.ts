@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Delete, Get, Param, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/roles.decorator';
 import { SupportTicketsService } from './support-tickets.service';
@@ -11,6 +11,11 @@ export class AdminSupportTicketsController {
   @Get()
   list(@Query('take') take?: string) {
     return this.tickets.listTickets({ take: take ? Number(take) : undefined });
+  }
+
+  @Delete(':id')
+  delete(@Param('id') id: string) {
+    return this.tickets.deleteTicket({ id: id.trim() });
   }
 }
 

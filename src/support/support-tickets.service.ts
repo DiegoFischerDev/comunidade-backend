@@ -57,5 +57,12 @@ export class SupportTicketsService {
       })),
     };
   }
+
+  async deleteTicket(params: { id: string }) {
+    const id = (params.id || '').trim();
+    if (!id) throw new BadRequestException('id é obrigatório.');
+    await this.prisma.supportTicket.delete({ where: { id } });
+    return { ok: true };
+  }
 }
 
