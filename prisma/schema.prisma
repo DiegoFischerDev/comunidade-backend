@@ -50,6 +50,12 @@ enum RafaCallBookingStatus {
   COMPLETED
 }
 
+enum SupportTicketStatus {
+  REGISTERED
+  IN_REVIEW
+  DONE
+}
+
 model WhatsappRegistrationRequest {
   id                    String   @id @default(cuid())
   code                  String   @unique
@@ -311,13 +317,17 @@ model AffiliateCommission {
 }
 
 model SupportTicket {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  message   String
-  createdAt DateTime @default(now()) @map("created_at")
+  id         String             @id @default(cuid())
+  userId     String             @map("user_id")
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status     SupportTicketStatus @default(REGISTERED)
+  message    String
+  adminReply String?            @map("admin_reply")
+  createdAt  DateTime           @default(now()) @map("created_at")
+  updatedAt  DateTime           @updatedAt @map("updated_at")
 
   @@index([userId])
   @@index([createdAt])
+  @@index([status])
   @@map("support_tickets")
 }

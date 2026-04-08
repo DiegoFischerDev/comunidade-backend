@@ -1,5 +1,5 @@
-import { Controller, Delete, Get, Param, Query } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Body, Controller, Delete, Get, Param, Patch, Query } from '@nestjs/common';
+import { Role, SupportTicketStatus } from '@prisma/client';
 import { Roles } from '../auth/roles.decorator';
 import { SupportTicketsService } from './support-tickets.service';
 
@@ -16,6 +16,18 @@ export class AdminSupportTicketsController {
   @Delete(':id')
   delete(@Param('id') id: string) {
     return this.tickets.deleteTicket({ id: id.trim() });
+  }
+
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() body: { status?: SupportTicketStatus; adminReply?: string | null },
+  ) {
+    return this.tickets.adminUpdateTicket({
+      id: id.trim(),
+      status: body?.status,
+      adminReply: body?.adminReply,
+    });
   }
 }
 
