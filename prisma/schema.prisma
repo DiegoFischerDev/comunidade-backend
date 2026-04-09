@@ -131,6 +131,21 @@ model User {
   partnerSales PartnerSale[]
   whatsappRegistrationBrowserHandoffs WhatsappRegistrationBrowserHandoff[]
   supportTickets SupportTicket[]
+  immigrationChecklist ImmigrationChecklist?
+}
+
+model ImmigrationChecklist {
+  id        String   @id @default(cuid())
+  userId    String   @unique @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /** JSON com o estado do checklist (checkboxes, selects, datas, notas, etc.) */
+  data      Json     @default("{}")
+  /** versão do template de checklist (para migrações futuras) */
+  version   Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("immigration_checklists")
 }
 
 model RafaCallBooking {

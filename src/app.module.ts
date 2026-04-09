@@ -14,6 +14,7 @@ import { AffiliateModule } from './affiliate/affiliate.module';
 import { RafacallModule } from './rafacall/rafacall.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { SupportModule } from './support/support.module';
+import { ChecklistModule } from './checklist/checklist.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { SupportModule } from './support/support.module';
     RafacallModule,
     WhatsAppModule,
     SupportModule,
+    ChecklistModule,
   ],
   controllers: [AppController],
   providers: [
