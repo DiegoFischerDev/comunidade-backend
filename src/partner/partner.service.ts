@@ -66,6 +66,73 @@ export class PartnerService {
     return value.replace(/\s+/g, '');
   }
 
+  private extractImmigrationPlanAnswers(data: Prisma.JsonValue | null | undefined) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return null;
+    }
+
+    const root = data as Record<string, unknown>;
+    const meta =
+      root.meta && typeof root.meta === 'object' && !Array.isArray(root.meta)
+        ? (root.meta as Record<string, unknown>)
+        : null;
+
+    if (!meta) return null;
+
+    const answers = {
+      visaType:
+        typeof meta.visaType === 'string' && meta.visaType.trim()
+          ? meta.visaType.trim()
+          : null,
+      cidade:
+        typeof meta.cidade === 'string' && meta.cidade.trim()
+          ? meta.cidade.trim()
+          : null,
+      cidadePlanoB:
+        typeof meta.cidadePlanoB === 'string' && meta.cidadePlanoB.trim()
+          ? meta.cidadePlanoB.trim()
+          : null,
+      agregadoFamiliar:
+        typeof meta.agregadoFamiliar === 'string' && meta.agregadoFamiliar.trim()
+          ? meta.agregadoFamiliar.trim()
+          : null,
+      numQuartos:
+        typeof meta.numQuartos === 'string' && meta.numQuartos.trim()
+          ? meta.numQuartos.trim()
+          : null,
+      profissoesPossiveis: Array.isArray(meta.profissoesPossiveis)
+        ? meta.profissoesPossiveis.filter(
+            (value): value is string => typeof value === 'string' && value.trim().length > 0,
+          )
+        : [],
+      precisaCarro:
+        typeof meta.precisaCarro === 'boolean' || meta.precisaCarro === null
+          ? meta.precisaCarro
+          : null,
+      dataViagem:
+        typeof meta.dataViagem === 'string' && meta.dataViagem.trim()
+          ? meta.dataViagem.trim()
+          : null,
+      dataAima:
+        typeof meta.dataAima === 'string' && meta.dataAima.trim()
+          ? meta.dataAima.trim()
+          : null,
+      notas:
+        typeof meta.notas === 'string' && meta.notas.trim()
+          ? meta.notas.trim()
+          : null,
+    };
+
+    const hasAnyAnswer = Object.values(answers).some((value) => {
+      if (Array.isArray(value)) return value.length > 0;
+      return value !== null;
+    });
+
+    if (!hasAnyAnswer) return null;
+
+    return answers;
+  }
+
   listPartners() {
     return this.prisma.partner.findMany({
       orderBy: { createdAt: 'desc' },
@@ -639,7 +706,7 @@ export class PartnerService {
   async listMyLeads(userId: string) {
     const partner = await this.getPartnerForUserOrThrow(userId);
 
-    return this.prisma.lead.findMany({
+    const leads = await this.prisma.lead.findMany({
       where: { partnerId: partner.id },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -650,9 +717,38 @@ export class PartnerService {
             email: true,
             whatsapp: true,
             tier: true,
+            immigrationChecklist: {
+              select: {
+                data: true,
+                updatedAt: true,
+              },
+            },
           },
         },
       },
+    });
+
+    return leads.map((lead) => {
+      const answers = this.extractImmigrationPlanAnswers(lead.user.immigrationChecklist?.data);
+
+      return {
+        id: lead.id,
+        createdAt: lead.createdAt,
+        user: {
+          id: lead.user.id,
+          name: lead.user.name,
+          email: lead.user.email,
+          whatsapp: lead.user.whatsapp,
+          tier: lead.user.tier,
+        },
+        immigrationPlan:
+          answers && lead.user.immigrationChecklist?.updatedAt
+            ? {
+                updatedAt: lead.user.immigrationChecklist.updatedAt,
+                answers,
+              }
+            : null,
+      };
     });
   }
 
