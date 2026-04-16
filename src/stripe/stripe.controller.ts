@@ -30,7 +30,7 @@ export class StripeController {
   ) {
     return this.stripeService.createCheckoutSession(
       user.id,
-      user.email ?? '',
+      user.email,
       dto.successUrl,
       dto.cancelUrl,
     );
@@ -44,7 +44,7 @@ export class StripeController {
   ) {
     return this.stripeService.createMbWayCheckoutSession(
       user.id,
-      user.email ?? '',
+      user.email,
       dto.successUrl,
       dto.cancelUrl,
     );
@@ -58,7 +58,7 @@ export class StripeController {
   ) {
     return this.stripeService.createPixCheckoutSession(
       user.id,
-      user.email ?? '',
+      user.email,
       dto.successUrl,
       dto.cancelUrl,
     );
