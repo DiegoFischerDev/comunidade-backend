@@ -17,9 +17,8 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
-import { PartnerSaleCommissionPaymentStatus } from '@prisma/client';
+import { PartnerSaleCommissionPaymentStatus, Prisma, Role } from '@prisma/client';
 import { StripeService } from '../stripe/stripe.service';
-import { Role } from '@prisma/client';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
 
