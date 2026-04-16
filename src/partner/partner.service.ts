@@ -155,26 +155,18 @@ export class PartnerService {
   }
 
   async createPartner(dto: CreatePartnerDto) {
-    const normalizedEmail = dto.email.toLowerCase().trim();
-
-    const existing = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
-
-    if (existing) {
-      throw new ConflictException('Já existe um usuário com este e-mail.');
-    }
+    const normalizedWhatsapp = this.normalizeWhatsapp(dto.whatsapp);
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
 
     try {
       const user = await this.prisma.user.create({
         data: {
-          email: normalizedEmail,
+          email: null,
           passwordHash,
           role: Role.PARTNER,
           name: dto.name,
-          whatsapp: this.normalizeWhatsapp(dto.whatsapp),
+          whatsapp: normalizedWhatsapp,
         },
       });
 
@@ -182,7 +174,7 @@ export class PartnerService {
         data: {
           userId: user.id,
           name: dto.name,
-          whatsapp: this.normalizeWhatsapp(dto.whatsapp),
+          whatsapp: normalizedWhatsapp,
           logoUrl: dto.logoUrl,
           shortDescription: dto.shortDescription,
           fullDescription: dto.fullDescription,
@@ -199,7 +191,11 @@ export class PartnerService {
         },
         partner,
       };
-    } catch (error) {
+    } catch (error: any) {
+      // WhatsApp é único em User. Se já existir, devolve uma mensagem clara.
+      if (error?.code === 'P2002') {
+        throw new ConflictException('Já existe um usuário com este WhatsApp.');
+      }
       throw new InternalServerErrorException(
         'Erro ao criar parceiro. Tente novamente mais tarde.',
       );
