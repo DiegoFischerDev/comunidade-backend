@@ -435,7 +435,12 @@ export class StripeService {
    * Cria uma sessão de Checkout para pagamento único com cartão (EUR).
    * A anuidade de 1 ano é aplicada no backend quando o webhook confirma o pagamento.
    */
-  async createCheckoutSession(userId: string, userEmail: string, successUrl: string, cancelUrl: string): Promise<{ url: string }> {
+  async createCheckoutSession(
+    userId: string,
+    userEmail: string | null | undefined,
+    successUrl: string,
+    cancelUrl: string,
+  ): Promise<{ url: string }> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
@@ -445,10 +450,11 @@ export class StripeService {
 
     const stripe = this.getClient();
     const amount = this.eurAmountCents;
+    const email = userEmail?.trim() || null;
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      customer_email: userEmail,
+      ...(email ? { customer_email: email } : {}),
       line_items: [
         {
           price_data: {
@@ -482,7 +488,7 @@ export class StripeService {
    */
   async createMbWayCheckoutSession(
     userId: string,
-    userEmail: string,
+    userEmail: string | null | undefined,
     successUrl: string,
     cancelUrl: string,
   ): Promise<{ url: string }> {
@@ -495,10 +501,11 @@ export class StripeService {
 
     const stripe = this.getClient();
     const amount = this.eurAmountCents;
+    const email = userEmail?.trim() || null;
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      customer_email: userEmail,
+      ...(email ? { customer_email: email } : {}),
       line_items: [
         {
           price_data: {
@@ -532,7 +539,7 @@ export class StripeService {
    */
   async createPixCheckoutSession(
     userId: string,
-    userEmail: string,
+    userEmail: string | null | undefined,
     successUrl: string,
     cancelUrl: string,
   ): Promise<{ url: string }> {
@@ -545,10 +552,11 @@ export class StripeService {
 
     const stripe = this.getClient();
     const amount = this.pixAmountCentavos;
+    const email = userEmail?.trim() || null;
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      customer_email: userEmail,
+      ...(email ? { customer_email: email } : {}),
       line_items: [
         {
           price_data: {
