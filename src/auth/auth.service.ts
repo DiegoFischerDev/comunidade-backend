@@ -10,10 +10,11 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { join } from 'path';
 import { unlink } from 'fs/promises';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { Role, UserTier } from '@prisma/client';
+import { $Enums, Role, UserTier } from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
@@ -64,6 +65,22 @@ export class AuthService {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
+  private generateBrowserSessionToken(): string {
+    return randomBytes(32).toString('hex');
+  }
+
+  private signAuthJwt(user: {
+    id: string;
+    email: string | null;
+    role: Role;
+  }): string {
+    return this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    });
+  }
+
   private getVerificationExpiryDate(): Date {
     const expires = new Date();
     expires.setMinutes(expires.getMinutes() + 15);
@@ -76,14 +93,36 @@ export class AuthService {
     return expires;
   }
 
-  async register(dto: RegisterDto) {
-    const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase().trim() },
-    });
-    if (existing) {
-      throw new ConflictException('Este e-mail já está em uso.');
-    }
+  private buildWhatsappRegistrationUrl(name: string, code: string): string {
+    const num =
+      process.env.WHATSAPP_REGISTRATION_NUMBER || '351927398547';
+    const text = `Olá, meu nome é ${name}, gostaria de confirmar meu acesso a comunidade RPM. meu codigo é ${code}`;
+    return `https://wa.me/${num.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
+  }
 
+  private async sendEvolutionText(toDigits: string, text: string): Promise<void> {
+    const base = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
+    const key = process.env.EVOLUTION_API_KEY || '';
+    const instance = process.env.EVOLUTION_INSTANCE || 'comunidade';
+    if (!base || !key) {
+      console.warn(
+        '[auth] EVOLUTION_API_URL ou EVOLUTION_API_KEY ausentes; SMS WhatsApp não enviado.',
+      );
+      return;
+    }
+    const number = toDigits.replace(/\D/g, '');
+    const res = await fetch(`${base}/message/sendText/${instance}`, {
+      method: 'POST',
+      headers: { apikey: key, 'content-type': 'application/json' },
+      body: JSON.stringify({ number, text }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.warn('[auth] Evolution sendText falhou:', res.status, body);
+    }
+  }
+
+  async register(dto: RegisterDto) {
     const rawAffiliateCode = (dto.affiliateCode ?? '').trim().toLowerCase();
     let referredByAffiliateId: string | null = null;
     let referredByCodeSnapshot: string | null = null;
@@ -92,103 +131,294 @@ export class AuthService {
         where: { affiliateCode: rawAffiliateCode },
         select: { id: true, isActive: true },
       });
-      if (!affiliate || !affiliate.isActive) {
-        throw new BadRequestException('Código de afiliado inválido.');
+      // Não deve bloquear criação de conta: se inválido, ignora (considera null).
+      if (affiliate && affiliate.isActive) {
+        referredByAffiliateId = affiliate.id;
+        referredByCodeSnapshot = rawAffiliateCode;
       }
-      referredByAffiliateId = affiliate.id;
-      referredByCodeSnapshot = rawAffiliateCode;
     }
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
     const verificationCode = this.generateVerificationCode();
+    const browserSessionToken = this.generateBrowserSessionToken();
     const verificationExpiresAt = this.getVerificationExpiryDate();
-
-    const user = await this.prisma.user.create({
+    // Em vez de criar o utilizador agora, criamos um "pedido de registo" e só
+    // criamos o User quando o Evolution confirmar o WhatsApp com este código.
+    await this.prisma.whatsappRegistrationRequest.create({
       data: {
-        email: dto.email.toLowerCase().trim(),
-        name: dto.name,
-        whatsapp: this.normalizeWhatsapp(dto.whatsapp),
+        code: verificationCode,
+        browserSessionToken,
+        name: dto.name.trim(),
         passwordHash,
-        role: Role.USER,
-        emailVerificationCode: verificationCode,
-        emailVerificationExpiresAt: verificationExpiresAt,
+        affiliateCodeSnapshot: referredByCodeSnapshot,
+        indicadoPor: referredByCodeSnapshot,
         referredByAffiliateId,
-        referredByCodeSnapshot,
-        referredAt: referredByAffiliateId ? new Date() : null,
-      },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        name: true,
-        whatsapp: true,
-        createdAt: true,
+        expiresAt: verificationExpiresAt,
       },
     });
 
-    try {
-      const subject = 'Confirme o seu e-mail na Comunidade RPM';
-      const text = `Olá ${user.name},
-
-Obrigado por se registar na Comunidade RPM.
-
-Para confirmar o seu e-mail, utilize o seguinte código:
-
-${verificationCode}
-
-Este código é válido por 15 minutos.
-
-Se não foi você que iniciou este registo, pode ignorar esta mensagem.`;
-
-      const html = `<p>Olá ${user.name},</p>
-<p>Obrigado por se registar na <strong>Comunidade RPM</strong>.</p>
-<p>Para confirmar o seu e-mail, utilize o seguinte código:</p>
-<p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${verificationCode}</p>
-<p>Este código é válido por 15 minutos.</p>
-<p>Se não foi você que iniciou este registo, pode ignorar esta mensagem.</p>`;
-
-      await sendEmailBase({
-        to: user.email,
-        subject,
-        text,
-        html,
-      });
-    } catch (error) {
-      await this.prisma.user
-        .delete({ where: { id: user.id } })
-        .catch(() => undefined);
-
-      throw new ServiceUnavailableException(
-        'Não foi possível enviar o e-mail de confirmação. Tente novamente mais tarde.',
-      );
-    }
+    const registrationDigits = (
+      process.env.WHATSAPP_REGISTRATION_NUMBER || '351927398547'
+    ).replace(/\D/g, '');
 
     return {
-      user,
-      requiresEmailVerification: true,
+      user: {
+        // placeholder para o frontend (a conta só será criada após confirmação)
+        id: 'pending',
+        role: Role.USER,
+        name: dto.name.trim(),
+        whatsapp: '',
+        createdAt: new Date().toISOString(),
+      },
+      requiresEmailVerification: false,
+      requiresWhatsappVerification: true,
+      whatsappVerificationCode: verificationCode,
+      whatsappRegistrationNumber: registrationDigits,
+      whatsappOpenUrl: this.buildWhatsappRegistrationUrl(
+        dto.name.trim(),
+        verificationCode,
+      ),
+      whatsappBrowserSessionToken: browserSessionToken,
     };
   }
 
-  async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase().trim() },
+  /**
+   * Chamado pelo receiver do webhook (Evolution). Responde sempre com 200 no controller
+   * quando o processamento termina; envia texto ao utilizador via Evolution em sucesso/erro.
+   */
+  async confirmWhatsappRegistration(code: string, fromWhatsapp: string) {
+    const normalizedFrom = fromWhatsapp.replace(/\D/g, '');
+    const trimmedCode = code.trim();
+
+    const invalidMsg =
+      'Não encontrámos um registo com este código ou o código expirou (15 minutos). Volte ao site, crie de novo a conta e envie a mensagem outra vez.';
+
+    const duplicateMsg =
+      'Esse número de WhatsApp já está em uso — já tem conta ativa. Se perdeu a palavra-passe, use "Esqueci a senha" no site.';
+
+    const communityUrl =
+      process.env.FRONTEND_URL?.replace(/\/$/, '') || 'http://localhost:3000';
+    const welcomeMsg =
+      `Bem-vindo(a) à Comunidade RPM! A sua conta foi ativada. Já pode acessar a comunidade com o seu WhatsApp e palavra-passe.\n\n${communityUrl}`;
+    const termsMsg =
+      `*TERMOS E CONDIÇÕES – COMUNIDADE RAFA PELO MUNDO*\n\n` +
+      `Ao participar da Comunidade Rafa Pelo Mundo, você concorda com os termos e condições descritos abaixo. Nosso objetivo é manter um ambiente seguro, respeitoso e realmente útil para todos que desejam planejar sua imigração para Portugal.\n\n` +
+      `---\n\n` +
+      `*1. Sobre a Comunidade*\n\n` +
+      `A Comunidade Rafa Pelo Mundo foi criada para ajudar pessoas que estão na fase de planejamento ou que desejam entender, na prática, como funciona o processo de imigração.\n\n` +
+      `Aqui compartilhamos informações sobre:\n\n` +
+      `* Tipos de vistos\n` +
+      `* Documentação\n` +
+      `* Custo de vida\n` +
+      `* Moradia\n` +
+      `* Trabalho\n` +
+      `* Planejamento geral para viver legalmente em Portugal\n\n` +
+      `Nosso principal objetivo é te ajudar a evitar erros, economizar tempo e acessar informações mais seguras sobre o processo de imigração.\n\n` +
+      `---\n\n` +
+      `*2. Regras de Convivência*\n\n` +
+      `Para manter um ambiente saudável e produtivo, é obrigatório:\n\n` +
+      `* Ser educado(a) e respeitoso(a) com todos os membros\n` +
+      `* Manter as conversas dentro do tema principal: imigração e planejamento\n` +
+      `* Evitar áudios longos, priorizando mensagens objetivas\n` +
+      `* Verificar mensagens anteriores antes de repetir dúvidas\n\n` +
+      `---\n\n` +
+      `*3. Não é Permitido*\n\n` +
+      `As seguintes práticas são proibidas e podem resultar em remoção imediata da comunidade:\n\n` +
+      `* Divulgação de serviços, empresas, assessorias, advogados, cursos ou links\n` +
+      `* Envio de correntes, sorteios, rifas, vendas ou qualquer tipo de propaganda\n` +
+      `* Compartilhamento de links de outros grupos ou perfis\n` +
+      `* Entrar em contato privado com outros membros sem consentimento\n` +
+      `* Discussões sobre política, religião ou qualquer tema ofensivo\n` +
+      `* Falta de respeito com qualquer participante\n\n` +
+      `---\n\n` +
+      `*4. Parceiros da Comunidade*\n\n` +
+      `Apenas os parceiros oficiais indicados pela Comunidade Rafa Pelo Mundo podem ser mencionados dentro do grupo.\n\n` +
+      `Esses parceiros foram previamente avaliados e recomendados com base em critérios de confiança e qualidade, com o objetivo de:\n\n` +
+      `* Evitar golpes\n` +
+      `* Garantir mais segurança nas indicações\n` +
+      `* Facilitar o acesso a serviços confiáveis\n\n` +
+      `---\n\n` +
+      `*5. Responsabilidade sobre Serviços de Terceiros*\n\n` +
+      `Apesar de realizarmos uma curadoria cuidadosa dos parceiros indicados, a Comunidade Rafa Pelo Mundo *não se responsabiliza pelos serviços prestados por terceiros*.\n\n` +
+      `Qualquer contratação é de responsabilidade direta entre o membro e o prestador de serviço.\n\n` +
+      `---\n\n` +
+      `*6. Canal de Reclamações*\n\n` +
+      `Disponibilizamos uma área interna para registro de reclamações sobre parceiros indicados.\n\n` +
+      `Todas as reclamações são analisadas com atenção. Caso seja identificado que um parceiro não atende mais aos padrões de qualidade exigidos pela comunidade:\n\n` +
+      `* A parceria será encerrada\n` +
+      `* O parceiro deixará de ser recomendado\n\n` +
+      `---\n\n` +
+      `*7. Objetivo do Grupo*\n\n` +
+      `Este é um espaço de troca, aprendizado e apoio.\n\n` +
+      `Incentivamos você a:\n\n` +
+      `* Fazer perguntas\n` +
+      `* Compartilhar experiências\n` +
+      `* Aprender com a jornada de outras pessoas\n\n` +
+      `Aqui, ninguém sabe tudo — mas juntos conseguimos tornar o processo de imigração mais claro, seguro e possível.\n\n` +
+      `---\n\n` +
+      `Ao permanecer na comunidade, você declara estar ciente e de acordo com todos os termos acima.\n\n` +
+      `Seja muito bem-vindo(a) 💛\n` +
+      `Rafa Silva`;
+
+    const req = await this.prisma.whatsappRegistrationRequest.findUnique({
+      where: { code: trimmedCode },
     });
-    if (!user) {
-      throw new UnauthorizedException('E-mail ou senha inválidos.');
+
+    if (!req) {
+      await this.sendEvolutionText(normalizedFrom, invalidMsg);
+      return { ok: true };
     }
 
-    if (user.emailVerificationCode && !user.emailVerifiedAt) {
-      throw new ForbiddenException(
-        'É necessário confirmar o seu e-mail antes de entrar. Verifique a sua caixa de entrada e também a pasta de spam/lixo eletrónico. Se precisar, peça o reenvio do código.',
-      );
+    const now = new Date();
+    if (req.expiresAt < now) {
+      await this.sendEvolutionText(normalizedFrom, invalidMsg);
+      return { ok: true };
+    }
+
+    const other = await this.prisma.user.findFirst({
+      where: {
+        whatsapp: normalizedFrom,
+      },
+    });
+
+    if (other) {
+      await this.sendEvolutionText(normalizedFrom, duplicateMsg);
+      return { ok: true };
+    }
+
+    const handoffExpires = new Date();
+    handoffExpires.setMinutes(handoffExpires.getMinutes() + 30);
+
+    await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          email: null,
+          name: req.name,
+          whatsapp: normalizedFrom,
+          passwordHash: req.passwordHash,
+          role: Role.USER,
+          registrationChannel: $Enums.RegistrationChannel.WHATSAPP,
+          emailVerifiedAt: new Date(),
+          indicadoPor: req.indicadoPor,
+          referredByAffiliateId: req.referredByAffiliateId,
+          referredByCodeSnapshot: req.affiliateCodeSnapshot,
+          referredAt: req.referredByAffiliateId ? new Date() : null,
+        },
+      });
+
+      await tx.whatsappRegistrationBrowserHandoff.create({
+        data: {
+          sessionToken: req.browserSessionToken,
+          userId: created.id,
+          expiresAt: handoffExpires,
+        },
+      });
+
+      await tx.whatsappRegistrationRequest.delete({
+        where: { id: req.id },
+      });
+    });
+
+    await this.sendEvolutionText(normalizedFrom, welcomeMsg);
+    await this.sendEvolutionText(normalizedFrom, termsMsg);
+    return { ok: true };
+  }
+
+  /**
+   * O browser faz polling com o token opaco recebido em /auth/register até a conta
+   * ser criada no WhatsApp; devolve JWT uma única vez.
+   */
+  async pollWhatsappRegistrationBrowser(rawToken: string) {
+    const token = rawToken.trim();
+    if (!token) {
+      throw new BadRequestException('Token em falta.');
+    }
+
+    const handoff = await this.prisma.whatsappRegistrationBrowserHandoff.findUnique(
+      {
+        where: { sessionToken: token },
+        include: {
+          user: { select: { id: true, email: true, role: true, whatsapp: true } },
+        },
+      },
+    );
+
+    if (handoff) {
+      if (handoff.consumedAt) {
+        return { status: 'consumed' as const };
+      }
+      const now = new Date();
+      if (handoff.expiresAt < now) {
+        return { status: 'expired' as const };
+      }
+      await this.prisma.whatsappRegistrationBrowserHandoff.update({
+        where: { id: handoff.id },
+        data: { consumedAt: now },
+      });
+      const u = handoff.user;
+      const jwt = this.signAuthJwt({
+        id: u.id,
+        email: u.email,
+        role: u.role,
+      });
+      return {
+        status: 'ready' as const,
+        token: jwt,
+        user: {
+          id: u.id,
+          email: u.email,
+          role: u.role,
+          whatsapp: u.whatsapp,
+        },
+      };
+    }
+
+    const pending = await this.prisma.whatsappRegistrationRequest.findUnique({
+      where: { browserSessionToken: token },
+      select: { id: true },
+    });
+    if (pending) {
+      return { status: 'pending' as const };
+    }
+
+    return { status: 'invalid' as const };
+  }
+
+  async login(dto: LoginDto) {
+    const normalizedWhatsapp = dto.whatsapp.replace(/\D/g, '');
+    if (!normalizedWhatsapp) {
+      throw new UnauthorizedException('WhatsApp ou senha inválidos.');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { whatsapp: normalizedWhatsapp },
+    });
+    if (!user) {
+      throw new UnauthorizedException('WhatsApp ou senha inválidos.');
+    }
+
+    if (!user.emailVerifiedAt) {
+      if (
+        user.registrationChannel === $Enums.RegistrationChannel.WHATSAPP &&
+        user.whatsappVerificationCode
+      ) {
+        throw new ForbiddenException(
+          'Confirme a sua conta pelo WhatsApp: abra o link que mostrámos após o registo e envie a mensagem com o código.',
+        );
+      }
+      if (user.emailVerificationCode) {
+        throw new ForbiddenException(
+          'É necessário confirmar o seu e-mail antes de entrar. Verifique a sua caixa de entrada e também a pasta de spam/lixo eletrónico. Se precisar, peça o reenvio do código.',
+        );
+      }
     }
 
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) {
-      throw new UnauthorizedException('E-mail ou senha inválidos.');
+      throw new UnauthorizedException('WhatsApp ou senha inválidos.');
     }
-    const token = this.jwtService.sign({
-      sub: user.id,
+    const token = this.signAuthJwt({
+      id: user.id,
       email: user.email,
       role: user.role,
     });
@@ -197,6 +427,7 @@ Se não foi você que iniciou este registo, pode ignorar esta mensagem.`;
         id: user.id,
         email: user.email,
         role: user.role,
+        whatsapp: user.whatsapp,
       },
       token,
     };
@@ -243,15 +474,18 @@ Se não foi você que iniciou este registo, pode ignorar esta mensagem.`;
     return { success: true };
   }
 
-  async requestPasswordReset(email: string) {
-    const normalizedEmail = email.toLowerCase().trim();
+  async requestPasswordReset(whatsappRaw: string) {
+    const normalizedWhatsapp = whatsappRaw.replace(/\D/g, '');
+
+    if (!normalizedWhatsapp) {
+      return { success: true };
+    }
 
     const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
+      where: { whatsapp: normalizedWhatsapp },
     });
 
     if (!user) {
-      // Não expomos que o utilizador não existe
       return { success: true };
     }
 
@@ -266,9 +500,20 @@ Se não foi você que iniciou este registo, pode ignorar esta mensagem.`;
       },
     });
 
-    try {
-      const subject = 'Pedido de redefinição de senha – Comunidade RPM';
-      const text = `Olá ${user.name},
+    const waText = `Olá ${user.name},
+
+Recebemos um pedido para redefinir a sua palavra-passe na Comunidade RPM.
+
+Utilize este código no site (válido por 30 minutos): ${resetCode}
+
+Se não foi você, ignore esta mensagem.`;
+
+    await this.sendEvolutionText(normalizedWhatsapp, waText);
+
+    if (user.email) {
+      try {
+        const subject = 'Pedido de redefinição de senha – Comunidade RPM';
+        const text = `Olá ${user.name},
 
 Recebemos um pedido para redefinir a sua senha na Comunidade RPM.
 
@@ -280,37 +525,36 @@ Este código é válido por 30 minutos.
 
 Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
 
-      const html = `<p>Olá ${user.name},</p>
+        const html = `<p>Olá ${user.name},</p>
 <p>Recebemos um pedido para redefinir a sua senha na <strong>Comunidade RPM</strong>.</p>
 <p>Utilize o código abaixo para criar uma nova senha:</p>
 <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${resetCode}</p>
 <p>Este código é válido por 30 minutos.</p>
 <p>Se não foi você que fez este pedido, pode ignorar esta mensagem.</p>`;
 
-      await sendEmailBase({
-        to: user.email,
-        subject,
-        text,
-        html,
-      });
-    } catch {
-      throw new ServiceUnavailableException(
-        'Não foi possível enviar o e-mail de recuperação de senha. Tente novamente mais tarde.',
-      );
+        await sendEmailBase({
+          to: user.email,
+          subject,
+          text,
+          html,
+        });
+      } catch {
+        // WhatsApp já foi tentado; e-mail é opcional
+      }
     }
 
     return { success: true };
   }
 
   async resetPassword(
-    email: string,
+    whatsappRaw: string,
     code: string,
     newPassword: string,
   ) {
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedWhatsapp = whatsappRaw.replace(/\D/g, '');
 
     const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
+      where: { whatsapp: normalizedWhatsapp },
     });
 
     if (
@@ -361,6 +605,12 @@ Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
       return { success: true };
     }
 
+    if (user.registrationChannel === $Enums.RegistrationChannel.WHATSAPP) {
+      throw new BadRequestException(
+        'Este registo deve ser confirmado pelo WhatsApp. Inicie o processo novamente no site se precisar de ajuda.',
+      );
+    }
+
     const verificationCode = this.generateVerificationCode();
     const verificationExpiresAt = this.getVerificationExpiryDate();
 
@@ -373,6 +623,11 @@ Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
     });
 
     try {
+      if (!user.email) {
+        throw new ServiceUnavailableException(
+          'E-mail do utilizador não está configurado.',
+        );
+      }
       const subject = 'Novo código de confirmação da Comunidade RPM';
       const text = `Olá ${user.name},
 
@@ -431,7 +686,13 @@ Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
     ) {
       await this.prisma.user.update({
         where: { id: userId },
-        data: { tier: UserTier.VISITOR, membershipExpiresAt: null },
+        data: {
+          tier: UserTier.VISITOR,
+          membershipExpiresAt: null,
+          rafaCallSchedulingUnlocked: false,
+          rafaCallSlotStartsAt: null,
+          rafaCallSlotEndsAt: null,
+        },
       });
       user = { ...user, tier: UserTier.VISITOR, membershipExpiresAt: null };
     }

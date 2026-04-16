@@ -11,7 +11,9 @@ async function bootstrap() {
   });
   // Webhook Stripe precisa do body em raw para verificar assinatura
   app.use((req, res, next) => {
-    if (req.originalUrl === '/stripe/webhook') {
+    if (
+      req.originalUrl === '/stripe/webhook'
+    ) {
       express.raw({ type: 'application/json' })(req, res, next);
     } else {
       express.json()(req, res, next);

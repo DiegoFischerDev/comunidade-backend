@@ -1,4 +1,14 @@
-import { Controller, Post, Body, Get, UseGuards, Patch } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  Query,
+  UseGuards,
+  Patch,
+  Headers,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -10,6 +20,7 @@ import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { WhatsappConfirmDto } from './dto/whatsapp-confirm.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -19,6 +30,30 @@ export class AuthController {
   @Post('register')
   async register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
+  }
+
+  /** Chamada interna do receiver Evolution (segredo em `x-internal-secret`). */
+  @Public()
+  @Post('whatsapp/confirm')
+  async whatsappConfirm(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() dto: WhatsappConfirmDto,
+  ) {
+    const expected = process.env.COMMUNITY_INTERNAL_SECRET;
+    if (!expected || secret !== expected) {
+      throw new UnauthorizedException();
+    }
+    return this.authService.confirmWhatsappRegistration(
+      dto.code,
+      dto.whatsapp,
+    );
+  }
+
+  /** Polling do browser após registo: devolve JWT quando a conta for criada no WhatsApp. */
+  @Public()
+  @Get('whatsapp/registration-poll')
+  async pollWhatsappRegistration(@Query('token') token?: string) {
+    return this.authService.pollWhatsappRegistrationBrowser(token ?? '');
   }
 
   @Public()
@@ -42,14 +77,14 @@ export class AuthController {
   @Public()
   @Post('forgot-password')
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.requestPasswordReset(dto.email);
+    return this.authService.requestPasswordReset(dto.whatsapp);
   }
 
   @Public()
   @Post('reset-password')
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(
-      dto.email,
+      dto.whatsapp,
       dto.code,
       dto.newPassword,
     );

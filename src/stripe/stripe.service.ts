@@ -1,11 +1,9 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  SubscriptionStatus,
-  UserTier,
-} from '@prisma/client';
+import { PartnerSaleCommissionPaymentStatus, SubscriptionStatus, UserTier } from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 const MEMBERSHIP_DURATION_YEARS = 1;
 
@@ -13,7 +11,100 @@ const MEMBERSHIP_DURATION_YEARS = 1;
 export class StripeService {
   private stripe: Stripe | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly whatsapp: WhatsAppService,
+  ) {}
+
+  private formatMoney(amountMinor: number, currency: string): string {
+    const cur = (currency || '').toLowerCase() || 'eur';
+    const isBrl = cur === 'brl';
+    const value = amountMinor / 100;
+    return new Intl.NumberFormat(isBrl ? 'pt-BR' : 'pt-PT', {
+      style: 'currency',
+      currency: isBrl ? 'BRL' : 'EUR',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
+
+  private formatPaymentMethodFromSession(session: Stripe.Checkout.Session): string {
+    const types = ((session as any).payment_method_types as string[] | undefined) ?? [];
+    if (types.includes('mb_way')) return 'MB WAY';
+    if (types.includes('pix')) return 'Pix';
+    return 'Cartão';
+  }
+
+  private async sendPaymentConfirmationWhatsApp(input: {
+    userId: string;
+    reason: string;
+    amountLabel?: string;
+    paidAt?: Date;
+    methodLabel?: string;
+  }): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: input.userId },
+      select: { name: true, whatsapp: true },
+    });
+    const to = user?.whatsapp?.trim();
+    if (!to) return;
+
+    const when = (input.paidAt ?? new Date()).toLocaleString('pt-PT');
+    const lines = [
+      `Pagamento confirmado ✅`,
+      '',
+      `Motivo: ${input.reason}`,
+      ...(input.amountLabel ? [`Valor: ${input.amountLabel}`] : []),
+      ...(input.methodLabel ? [`Forma de pagamento: ${input.methodLabel}`] : []),
+      `Data/hora: ${when}`,
+      '',
+      `Obrigado!`,
+    ];
+    await this.whatsapp.sendText(to, lines.join('\n'));
+  }
+
+  private async notifyAdminsNewPayment(input: {
+    payerUserId: string;
+    reason: string;
+    amountLabel?: string;
+    paidAt?: Date;
+    methodLabel?: string;
+  }): Promise<void> {
+    const [payer, admins] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: input.payerUserId },
+        select: { name: true, whatsapp: true, email: true },
+      }),
+      this.prisma.user.findMany({
+        where: { role: 'ADMIN', whatsapp: { not: '' } },
+        select: { whatsapp: true },
+      }),
+    ]);
+
+    const toAdmins = admins
+      .map((a) => a.whatsapp?.trim() ?? '')
+      .filter((x) => Boolean(x));
+    if (toAdmins.length === 0) return;
+
+    const when = (input.paidAt ?? new Date()).toLocaleString('pt-PT');
+    const payerLabel =
+      payer?.name?.trim() ||
+      payer?.whatsapp?.trim() ||
+      payer?.email?.trim() ||
+      input.payerUserId;
+
+    const lines = [
+      `Novo pagamento recebido ✅`,
+      '',
+      `De: ${payerLabel}`,
+      `Motivo: ${input.reason}`,
+      ...(input.amountLabel ? [`Valor: ${input.amountLabel}`] : []),
+      ...(input.methodLabel ? [`Forma de pagamento: ${input.methodLabel}`] : []),
+      `Data/hora: ${when}`,
+    ];
+
+    await Promise.all(toAdmins.map((to) => this.whatsapp.sendText(to, lines.join('\n'))));
+  }
 
   private getClient(): Stripe {
     if (!this.stripe) {
@@ -40,6 +131,29 @@ export class StripeService {
     const n = raw ? parseInt(raw, 10) : 2300;
     if (!Number.isFinite(n) || n < 1) return 2300;
     return n;
+  }
+
+  /** Taxa para novo agendamento Cal.com após consumir a chamada (EUR). */
+  private get rafaCallEurCents(): number {
+    const raw = process.env.STRIPE_RAFA_CALL_EUR_CENTS;
+    const n = raw ? parseInt(raw, 10) : 2000;
+    if (!Number.isFinite(n) || n < 1) return 2000;
+    return n;
+  }
+
+  /** Taxa de reagendamento (Pix BRL). */
+  private get rafaCallPixCentavos(): number {
+    const raw = process.env.STRIPE_RAFA_CALL_PIX_BRL;
+    const n = raw ? parseInt(raw, 10) : 2000;
+    if (!Number.isFinite(n) || n < 1) return 2000;
+    return n;
+  }
+
+  getRafaCallAmounts(): { eurCents: number; pixCentavos: number } {
+    return {
+      eurCents: this.rafaCallEurCents,
+      pixCentavos: this.rafaCallPixCentavos,
+    };
   }
 
   private async createAffiliateCommissionIfEligible(
@@ -94,6 +208,227 @@ export class StripeService {
       eurCents: this.eurAmountCents,
       pixCentavos: this.pixAmountCentavos,
     };
+  }
+
+  private stripeCustomerEmail(
+    userId: string,
+    email: string | null | undefined,
+  ): string {
+    const t = email?.trim();
+    if (t) return t;
+    return `rafacall-${userId}@guest.rpm.invalid`;
+  }
+
+  async assertUserCanPayRafaUnlock(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { rafaCallSchedulingUnlocked: true },
+    });
+    if (!user) {
+      throw new BadRequestException('Utilizador não encontrado.');
+    }
+    if (user.rafaCallSchedulingUnlocked) {
+      throw new BadRequestException(
+        'Já tens um agendamento disponível. Vai ao dashboard para escolher data e hora.',
+      );
+    }
+  }
+
+  async createRafaCallUnlockCheckoutSession(
+    userId: string,
+    userEmail: string | null | undefined,
+    successUrl: string,
+    cancelUrl: string,
+  ): Promise<{ url: string }> {
+    await this.assertUserCanPayRafaUnlock(userId);
+    const stripe = this.getClient();
+    const amount = this.rafaCallEurCents;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: this.stripeCustomerEmail(userId, userEmail),
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            unit_amount: amount,
+            product_data: {
+              name: 'Taxa de agendamento — chamada com a Rafa',
+              description:
+                'Novo acesso para marcar 30 minutos de vídeo (após chamada anterior)',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['card'],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: userId,
+      metadata: { userId, checkoutType: 'rafa_call_unlock' },
+    });
+    if (!session.url) {
+      throw new BadRequestException('Não foi possível criar a sessão de pagamento.');
+    }
+    return { url: session.url };
+  }
+
+  async createRafaCallUnlockMbWayCheckoutSession(
+    userId: string,
+    userEmail: string | null | undefined,
+    successUrl: string,
+    cancelUrl: string,
+  ): Promise<{ url: string }> {
+    await this.assertUserCanPayRafaUnlock(userId);
+    const stripe = this.getClient();
+    const amount = this.rafaCallEurCents;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: this.stripeCustomerEmail(userId, userEmail),
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            unit_amount: amount,
+            product_data: {
+              name: 'Taxa de agendamento — chamada com a Rafa',
+              description: 'Novo acesso para marcar chamada (MB WAY)',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['mb_way'],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: userId,
+      metadata: { userId, checkoutType: 'rafa_call_unlock' },
+    });
+    if (!session.url) {
+      throw new BadRequestException('Não foi possível criar a sessão MB WAY.');
+    }
+    return { url: session.url };
+  }
+
+  async createPartnerSaleCommissionCheckoutSession(input: {
+    saleId: string;
+    partnerUserId: string;
+    partnerEmail: string | null | undefined;
+    commissionEurCents: number;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<{ url: string; sessionId: string }> {
+    const stripe = this.getClient();
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: this.stripeCustomerEmail(input.partnerUserId, input.partnerEmail),
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            unit_amount: input.commissionEurCents,
+            product_data: {
+              name: 'Comissão RPM',
+              description: 'Pagamento de comissão referente a uma venda registrada pelo parceiro',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['card'],
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      client_reference_id: input.partnerUserId,
+      metadata: {
+        userId: input.partnerUserId,
+        checkoutType: 'partner_sale_commission',
+        saleId: input.saleId,
+      },
+    });
+    if (!session.url || !session.id) {
+      throw new BadRequestException('Não foi possível criar a sessão de pagamento.');
+    }
+    return { url: session.url, sessionId: session.id };
+  }
+
+  async createPartnerSaleCommissionMbWayCheckoutSession(input: {
+    saleId: string;
+    partnerUserId: string;
+    partnerEmail: string | null | undefined;
+    commissionEurCents: number;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<{ url: string; sessionId: string }> {
+    const stripe = this.getClient();
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: this.stripeCustomerEmail(input.partnerUserId, input.partnerEmail),
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            unit_amount: input.commissionEurCents,
+            product_data: {
+              name: 'Comissão RPM (MB WAY)',
+              description: 'Pagamento de comissão referente a uma venda registrada pelo parceiro',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['mb_way'],
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      client_reference_id: input.partnerUserId,
+      metadata: {
+        userId: input.partnerUserId,
+        checkoutType: 'partner_sale_commission',
+        saleId: input.saleId,
+      },
+    });
+    if (!session.url || !session.id) {
+      throw new BadRequestException('Não foi possível criar a sessão MB WAY.');
+    }
+    return { url: session.url, sessionId: session.id };
+  }
+
+  async createRafaCallUnlockPixCheckoutSession(
+    userId: string,
+    userEmail: string | null | undefined,
+    successUrl: string,
+    cancelUrl: string,
+  ): Promise<{ url: string }> {
+    await this.assertUserCanPayRafaUnlock(userId);
+    const stripe = this.getClient();
+    const amount = this.rafaCallPixCentavos;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: this.stripeCustomerEmail(userId, userEmail),
+      line_items: [
+        {
+          price_data: {
+            currency: 'brl',
+            unit_amount: amount,
+            product_data: {
+              name: 'Taxa de agendamento — chamada com a Rafa',
+              description: 'Novo acesso para marcar chamada (Pix)',
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      payment_method_types: ['pix'],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: userId,
+      metadata: { userId, checkoutType: 'rafa_call_unlock' },
+      payment_method_options: {
+        pix: { expires_after_seconds: 30 * 60 },
+      },
+    });
+    if (!session.url) {
+      throw new BadRequestException('Não foi possível criar a sessão Pix.');
+    }
+    return { url: session.url };
   }
 
   /**
@@ -306,9 +641,95 @@ export class StripeService {
       (subIdFromSession ? await this.getUserIdFromSubscription(subIdFromSession) : null);
     if (!userId) return;
 
+    const checkoutType = sess.metadata?.checkoutType as string | undefined;
+    if (checkoutType === 'partner_sale_commission') {
+      const saleId = sess.metadata?.saleId as string | undefined;
+      if (!saleId) return;
+      const paymentIntentId =
+        typeof sess.payment_intent === 'string'
+          ? sess.payment_intent
+          : sess.payment_intent?.id;
+
+      const updated = await this.prisma.partnerSale.updateMany({
+        where: {
+          id: saleId,
+          commissionPaymentStatus: PartnerSaleCommissionPaymentStatus.PENDING,
+        },
+        data: {
+          commissionPaymentStatus: PartnerSaleCommissionPaymentStatus.PAID,
+          stripeCheckoutSessionId: sess.id,
+          stripePaymentIntentId: paymentIntentId ?? null,
+          paidAt: new Date(),
+        },
+      });
+      if (updated.count > 0) {
+        const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
+        const currency = ((sess.currency as string | undefined) ?? 'eur').toLowerCase();
+        const paidAt = new Date();
+        const methodLabel = this.formatPaymentMethodFromSession(session);
+        const amountLabel =
+          amountTotal != null && Number.isFinite(amountTotal)
+            ? this.formatMoney(amountTotal, currency)
+            : undefined;
+        await this.sendPaymentConfirmationWhatsApp({
+          userId,
+          reason: 'Pagamento de comissão RPM',
+          amountLabel,
+          paidAt,
+          methodLabel,
+        });
+        await this.notifyAdminsNewPayment({
+          payerUserId: userId,
+          reason: 'Pagamento de comissão RPM',
+          amountLabel,
+          paidAt,
+          methodLabel,
+        });
+      }
+      return;
+    }
+
+    if (checkoutType === 'rafa_call_unlock') {
+      const updated = await this.prisma.user.updateMany({
+        where: { id: userId, rafaCallSchedulingUnlocked: false },
+        data: { rafaCallSchedulingUnlocked: true },
+      });
+      if (updated.count > 0) {
+        const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
+        const currency = ((sess.currency as string | undefined) ?? 'eur').toLowerCase();
+        const paidAt = new Date();
+        const methodLabel = this.formatPaymentMethodFromSession(session);
+        const amountLabel =
+          amountTotal != null && Number.isFinite(amountTotal)
+            ? this.formatMoney(amountTotal, currency)
+            : undefined;
+        await this.sendPaymentConfirmationWhatsApp({
+          userId,
+          reason: 'Taxa de agendamento — chamada com a Rafa',
+          amountLabel,
+          paidAt,
+          methodLabel,
+        });
+        await this.notifyAdminsNewPayment({
+          payerUserId: userId,
+          reason: 'Taxa de agendamento — chamada com a Rafa',
+          amountLabel,
+          paidAt,
+          methodLabel,
+        });
+      }
+      return;
+    }
+
+    const prev = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { tier: true },
+    });
+
     const customerId = typeof sess.customer === 'string' ? sess.customer : sess.customer?.id;
     const subscriptionId = resolveSubscriptionId(session.subscription);
     const validUntil = addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
+    const grantRafaUnlock = false;
 
     await this.prisma.$transaction([
       this.prisma.subscription.upsert({
@@ -329,11 +750,43 @@ export class StripeService {
       }),
       this.prisma.user.update({
         where: { id: userId },
-        data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
+        data: {
+          tier: UserTier.MEMBER,
+          membershipExpiresAt: validUntil,
+          ...(grantRafaUnlock ? { rafaCallSchedulingUnlocked: true } : {}),
+        },
       }),
     ]);
-    await this.recordMembershipPaymentFromCheckoutSession(userId, session);
+    const membershipPaymentCreated = await this.recordMembershipPaymentFromCheckoutSession(
+      userId,
+      session,
+    );
     await this.createAffiliateCommissionIfEligible(userId);
+
+    if (membershipPaymentCreated) {
+      const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
+      const currency = ((sess.currency as string | undefined) ?? 'eur').toLowerCase();
+      const paidAt = new Date();
+      const methodLabel = this.formatPaymentMethodFromSession(session);
+      const amountLabel =
+        amountTotal != null && Number.isFinite(amountTotal)
+          ? this.formatMoney(amountTotal, currency)
+          : undefined;
+      await this.sendPaymentConfirmationWhatsApp({
+        userId,
+        reason: 'Anuidade Comunidade RPM (1 ano)',
+        amountLabel,
+        paidAt,
+        methodLabel,
+      });
+      await this.notifyAdminsNewPayment({
+        payerUserId: userId,
+        reason: 'Anuidade Comunidade RPM (1 ano)',
+        amountLabel,
+        paidAt,
+        methodLabel,
+      });
+    }
 
     try {
       const user = await this.prisma.user.findUnique({
@@ -405,6 +858,13 @@ export class StripeService {
       data: {
         tier: isActive ? UserTier.MEMBER : UserTier.VISITOR,
         membershipExpiresAt: isActive ? validUntil : null,
+        ...(!isActive
+          ? {
+              rafaCallSchedulingUnlocked: false,
+              rafaCallSlotStartsAt: null,
+              rafaCallSlotEndsAt: null,
+            }
+          : {}),
       },
     });
     if (isActive) {
@@ -444,7 +904,27 @@ export class StripeService {
       typeof inv.amount_paid === 'number' &&
       inv.amount_paid > 0
     ) {
-      await this.recordMembershipPaymentFromInvoice(userId, invoice);
+      const created = await this.recordMembershipPaymentFromInvoice(userId, invoice);
+      if (created) {
+        const amountPaid = inv.amount_paid as number;
+        const currency = (inv.currency as string | undefined) ?? 'eur';
+        const paidAt = new Date();
+        const amountLabel = this.formatMoney(amountPaid, currency);
+        await this.sendPaymentConfirmationWhatsApp({
+          userId,
+          reason: 'Renovação — Anuidade Comunidade RPM',
+          amountLabel,
+          paidAt,
+          methodLabel: 'Stripe',
+        });
+        await this.notifyAdminsNewPayment({
+          payerUserId: userId,
+          reason: 'Renovação — Anuidade Comunidade RPM',
+          amountLabel,
+          paidAt,
+          methodLabel: 'Stripe',
+        });
+      }
     }
 
     await this.createAffiliateCommissionIfEligible(userId);
@@ -484,9 +964,9 @@ export class StripeService {
   private async recordMembershipPaymentFromCheckoutSession(
     userId: string,
     session: Stripe.Checkout.Session,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const sessionId = session.id;
-    if (!sessionId) return;
+    if (!sessionId) return false;
     const amountCreditedEur = this.creditedEurFromCheckoutSession(session);
     try {
       await this.prisma.membershipPayment.create({
@@ -497,8 +977,9 @@ export class StripeService {
           stripeCurrency: (session as any).currency ?? null,
         },
       });
+      return true;
     } catch (err: any) {
-      if (err?.code === 'P2002') return;
+      if (err?.code === 'P2002') return false;
       throw err;
     }
   }
@@ -506,10 +987,10 @@ export class StripeService {
   private async recordMembershipPaymentFromInvoice(
     userId: string,
     invoice: Stripe.Invoice,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const inv = invoice as any;
     const invoiceId = inv.id as string | undefined;
-    if (!invoiceId) return;
+    if (!invoiceId) return false;
     const amountCreditedEur = this.creditedEurFromInvoice(invoice);
     try {
       await this.prisma.membershipPayment.create({
@@ -520,8 +1001,9 @@ export class StripeService {
           stripeCurrency: inv.currency ?? null,
         },
       });
+      return true;
     } catch (err: any) {
-      if (err?.code === 'P2002') return;
+      if (err?.code === 'P2002') return false;
       throw err;
     }
   }

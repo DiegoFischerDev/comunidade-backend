@@ -3,11 +3,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# prisma/ antes de npm ci: o postinstall corre prisma generate e precisa do schema
 COPY package.json package-lock.json* ./
-RUN npm ci
-
 COPY prisma ./prisma/
-RUN npx prisma generate
+RUN npm ci
 
 COPY . .
 RUN npm run build
@@ -28,4 +27,6 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+# Migrações: correr no deploy (ex.: docker compose run --rm … migrate deploy), não aqui —
+# em VPS pequenas, migrate no arranque + Node levava a OOM (exit 137).
+CMD ["node", "dist/src/main.js"]

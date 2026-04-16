@@ -11,9 +11,25 @@ import { UsersModule } from './users/users.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { StripeModule } from './stripe/stripe.module';
 import { AffiliateModule } from './affiliate/affiliate.module';
+import { RafacallModule } from './rafacall/rafacall.module';
+import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { SupportModule } from './support/support.module';
+import { ChecklistModule } from './checklist/checklist.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, PartnerModule, UsersModule, UploadsModule, StripeModule, AffiliateModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    PartnerModule,
+    UsersModule,
+    UploadsModule,
+    StripeModule,
+    AffiliateModule,
+    RafacallModule,
+    WhatsAppModule,
+    SupportModule,
+    ChecklistModule,
+  ],
   controllers: [AppController],
   providers: [
     AppService,
