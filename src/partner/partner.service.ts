@@ -450,17 +450,29 @@ export class PartnerService {
         ? this.normalizeWhatsapp(dto.whatsapp)
         : undefined;
 
+    const nameToSet =
+      dto.name !== undefined && dto.name !== null
+        ? dto.name.trim()
+        : undefined;
+    if (nameToSet !== undefined && !nameToSet) {
+      throw new BadRequestException('O nome da empresa não pode ser vazio.');
+    }
+
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (whatsappToSet !== undefined) {
+      const userPatch: { whatsapp?: string; name?: string } = {};
+      if (whatsappToSet !== undefined) userPatch.whatsapp = whatsappToSet;
+      if (nameToSet !== undefined) userPatch.name = nameToSet;
+      if (Object.keys(userPatch).length) {
         await tx.user.update({
           where: { id: userId },
-          data: { whatsapp: whatsappToSet },
+          data: userPatch,
         });
       }
 
       return tx.partner.update({
         where: { id: partner.id },
         data: {
+          name: nameToSet !== undefined ? nameToSet : partner.name,
           logoUrl: dto.logoUrl ?? partner.logoUrl,
           shortDescription: dto.shortDescription ?? partner.shortDescription,
           fullDescription: dto.fullDescription ?? partner.fullDescription,

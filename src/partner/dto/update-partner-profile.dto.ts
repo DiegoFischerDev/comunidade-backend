@@ -4,10 +4,16 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MinLength,
   ValidateIf,
 } from 'class-validator';
 
 export class UpdatePartnerProfileDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1, { message: 'O nome da empresa não pode ser vazio.' })
+  name?: string;
+
   @IsOptional()
   @IsString()
   logoUrl?: string;
