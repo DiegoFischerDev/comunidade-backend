@@ -169,10 +169,42 @@ export class UsersService {
   }
 
   async updateRole(id: string, role: Role) {
-    return this.prisma.user.update({
+    const existing = await this.prisma.user.findUnique({
       where: { id },
-      data: { role },
-      select: adminUserSelect,
+      select: { id: true, name: true, whatsapp: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id },
+        data: { role },
+        select: adminUserSelect,
+      });
+
+      if (role === Role.PARTNER) {
+        // Garante que todo usuário com role=PARTNER tenha um registro em Partner.
+        await tx.partner.upsert({
+          where: { userId: existing.id },
+          create: {
+            userId: existing.id,
+            name: existing.name,
+            whatsapp: existing.whatsapp,
+          },
+          update: {
+            // Mantém os dados básicos sincronizados.
+            name: existing.name,
+            whatsapp: existing.whatsapp,
+          },
+        });
+      } else {
+        // Ao tirar o papel de PARTNER, removemos o registro da tabela de parceiros.
+        await tx.partner.deleteMany({ where: { userId: existing.id } });
+      }
+
+      return updated;
     });
   }
 
