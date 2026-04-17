@@ -66,6 +66,15 @@ enum PartnerHouseStatus {
   UNAVAILABLE
 }
 
+enum PartnerHouseTypology {
+  T1
+  T2
+  T3
+  T4
+  T5
+  QUARTO_AP_COMPARTILHADO
+}
+
 model WhatsappRegistrationRequest {
   id                    String   @id @default(cuid())
   code                  String   @unique
@@ -269,6 +278,7 @@ model PartnerHouse {
   partner       Partner           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   title         String
   description   String
+  typology      PartnerHouseTypology @map("typology")
   city          String
   availableFrom DateTime          @map("available_from")
   priceEur      String            @map("price_eur")

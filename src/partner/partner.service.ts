@@ -19,7 +19,7 @@ import { CreateLeadDto } from './dto/create-lead.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import { PartnerSaleCommissionPaymentStatus, Prisma, Role } from '@prisma/client';
 import { StripeService } from '../stripe/stripe.service';
-import { unlink } from 'fs/promises';
+import { readFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
@@ -788,26 +788,135 @@ export class PartnerService {
     ).trim();
   }
 
+  private get frontendBaseUrl(): string {
+    return (
+      process.env.FRONTEND_URL ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      'https://comunidade.rafaapelomundo.com'
+    ).replace(/\/$/, '');
+  }
+
+  private buildHouseInteresseLink(params: {
+    houseId: string;
+    partnerId: string;
+    title: string;
+    city: string;
+    typology: string;
+    priceEur: string;
+  }): string {
+    const qs = new URLSearchParams();
+    qs.set('houseId', params.houseId);
+    qs.set('partnerId', params.partnerId);
+    qs.set('title', params.title);
+    qs.set('city', params.city);
+    qs.set('typology', params.typology);
+    qs.set('price', params.priceEur);
+    return `${this.frontendBaseUrl}/casas/interesse?${qs.toString()}`;
+  }
+
   private formatHousePostText(params: {
+    houseId: string;
+    partnerId: string;
     title: string;
     description: string;
     city: string;
+    typology: string;
     availableFrom: Date;
     priceEur: string;
     requirements: string;
   }): string {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
+    const typologyLabel = this.formatHouseTypologyLabel(params.typology);
+    const cityLabel = this.formatHouseCityLabel(params.city);
+    const interesseUrl = this.buildHouseInteresseLink({
+      houseId: params.houseId,
+      partnerId: params.partnerId,
+      title: params.title.trim(),
+      city: params.city,
+      typology: params.typology,
+      priceEur: params.priceEur.trim(),
+    });
     return [
       `🏠 *${params.title.trim()}*`,
       ``,
-      `📍 *Cidade:* ${params.city}`,
+      `📍 *Cidade:* ${cityLabel}`,
+      `🏘️ *Tipologia:* ${typologyLabel}`,
       `📅 *Disponível em:* ${datePt}`,
       `💶 *Preço:* ${params.priceEur.trim()}`,
       `🧾 *Exigências:* ${params.requirements.trim()}`,
       ``,
       `📝 *Descrição:*`,
       params.description.trim(),
+      ``,
+      `🔗 *Mais informações (Comunidade RPM):*`,
+      interesseUrl,
     ].join('\n');
+  }
+
+  private formatHouseCityLabel(city: string): string {
+    switch (city) {
+      case 'INTERIOR':
+        return 'Interior';
+      case 'LISBOA':
+        return 'Lisboa';
+      case 'PORTO':
+        return 'Porto';
+      case 'BRAGA':
+        return 'Braga';
+      case 'COIMBRA':
+        return 'Coimbra';
+      case 'AVEIRO':
+        return 'Aveiro';
+      case 'FARO':
+        return 'Faro';
+      case 'ALGARVE':
+        return 'Algarve';
+      case 'EVORA':
+        return 'Évora';
+      case 'VISEU':
+        return 'Viseu';
+      default:
+        return city;
+    }
+  }
+
+  private formatHouseTypologyLabel(typology: string): string {
+    switch (typology) {
+      case 'T1':
+        return 'T1';
+      case 'T2':
+        return 'T2';
+      case 'T3':
+        return 'T3';
+      case 'T4':
+        return 'T4';
+      case 'T5':
+        return 'T5';
+      case 'QUARTO_AP_COMPARTILHADO':
+        return 'Quarto em Ap compartilhado';
+      default:
+        return typology;
+    }
+  }
+
+  /** Qualquer utilizador autenticado: dados mínimos para contacto e verificação de disponibilidade. */
+  async getHouseListingForContact(houseId: string) {
+    const row = await this.prisma.partnerHouse.findUnique({
+      where: { id: houseId },
+      select: {
+        id: true,
+        status: true,
+        title: true,
+        city: true,
+        typology: true,
+        priceEur: true,
+        partnerId: true,
+      },
+    });
+    if (!row) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    return row;
   }
 
   async createMyHousePost(userId: string, dto: CreatePartnerHouseDto, files: Express.Multer.File[]) {
@@ -837,6 +946,7 @@ export class PartnerService {
         partnerId: partner.id,
         title: dto.title.trim(),
         description: dto.description.trim(),
+        typology: dto.typology,
         city: dto.city,
         availableFrom,
         priceEur: dto.priceEur.trim(),
@@ -848,7 +958,16 @@ export class PartnerService {
     try {
       // 1) Envia as imagens para o grupo (sem caption)
       for (const file of images) {
-        const base64 = file.buffer.toString('base64');
+        const buf =
+          file.buffer && file.buffer.length
+            ? file.buffer
+            : file.path
+              ? await readFile(file.path)
+              : null;
+        if (!buf || !buf.length) {
+          throw new Error('Imagem inválida (sem conteúdo).');
+        }
+        const base64 = buf.toString('base64');
         await this.wa.sendMedia({
           to: this.housesGroupJid,
           caption: '',
@@ -857,13 +976,21 @@ export class PartnerService {
           fileName: file.originalname || 'imagem.jpg',
           mediaType: 'image',
         });
+
+        // Se por algum motivo o multer tiver gravado em disco, apagamos aqui
+        if (file.path) {
+          await unlink(file.path).catch(() => undefined);
+        }
       }
 
       // 2) Envia o texto formatado
       const text = this.formatHousePostText({
+        houseId: created.id,
+        partnerId: partner.id,
         title: dto.title,
         description: dto.description,
         city: dto.city,
+        typology: dto.typology,
         availableFrom,
         priceEur: dto.priceEur,
         requirements: dto.requirements,

@@ -30,6 +30,7 @@ import {
 } from './dto/create-partner-sale.dto';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
+import { memoryStorage } from 'multer';
 
 @Controller('partners')
 export class PartnerController {
@@ -113,6 +114,12 @@ export class PartnerController {
     return this.partnerService.listCategoriesWithPartners();
   }
 
+  /** Utilizador autenticado: confirma se o anúncio ainda existe e está disponível antes do contacto. */
+  @Get('houses/:houseId/contact')
+  async getHouseListingForContact(@Param('houseId') houseId: string) {
+    return this.partnerService.getHouseListingForContact(houseId);
+  }
+
   @Public()
   @Get(':id/public')
   async getPartnerPublic(@Param('id') id: string) {
@@ -157,6 +164,7 @@ export class PartnerController {
   @UseInterceptors(
     FileFieldsInterceptor([{ name: 'images', maxCount: 6 }], {
       limits: { files: 6, fileSize: 5 * 1024 * 1024 }, // 5MB por foto (o WhatsApp também limita)
+      storage: memoryStorage(),
     }),
   )
   async createMyHousePost(

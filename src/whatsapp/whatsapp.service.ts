@@ -69,7 +69,13 @@ export class WhatsAppService {
       headers: { apikey: key, 'content-type': 'application/json' },
       body: JSON.stringify({
         number,
-        mediatype: (params.mediaType ?? 'image').toUpperCase(),
+        // docs: "Image, video or document" (case-sensitive em algumas versões)
+        mediatype:
+          params.mediaType === 'video'
+            ? 'video'
+            : params.mediaType === 'document'
+              ? 'document'
+              : 'Image',
         mimetype: params.mimeType,
         caption: params.caption ?? '',
         media: params.base64,
