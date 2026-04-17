@@ -61,6 +61,11 @@ enum SupportTicketStatus {
   DONE
 }
 
+enum PartnerHouseStatus {
+  AVAILABLE
+  UNAVAILABLE
+}
+
 model WhatsappRegistrationRequest {
   id                    String   @id @default(cuid())
   code                  String   @unique
@@ -255,6 +260,28 @@ model Partner {
   services Service[]
   leads    Lead[]
   sales    PartnerSale[]
+  houses   PartnerHouse[]
+}
+
+model PartnerHouse {
+  id            String            @id @default(cuid())
+  partnerId     String            @map("partner_id")
+  partner       Partner           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  title         String
+  description   String
+  city          String
+  availableFrom DateTime          @map("available_from")
+  priceEur      String            @map("price_eur")
+  requirements  String            @map("requirements")
+  status        PartnerHouseStatus @default(AVAILABLE)
+  whatsappSentAt DateTime?        @map("whatsapp_sent_at")
+  whatsappError  String?          @map("whatsapp_error")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  @@index([partnerId, status])
+  @@index([availableFrom])
+  @@map("partner_houses")
 }
 
 model ProductCategory {

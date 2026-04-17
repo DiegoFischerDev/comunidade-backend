@@ -3,9 +3,12 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
+  UploadedFiles,
+  UseInterceptors,
 } from '@nestjs/common';
 import { PartnerService } from './partner.service';
 import { CreatePartnerDto } from './dto/create-partner.dto';
@@ -25,6 +28,8 @@ import {
   CreatePartnerSaleDto,
   StartPartnerSaleCommissionCheckoutDto,
 } from './dto/create-partner-sale.dto';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 
 @Controller('partners')
 export class PartnerController {
@@ -139,6 +144,39 @@ export class PartnerController {
   @Roles(Role.PARTNER)
   async listMyLeads(@CurrentUser() user: { id: string }) {
     return this.partnerService.listMyLeads(user.id);
+  }
+
+  @Get('me/houses')
+  @Roles(Role.PARTNER)
+  async listMyHouses(@CurrentUser() user: { id: string }) {
+    return this.partnerService.listMyHouses(user.id);
+  }
+
+  @Post('me/houses')
+  @Roles(Role.PARTNER)
+  @UseInterceptors(
+    FileFieldsInterceptor([{ name: 'images', maxCount: 6 }], {
+      limits: { files: 6, fileSize: 5 * 1024 * 1024 }, // 5MB por foto (o WhatsApp também limita)
+    }),
+  )
+  async createMyHousePost(
+    @CurrentUser() user: { id: string },
+    @Body() dto: CreatePartnerHouseDto,
+    @UploadedFiles()
+    files: { images?: Express.Multer.File[] },
+  ) {
+    return this.partnerService.createMyHousePost(user.id, dto, files?.images ?? []);
+  }
+
+  @Patch('me/houses/:id/status')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  async updateMyHouseStatus(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Body() body: { status: 'AVAILABLE' | 'UNAVAILABLE' },
+  ) {
+    return this.partnerService.updateMyHouseStatus(user.id, id, body.status);
   }
 
   @Get('me/sales')
