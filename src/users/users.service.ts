@@ -54,26 +54,39 @@ Parágrafo único: O encerramento da parceria não isenta o PARCEIRO do pagament
 
 O PARCEIRO compromete-se a:
 
-Atender os leads enviados com qualidade, clareza e profissionalismo;
-Responder às solicitações recebidas no prazo máximo de 24 horas;
-Praticar os valores previamente cadastrados na plataforma;
-Oferecer aos leads exclusivamente os serviços cadastrados e aprovados na plataforma;
-Manter atualizadas as informações sobre seus serviços e empresa;
-Realizar corretamente o pagamento das comissões acordadas;
-Garantir a confidencialidade e proteção dos dados dos leads recebidos.
+✅ Atender os leads enviados com qualidade, clareza e profissionalismo.
+
+⏱️ Responder às solicitações recebidas no prazo máximo de 24 horas.
+
+💶 Praticar os valores previamente cadastrados na plataforma.
+
+🧾 Oferecer aos leads exclusivamente os serviços cadastrados e aprovados na plataforma.
+
+📝 Manter atualizadas as informações sobre seus serviços e empresa.
+
+💳 Realizar corretamente o pagamento das comissões acordadas.
+
+🔒 Garantir a confidencialidade e proteção dos dados dos leads recebidos.
 
 4. Motivos para Encerramento da Parceria
 
 A parceria poderá ser encerrada imediatamente, a critério da Comunidade Rafa Pelo Mundo, nos seguintes casos:
 
-Não atendimento ou demora recorrente no retorno aos leads enviados;
-Cobrança de valores divergentes dos informados na plataforma;
-Oferta ou venda de serviços não cadastrados na plataforma;
-Indicação de outros profissionais que não façam parte da comunidade ou não estejam cadastrados;
-Recebimento de feedbacks negativos frequentes relacionados ao atendimento ou à qualidade do serviço;
-Omissão de vendas realizadas a partir de leads enviados ou não pagamento das comissões devidas;
-Vazamento ou compartilhamento de dados dos leads com terceiros, sem autorização;
-Descumprimento de obrigações legais no decorrer da prestação dos serviços.
+🚫 Não atendimento ou demora recorrente no retorno aos leads enviados.
+
+💸 Cobrança de valores divergentes dos informados na plataforma.
+
+📦 Oferta ou venda de serviços não cadastrados na plataforma.
+
+🔁 Indicação de outros profissionais que não façam parte da comunidade ou não estejam cadastrados.
+
+⭐ Recebimento de feedbacks negativos frequentes relacionados ao atendimento ou à qualidade do serviço.
+
+🧮 Omissão de vendas realizadas a partir de leads enviados ou não pagamento das comissões devidas.
+
+📤 Vazamento ou compartilhamento de dados dos leads com terceiros, sem autorização.
+
+⚖️ Descumprimento de obrigações legais no decorrer da prestação dos serviços.
 
 5. Comissão
 
@@ -89,7 +102,9 @@ Toda a responsabilidade pela execução dos serviços contratados pelos leads é
 
 Esta parceria não estabelece vínculo empregatício, societário ou de exclusividade entre as partes, tratando-se de uma relação comercial independente.
 
-E, por estarem de acordo, as partes aceitam os termos acima.`;
+E, por estarem de acordo, as partes aceitam os termos acima.
+
+Se está de acordo com os termos, escreva CONCORDO.`;
   }
 
   /**

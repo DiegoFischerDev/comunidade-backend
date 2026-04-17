@@ -79,7 +79,15 @@ export class RafacallAdminService {
         startsAt: true,
         endsAt: true,
         timezone: true,
-        user: { select: { id: true, name: true, whatsapp: true } },
+        origin: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            whatsapp: true,
+            affiliateProfile: { select: { instagramHandle: true } },
+          },
+        },
       },
     });
 
@@ -104,6 +112,11 @@ export class RafacallAdminService {
           userName: b.user.name,
           whatsappDigits: waDigits(b.user.whatsapp),
           bookingTimezone: b.timezone,
+          bookingOrigin: b.origin,
+          affiliateInstagram:
+            b.origin === 'AFFILIATE_FREE'
+              ? b.user.affiliateProfile?.instagramHandle ?? null
+              : null,
         })),
       }));
 

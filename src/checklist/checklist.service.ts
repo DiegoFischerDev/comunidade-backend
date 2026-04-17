@@ -6,6 +6,14 @@ import { Prisma, UserTier } from '@prisma/client';
 export class ChecklistService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async getByUserId(userId: string) {
+    const row = await this.prisma.immigrationChecklist.findUnique({
+      where: { userId },
+      select: { data: true, version: true, updatedAt: true },
+    });
+    return row ?? { data: {}, version: 1, updatedAt: null };
+  }
+
   async getMine(user: { id: string; tier: UserTier }) {
     const row = await this.prisma.immigrationChecklist.findUnique({
       where: { userId: user.id },

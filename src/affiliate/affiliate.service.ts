@@ -7,12 +7,21 @@ import {
 } from '@nestjs/common';
 import { AffiliateCommissionCurrency, CashbackPayoutMethod } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { join } from 'path';
 import { unlink } from 'fs/promises';
 
 @Injectable()
 export class AffiliateService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly whatsapp: WhatsAppService,
+  ) {}
+
+  private affiliateWelcomeText(params: { name: string }) {
+    const name = params.name.trim() || 'Tudo bem';
+    return `É muito bom te ter como afiliado da nossa comunidade! 🙂\n\n${name}, nosso programa de afiliados é uma forma de remunerar a audiência que você tem nas suas redes sociais.\n\nAo indicar nossa plataforma você está ajudando outras pessoas a imigrar do jeito certo e também está ganhando dinheiro com a produção desse conteúdo nas suas redes sociais.\n\nSe precisar de dicas e insights de como divulgar, agende uma chamada gratuita comigo e eu vou fazer uma análise do seu perfil e vou te dar umas dicas 😉\n\nAgora é começar a divulgar!\n\nNão esqueça de colocar o seu link particular em todas as publicações para a gente saber que o seguidor é seu, ok?\n\nUm xerooo,\nRafa Silva.`;
+  }
 
   /** Totais de comissão em painéis de afiliado consideram apenas montantes em EUR. */
   private sumEurCommissionTotals(
@@ -133,7 +142,7 @@ export class AffiliateService {
   }) {
     const user = await this.prisma.user.findUnique({
       where: { id: params.userId },
-      select: { id: true, tier: true, role: true },
+      select: { id: true, tier: true, role: true, whatsapp: true, name: true },
     });
     if (!user) throw new NotFoundException('Utilizador não encontrado.');
     if (!(user.tier === 'MEMBER' || user.role === 'PARTNER' || user.role === 'ADMIN')) {
@@ -186,6 +195,16 @@ export class AffiliateService {
         createdAt: true,
       },
     });
+
+    // Ao tornar-se afiliado, liberamos um agendamento gratuito com a Rafa (1x).
+    // Só marcamos se ainda estiver bloqueado (evita sobrescrever unlock pago/membro).
+    await this.prisma.user.updateMany({
+      where: { id: params.userId, rafaCallSchedulingUnlocked: false },
+      data: { rafaCallSchedulingUnlocked: true, rafaCallUnlockOrigin: 'AFFILIATE_FREE' },
+    });
+
+    // Boas-vindas no momento em que vira afiliado (apenas 1ª vez, pois acima bloqueamos existing).
+    void this.whatsapp.sendText(user.whatsapp, this.affiliateWelcomeText({ name: user.name }));
 
     return created;
   }

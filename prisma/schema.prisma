@@ -50,6 +50,11 @@ enum RafaCallBookingStatus {
   COMPLETED
 }
 
+enum RafaCallBookingOrigin {
+  USER_PAID
+  AFFILIATE_FREE
+}
+
 enum SupportTicketStatus {
   REGISTERED
   IN_REVIEW
@@ -111,6 +116,8 @@ model User {
   indicadoPor                String?   @map("indicado_por")
   /** Pode abrir Cal.com para marcar/reagendar (1º acesso com membro ou após pagar taxa). */
   rafaCallSchedulingUnlocked Boolean   @default(false) @map("rafa_call_scheduling_unlocked")
+  /** Origem do desbloqueio atual do agendamento (pago vs afiliado). */
+  rafaCallUnlockOrigin       RafaCallBookingOrigin? @map("rafa_call_unlock_origin")
   /** Início da chamada agendada (webhook Calendly). */
   rafaCallSlotStartsAt       DateTime? @map("rafa_call_slot_starts_at")
   /** Fim da janela da chamada agendada (webhook Calendly); após isto o direito consome-se. */
@@ -153,6 +160,7 @@ model RafaCallBooking {
   userId                 String               @map("user_id")
   user                   User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   status                 RafaCallBookingStatus @default(SCHEDULED)
+  origin                 RafaCallBookingOrigin @default(USER_PAID)
   /** UTC. */
   startsAt               DateTime             @map("starts_at")
   /** UTC. */

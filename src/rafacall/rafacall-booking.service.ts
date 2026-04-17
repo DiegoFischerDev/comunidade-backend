@@ -305,10 +305,18 @@ export class RafacallBookingService {
     });
     if (hasConflict) throw new BadRequestException('Este horário já não está disponível.');
 
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { rafaCallUnlockOrigin: true },
+    });
+
+    const origin = user?.rafaCallUnlockOrigin ?? 'USER_PAID';
+
     const created = await this.prisma.rafaCallBooking.create({
       data: {
         userId,
         status: RafaCallBookingStatus.SCHEDULED,
+        origin,
         startsAt,
         endsAt,
         timezone: tz,
@@ -363,6 +371,12 @@ export class RafacallBookingService {
     if (hasConflict) throw new BadRequestException('Este horário já não está disponível.');
 
     // Estratégia: cancela o atual e cria novo ligado por rescheduledFromBookingId.
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { rafaCallUnlockOrigin: true },
+    });
+    const origin = user?.rafaCallUnlockOrigin ?? 'USER_PAID';
+
     const [cancelled, created] = await this.prisma.$transaction([
       this.prisma.rafaCallBooking.update({
         where: { id: current.id },
@@ -372,6 +386,7 @@ export class RafacallBookingService {
         data: {
           userId,
           status: RafaCallBookingStatus.SCHEDULED,
+          origin,
           startsAt,
           endsAt,
           timezone: tz,

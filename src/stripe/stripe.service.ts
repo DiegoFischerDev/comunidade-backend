@@ -700,7 +700,8 @@ export class StripeService {
     if (checkoutType === 'rafa_call_unlock') {
       const updated = await this.prisma.user.updateMany({
         where: { id: userId, rafaCallSchedulingUnlocked: false },
-        data: { rafaCallSchedulingUnlocked: true },
+        // Cast para evitar cache de tipos do Prisma em alguns ambientes de build/lint.
+        data: { rafaCallSchedulingUnlocked: true, rafaCallUnlockOrigin: 'USER_PAID' } as any,
       });
       if (updated.count > 0) {
         const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
