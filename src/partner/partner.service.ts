@@ -714,7 +714,12 @@ export class PartnerService {
     const partner = await this.getPartnerForUserOrThrow(userId);
 
     const leads = await this.prisma.lead.findMany({
-      where: { partnerId: partner.id },
+      where: {
+        partnerId: partner.id,
+        user: {
+          role: { notIn: [Role.PARTNER, Role.ADMIN] },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       include: {
         user: {
@@ -722,6 +727,7 @@ export class PartnerService {
             id: true,
             name: true,
             email: true,
+            role: true,
             whatsapp: true,
             tier: true,
             immigrationChecklist: {
