@@ -10,8 +10,23 @@ export class WhatsAppService {
   private get key(): string {
     return process.env.EVOLUTION_API_KEY || '';
   }
-  private get instance(): string {
-    return process.env.EVOLUTION_INSTANCE || 'comunidade';
+
+  private get instancesOrdered(): string[] {
+    const primary = (process.env.EVOLUTION_INSTANCE || 'comunidade').trim();
+    const secondary = (process.env.EVOLUTION_INSTANCE_SECONDARY || '').trim();
+    const active = (process.env.EVOLUTION_ACTIVE_INSTANCE || '').trim();
+
+    const base = [primary, secondary].filter(
+      (v, i, arr) => !!v && arr.indexOf(v) === i,
+    );
+    if (!base.length) return ['comunidade'];
+    if (!active || !base.includes(active)) return base;
+    return [active, ...base.filter((v) => v !== active)];
+  }
+
+  private get failoverEnabled(): boolean {
+    const raw = (process.env.EVOLUTION_FAILOVER_ENABLED || '1').trim().toLowerCase();
+    return !['0', 'false', 'off', 'no'].includes(raw);
   }
 
   private normalizeRecipient(value: string): string {
@@ -33,15 +48,34 @@ export class WhatsAppService {
     }
     const number = this.normalizeRecipient(toDigits);
     if (!number) return;
-    const res = await fetch(`${base}/message/sendText/${this.instance}`, {
-      method: 'POST',
-      headers: { apikey: key, 'content-type': 'application/json' },
-      body: JSON.stringify({ number, text }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      this.logger.warn(`Evolution sendText falhou: ${res.status} ${body}`);
+
+    const instances = this.instancesOrdered;
+    const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
+    let lastError = '';
+
+    for (let i = 0; i < attempts.length; i++) {
+      const instance = attempts[i];
+      try {
+        const res = await fetch(`${base}/message/sendText/${instance}`, {
+          method: 'POST',
+          headers: { apikey: key, 'content-type': 'application/json' },
+          body: JSON.stringify({ number, text }),
+        });
+        if (res.ok) {
+          if (i > 0) {
+            this.logger.warn(
+              `sendText entregue via instância de reserva: ${instance}`,
+            );
+          }
+          return;
+        }
+        const body = await res.text().catch(() => '');
+        lastError = `${res.status} ${body}`.trim();
+      } catch (err: any) {
+        lastError = err?.message ? String(err.message) : 'erro de rede';
+      }
     }
+    this.logger.warn(`Evolution sendText falhou em todas as instâncias: ${lastError}`);
   }
 
   async sendMedia(params: {
@@ -64,29 +98,46 @@ export class WhatsAppService {
     const number = this.normalizeRecipient(params.to);
     if (!number) return;
 
-    const res = await fetch(`${base}/message/sendMedia/${this.instance}`, {
-      method: 'POST',
-      headers: { apikey: key, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        number,
-        // docs: "Image, video or document" (case-sensitive em algumas versões)
-        mediatype:
-          params.mediaType === 'video'
-            ? 'video'
-            : params.mediaType === 'document'
-              ? 'document'
-              : 'Image',
-        mimetype: params.mimeType,
-        caption: params.caption ?? '',
-        media: params.base64,
-        fileName: params.fileName,
-      }),
-    });
+    const instances = this.instancesOrdered;
+    const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
+    let lastError = '';
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      this.logger.warn(`Evolution sendMedia falhou: ${res.status} ${body}`);
+    for (let i = 0; i < attempts.length; i++) {
+      const instance = attempts[i];
+      try {
+        const res = await fetch(`${base}/message/sendMedia/${instance}`, {
+          method: 'POST',
+          headers: { apikey: key, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            number,
+            // docs: "Image, video or document" (case-sensitive em algumas versões)
+            mediatype:
+              params.mediaType === 'video'
+                ? 'video'
+                : params.mediaType === 'document'
+                  ? 'document'
+                  : 'Image',
+            mimetype: params.mimeType,
+            caption: params.caption ?? '',
+            media: params.base64,
+            fileName: params.fileName,
+          }),
+        });
+        if (res.ok) {
+          if (i > 0) {
+            this.logger.warn(
+              `sendMedia entregue via instância de reserva: ${instance}`,
+            );
+          }
+          return;
+        }
+        const body = await res.text().catch(() => '');
+        lastError = `${res.status} ${body}`.trim();
+      } catch (err: any) {
+        lastError = err?.message ? String(err.message) : 'erro de rede';
+      }
     }
+    this.logger.warn(`Evolution sendMedia falhou em todas as instâncias: ${lastError}`);
   }
 }
 
