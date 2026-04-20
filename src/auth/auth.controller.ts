@@ -46,6 +46,7 @@ export class AuthController {
     return this.authService.confirmWhatsappRegistration(
       dto.code,
       dto.whatsapp,
+      dto.evolutionInstance,
     );
   }
 

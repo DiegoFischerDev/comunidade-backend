@@ -95,15 +95,51 @@ export class AuthService {
 
   private buildWhatsappRegistrationUrl(name: string, code: string): string {
     const num =
-      process.env.WHATSAPP_REGISTRATION_NUMBER || '351927398547';
+      this.getRegistrationNumbers()[0] || '351927398547';
     const text = `Olá, meu nome é ${name}, gostaria de confirmar meu acesso a comunidade RPM. meu codigo é ${code}`;
     return `https://wa.me/${num.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
   }
 
-  private async sendEvolutionText(toDigits: string, text: string): Promise<void> {
+  private getRegistrationNumbers(): string[] {
+    const primary = (process.env.WHATSAPP_REGISTRATION_NUMBER || '351927398547')
+      .replace(/\D/g, '')
+      .trim();
+    const secondary = (process.env.WHATSAPP_REGISTRATION_NUMBER_SECONDARY || '')
+      .replace(/\D/g, '')
+      .trim();
+    return [primary, secondary].filter((v, i, arr) => !!v && arr.indexOf(v) === i);
+  }
+
+  private getAllowedEvolutionInstances(): string[] {
+    const primary = (process.env.EVOLUTION_INSTANCE || 'comunidade').trim();
+    const secondary = (process.env.EVOLUTION_INSTANCE_SECONDARY || '').trim();
+    const active = (process.env.EVOLUTION_ACTIVE_INSTANCE || '').trim();
+    const base = [primary, secondary].filter((v, i, arr) => !!v && arr.indexOf(v) === i);
+    if (!base.length) return ['comunidade'];
+    if (!active || !base.includes(active)) return base;
+    return [active, ...base.filter((v) => v !== active)];
+  }
+
+  private resolveEvolutionInstances(preferred?: string): string[] {
+    const allowed = this.getAllowedEvolutionInstances();
+    const failoverRaw = (process.env.EVOLUTION_FAILOVER_ENABLED || '1').trim().toLowerCase();
+    const failoverEnabled = !['0', 'false', 'off', 'no'].includes(failoverRaw);
+    const p = (preferred || '').trim();
+    if (p && allowed.includes(p)) {
+      const ordered = [p, ...allowed.filter((v) => v !== p)];
+      return failoverEnabled ? ordered : ordered.slice(0, 1);
+    }
+    return failoverEnabled ? allowed : allowed.slice(0, 1);
+  }
+
+  private async sendEvolutionText(
+    toDigits: string,
+    text: string,
+    preferredInstance?: string,
+  ): Promise<void> {
     const base = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
     const key = process.env.EVOLUTION_API_KEY || '';
-    const instance = process.env.EVOLUTION_INSTANCE || 'comunidade';
+    const instances = this.resolveEvolutionInstances(preferredInstance);
     if (!base || !key) {
       console.warn(
         '[auth] EVOLUTION_API_URL ou EVOLUTION_API_KEY ausentes; SMS WhatsApp não enviado.',
@@ -111,15 +147,22 @@ export class AuthService {
       return;
     }
     const number = toDigits.replace(/\D/g, '');
-    const res = await fetch(`${base}/message/sendText/${instance}`, {
-      method: 'POST',
-      headers: { apikey: key, 'content-type': 'application/json' },
-      body: JSON.stringify({ number, text }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.warn('[auth] Evolution sendText falhou:', res.status, body);
+    let lastError = '';
+    for (const instance of instances) {
+      try {
+        const res = await fetch(`${base}/message/sendText/${instance}`, {
+          method: 'POST',
+          headers: { apikey: key, 'content-type': 'application/json' },
+          body: JSON.stringify({ number, text }),
+        });
+        if (res.ok) return;
+        const body = await res.text().catch(() => '');
+        lastError = `${res.status} ${body}`.trim();
+      } catch (err: any) {
+        lastError = err?.message ? String(err.message) : 'erro de rede';
+      }
     }
+    console.warn('[auth] Evolution sendText falhou em todas as instâncias:', lastError);
   }
 
   async register(dto: RegisterDto) {
@@ -157,9 +200,8 @@ export class AuthService {
       },
     });
 
-    const registrationDigits = (
-      process.env.WHATSAPP_REGISTRATION_NUMBER || '351927398547'
-    ).replace(/\D/g, '');
+    const registrationNumbers = this.getRegistrationNumbers();
+    const registrationDigits = registrationNumbers[0] || '351927398547';
 
     return {
       user: {
@@ -174,6 +216,7 @@ export class AuthService {
       requiresWhatsappVerification: true,
       whatsappVerificationCode: verificationCode,
       whatsappRegistrationNumber: registrationDigits,
+      whatsappRegistrationNumberSecondary: registrationNumbers[1] || null,
       whatsappOpenUrl: this.buildWhatsappRegistrationUrl(
         dto.name.trim(),
         verificationCode,
@@ -186,7 +229,11 @@ export class AuthService {
    * Chamado pelo receiver do webhook (Evolution). Responde sempre com 200 no controller
    * quando o processamento termina; envia texto ao utilizador via Evolution em sucesso/erro.
    */
-  async confirmWhatsappRegistration(code: string, fromWhatsapp: string) {
+  async confirmWhatsappRegistration(
+    code: string,
+    fromWhatsapp: string,
+    evolutionInstance?: string,
+  ) {
     const normalizedFrom = fromWhatsapp.replace(/\D/g, '');
     const trimmedCode = code.trim();
 
@@ -265,13 +312,13 @@ export class AuthService {
     });
 
     if (!req) {
-      await this.sendEvolutionText(normalizedFrom, invalidMsg);
+      await this.sendEvolutionText(normalizedFrom, invalidMsg, evolutionInstance);
       return { ok: true };
     }
 
     const now = new Date();
     if (req.expiresAt < now) {
-      await this.sendEvolutionText(normalizedFrom, invalidMsg);
+      await this.sendEvolutionText(normalizedFrom, invalidMsg, evolutionInstance);
       return { ok: true };
     }
 
@@ -282,7 +329,7 @@ export class AuthService {
     });
 
     if (other) {
-      await this.sendEvolutionText(normalizedFrom, duplicateMsg);
+      await this.sendEvolutionText(normalizedFrom, duplicateMsg, evolutionInstance);
       return { ok: true };
     }
 
@@ -319,8 +366,8 @@ export class AuthService {
       });
     });
 
-    await this.sendEvolutionText(normalizedFrom, welcomeMsg);
-    await this.sendEvolutionText(normalizedFrom, termsMsg);
+    await this.sendEvolutionText(normalizedFrom, welcomeMsg, evolutionInstance);
+    await this.sendEvolutionText(normalizedFrom, termsMsg, evolutionInstance);
     return { ok: true };
   }
 

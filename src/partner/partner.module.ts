@@ -3,9 +3,10 @@ import { PartnerService } from './partner.service';
 import { PartnerController } from './partner.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StripeModule } from '../stripe/stripe.module';
+import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 
 @Module({
-  imports: [PrismaModule, StripeModule],
+  imports: [PrismaModule, StripeModule, WhatsAppModule],
   controllers: [PartnerController],
   providers: [PartnerService],
 })

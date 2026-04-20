@@ -1,4 +1,4 @@
-import { IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class WhatsappConfirmDto {
   @IsString()
@@ -9,4 +9,9 @@ export class WhatsappConfirmDto {
   @IsString()
   @MinLength(8)
   whatsapp: string;
+
+  /** Nome da instância Evolution de origem (opcional). */
+  @IsOptional()
+  @IsString()
+  evolutionInstance?: string;
 }

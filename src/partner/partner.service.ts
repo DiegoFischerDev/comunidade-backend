@@ -19,8 +19,10 @@ import { CreateLeadDto } from './dto/create-lead.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import { PartnerSaleCommissionPaymentStatus, Prisma, Role } from '@prisma/client';
 import { StripeService } from '../stripe/stripe.service';
-import { unlink } from 'fs/promises';
+import { readFile, unlink } from 'fs/promises';
 import { join } from 'path';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 
 const SALT_ROUNDS = 10;
 
@@ -29,6 +31,7 @@ export class PartnerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripeService: StripeService,
+    private readonly wa: WhatsAppService,
   ) {}
 
   private async deleteUploadFileIfLocal(url?: string | null) {
@@ -774,6 +777,259 @@ export class PartnerService {
         user: { select: { id: true, name: true, whatsapp: true, tier: true } },
         service: { select: { id: true, title: true, rpmCommissionEur: true } },
       },
+    });
+  }
+
+  private get housesGroupJid(): string {
+    return (
+      process.env.EVOLUTION_HOUSES_RELOCATION_GROUP_JID ||
+      process.env.EVOLUTION_HOUSES_GROUP_JID ||
+      ''
+    ).trim();
+  }
+
+  private get frontendBaseUrl(): string {
+    return (
+      process.env.FRONTEND_URL ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      'https://comunidade.rafaapelomundo.com'
+    ).replace(/\/$/, '');
+  }
+
+  private buildHouseInteresseLink(params: {
+    houseId: string;
+    partnerId: string;
+    title: string;
+    city: string;
+    typology: string;
+    priceEur: string;
+  }): string {
+    const qs = new URLSearchParams();
+    qs.set('houseId', params.houseId);
+    qs.set('partnerId', params.partnerId);
+    qs.set('title', params.title);
+    qs.set('city', params.city);
+    qs.set('typology', params.typology);
+    qs.set('price', params.priceEur);
+    return `${this.frontendBaseUrl}/casas/interesse?${qs.toString()}`;
+  }
+
+  private formatHousePostText(params: {
+    houseId: string;
+    partnerId: string;
+    title: string;
+    description: string;
+    city: string;
+    typology: string;
+    availableFrom: Date;
+    priceEur: string;
+    requirements: string;
+  }): string {
+    const datePt = params.availableFrom.toLocaleDateString('pt-PT');
+    const typologyLabel = this.formatHouseTypologyLabel(params.typology);
+    const cityLabel = this.formatHouseCityLabel(params.city);
+    const interesseUrl = this.buildHouseInteresseLink({
+      houseId: params.houseId,
+      partnerId: params.partnerId,
+      title: params.title.trim(),
+      city: params.city,
+      typology: params.typology,
+      priceEur: params.priceEur.trim(),
+    });
+    return [
+      `🏠 *${params.title.trim()}*`,
+      ``,
+      `📍 *Cidade:* ${cityLabel}`,
+      `🏘️ *Tipologia:* ${typologyLabel}`,
+      `📅 *Disponível em:* ${datePt}`,
+      `💶 *Preço:* ${params.priceEur.trim()}`,
+      `🧾 *Exigências:* ${params.requirements.trim()}`,
+      ``,
+      `📝 *Descrição:*`,
+      params.description.trim(),
+      ``,
+      `🔗 *Mais informações (Comunidade RPM):*`,
+      interesseUrl,
+    ].join('\n');
+  }
+
+  private formatHouseCityLabel(city: string): string {
+    switch (city) {
+      case 'INTERIOR':
+        return 'Interior';
+      case 'LISBOA':
+        return 'Lisboa';
+      case 'PORTO':
+        return 'Porto';
+      case 'BRAGA':
+        return 'Braga';
+      case 'COIMBRA':
+        return 'Coimbra';
+      case 'AVEIRO':
+        return 'Aveiro';
+      case 'FARO':
+        return 'Faro';
+      case 'ALGARVE':
+        return 'Algarve';
+      case 'EVORA':
+        return 'Évora';
+      case 'VISEU':
+        return 'Viseu';
+      default:
+        return city;
+    }
+  }
+
+  private formatHouseTypologyLabel(typology: string): string {
+    switch (typology) {
+      case 'T1':
+        return 'T1';
+      case 'T2':
+        return 'T2';
+      case 'T3':
+        return 'T3';
+      case 'T4':
+        return 'T4';
+      case 'T5':
+        return 'T5';
+      case 'QUARTO_AP_COMPARTILHADO':
+        return 'Quarto em Ap compartilhado';
+      default:
+        return typology;
+    }
+  }
+
+  /** Qualquer utilizador autenticado: dados mínimos para contacto e verificação de disponibilidade. */
+  async getHouseListingForContact(houseId: string) {
+    const row = await this.prisma.partnerHouse.findUnique({
+      where: { id: houseId },
+      select: {
+        id: true,
+        status: true,
+        title: true,
+        city: true,
+        typology: true,
+        priceEur: true,
+        partnerId: true,
+      },
+    });
+    if (!row) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    return row;
+  }
+
+  async createMyHousePost(userId: string, dto: CreatePartnerHouseDto, files: Express.Multer.File[]) {
+    const partner = await this.getPartnerForUserOrThrow(userId);
+    if (!this.housesGroupJid) {
+      throw new BadRequestException(
+        'EVOLUTION_HOUSES_RELOCATION_GROUP_JID não configurado no backend.',
+      );
+    }
+
+    const images = (files ?? []).filter((f) => !!f);
+    if (images.length === 0) {
+      throw new BadRequestException('Envia pelo menos 1 imagem.');
+    }
+    if (images.length > 6) {
+      throw new BadRequestException('Podes enviar no máximo 6 imagens.');
+    }
+
+    const availableFrom = new Date(dto.availableFrom);
+    if (Number.isNaN(availableFrom.getTime())) {
+      throw new BadRequestException('Data "Disponível em" inválida.');
+    }
+
+    // Guardamos os metadados primeiro; imagens NÃO ficam armazenadas.
+    const created = await this.prisma.partnerHouse.create({
+      data: {
+        partnerId: partner.id,
+        title: dto.title.trim(),
+        description: dto.description.trim(),
+        typology: dto.typology,
+        city: dto.city,
+        availableFrom,
+        priceEur: dto.priceEur.trim(),
+        requirements: dto.requirements.trim(),
+        status: 'AVAILABLE',
+      } as any,
+    });
+
+    try {
+      // 1) Envia as imagens para o grupo (sem caption)
+      for (const file of images) {
+        const buf =
+          file.buffer && file.buffer.length
+            ? file.buffer
+            : file.path
+              ? await readFile(file.path)
+              : null;
+        if (!buf || !buf.length) {
+          throw new Error('Imagem inválida (sem conteúdo).');
+        }
+        const base64 = buf.toString('base64');
+        await this.wa.sendMedia({
+          to: this.housesGroupJid,
+          caption: '',
+          base64,
+          mimeType: file.mimetype || 'image/jpeg',
+          fileName: file.originalname || 'imagem.jpg',
+          mediaType: 'image',
+        });
+
+        // Se por algum motivo o multer tiver gravado em disco, apagamos aqui
+        if (file.path) {
+          await unlink(file.path).catch(() => undefined);
+        }
+      }
+
+      // 2) Envia o texto formatado
+      const text = this.formatHousePostText({
+        houseId: created.id,
+        partnerId: partner.id,
+        title: dto.title,
+        description: dto.description,
+        city: dto.city,
+        typology: dto.typology,
+        availableFrom,
+        priceEur: dto.priceEur,
+        requirements: dto.requirements,
+      });
+      await this.wa.sendText(this.housesGroupJid, text);
+
+      await this.prisma.partnerHouse.update({
+        where: { id: created.id },
+        data: { whatsappSentAt: new Date(), whatsappError: null },
+      });
+    } catch (err: any) {
+      await this.prisma.partnerHouse.update({
+        where: { id: created.id },
+        data: { whatsappError: err?.message ? String(err.message) : 'Falha ao enviar no WhatsApp.' },
+      });
+      throw new InternalServerErrorException('Não foi possível enviar o post no WhatsApp.');
+    }
+
+    return created;
+  }
+
+  async listMyHouses(userId: string) {
+    const partner = await this.getPartnerForUserOrThrow(userId);
+    return this.prisma.partnerHouse.findMany({
+      where: { partnerId: partner.id },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async updateMyHouseStatus(userId: string, houseId: string, status: 'AVAILABLE' | 'UNAVAILABLE') {
+    const partner = await this.getPartnerForUserOrThrow(userId);
+    const exists = await this.prisma.partnerHouse.findFirst({
+      where: { id: houseId, partnerId: partner.id },
+      select: { id: true },
+    });
+    if (!exists) throw new NotFoundException('Imóvel não encontrado.');
+    return this.prisma.partnerHouse.update({
+      where: { id: houseId },
+      data: { status } as any,
     });
   }
 
