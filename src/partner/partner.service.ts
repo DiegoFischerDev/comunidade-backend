@@ -44,9 +44,34 @@ function evolutionMaxMediaBase64Chars(): number {
   return Number.MAX_SAFE_INTEGER;
 }
 
-function isPayloadTooLargeError(message: string): boolean {
-  return /413|entity too large|request entity too large|content too large/i.test(
-    message,
+/** Erros em que faz sentido omitir o vídeo e enviar só o texto (proxy, Evolution, limites). */
+function isEvolutionVideoSendSkippableError(message: string): boolean {
+  const m = message.slice(0, 2500);
+  if (
+    /413|entity too large|request entity too large|content too large|payload too large/i.test(
+      m,
+    )
+  ) {
+    return true;
+  }
+  if (/50[0-9]\b|502|503|504|408|429/i.test(m)) return true;
+  if (/timeout|timed out|ETIMEDOUT|ECONNRESET|socket hang up|fetch failed/i.test(m))
+    return true;
+  if (
+    /too large|file size|max(imum)? size|limit.*exceed|media.*(fail|error)|video.*(fail|error)/i.test(
+      m,
+    )
+  ) {
+    return true;
+  }
+  if (/400\b.*(media|video|send|file)|cannot.*(send|upload)/i.test(m)) return true;
+  return false;
+}
+
+/** Falha que não deve ser mascarada com “só texto” (credenciais, instância). */
+function isEvolutionMediaFatalError(message: string): boolean {
+  return /401|403|apikey|unauthorized|forbidden|instance.*not found|not connected/i.test(
+    message.slice(0, 1500),
   );
 }
 
@@ -894,7 +919,7 @@ export class PartnerService {
     rendasEntradaCount: number;
     relocationFeeEur: string;
     furnished: boolean;
-    /** Vídeo não foi anexado no grupo (413 / limite de proxy). */
+    /** Vídeo não foi anexado no grupo (Evolution/WhatsApp ou limites de envio). */
     videoNotAttachedToGroup?: boolean;
   }): string {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
@@ -927,7 +952,7 @@ export class PartnerService {
     if (params.videoNotAttachedToGroup) {
       lines.push(
         ``,
-        `ℹ️ _O vídeo não foi anexado nesta mensagem (limite de tamanho no envio ao WhatsApp). Vê o anúncio completo na página acima._`,
+        `ℹ️ _O vídeo não foi anexado nesta mensagem (o envio pelo WhatsApp passa pela Evolution e tem limites variáveis). Vê o anúncio completo, com vídeo, na página acima._`,
       );
     }
     return lines.join('\n');
@@ -1186,33 +1211,43 @@ export class PartnerService {
         );
         let videoSentToGroup = false;
 
+        const sendHouseVideo = (opts: {
+          mediaUrl?: string;
+          base64?: string;
+          mediaType: 'video' | 'document';
+        }) =>
+          this.wa.sendMedia({
+            to: this.housesGroupJid,
+            caption: '',
+            mediaUrl: opts.mediaUrl,
+            base64: opts.base64,
+            mimeType: processedVideo.waMimeType,
+            fileName: processedVideo.waFileName,
+            mediaType: opts.mediaType,
+            requireDelivery: true,
+          });
+
         if (absVideoUrl) {
-          try {
-            await this.wa.sendMedia({
-              to: this.housesGroupJid,
-              caption: '',
-              mediaUrl: absVideoUrl,
-              mimeType: processedVideo.waMimeType,
-              fileName: processedVideo.waFileName,
-              mediaType: 'video',
-              requireDelivery: true,
-            });
-            videoSentToGroup = true;
-          } catch (urlErr: unknown) {
-            const urlMsg =
-              urlErr &&
-              typeof urlErr === 'object' &&
-              'message' in urlErr
-                ? String((urlErr as { message?: string }).message)
-                : '';
-            this.logger.warn(
-              `WhatsApp vídeo por URL falhou; a tentar base64. ${urlMsg.slice(0, 400)}`,
-            );
+          for (const mt of ['video', 'document'] as const) {
+            try {
+              await sendHouseVideo({ mediaUrl: absVideoUrl, mediaType: mt });
+              videoSentToGroup = true;
+              break;
+            } catch (urlErr: unknown) {
+              const urlMsg =
+                urlErr &&
+                typeof urlErr === 'object' &&
+                'message' in urlErr
+                  ? String((urlErr as { message?: string }).message)
+                  : '';
+              if (isEvolutionMediaFatalError(urlMsg)) {
+                throw urlErr;
+              }
+              this.logger.warn(
+                `WhatsApp media por URL (${mt}) falhou; a tentar outro modo. ${urlMsg.slice(0, 400)}`,
+              );
+            }
           }
-        } else if (!process.env.PUBLIC_API_BASE_URL?.trim()) {
-          this.logger.warn(
-            'PUBLIC_API_BASE_URL não definido: não é possível enviar vídeo ao grupo por URL (evita 413). Define PUBLIC_API_BASE_URL com a URL pública da API.',
-          );
         }
 
         if (!videoSentToGroup) {
@@ -1223,30 +1258,44 @@ export class PartnerService {
             );
             videoSkippedForWhatsapp = true;
           } else {
-            try {
-              await this.wa.sendMedia({
-                to: this.housesGroupJid,
-                caption: '',
-                base64: processedVideo.waBase64,
-                mimeType: processedVideo.waMimeType,
-                fileName: processedVideo.waFileName,
-                mediaType: 'video',
-                requireDelivery: true,
-              });
-            } catch (mediaErr: unknown) {
-              const mediaMsg =
-                mediaErr &&
-                typeof mediaErr === 'object' &&
-                'message' in mediaErr
-                  ? String((mediaErr as { message?: string }).message)
-                  : '';
-              if (isPayloadTooLargeError(mediaMsg)) {
+            let lastBase64Err = '';
+            for (const mt of ['video', 'document'] as const) {
+              try {
+                await sendHouseVideo({
+                  base64: processedVideo.waBase64,
+                  mediaType: mt,
+                });
+                videoSentToGroup = true;
+                break;
+              } catch (mediaErr: unknown) {
+                const mediaMsg =
+                  mediaErr &&
+                  typeof mediaErr === 'object' &&
+                  'message' in mediaErr
+                    ? String((mediaErr as { message?: string }).message)
+                    : '';
+                lastBase64Err = mediaMsg;
+                if (isEvolutionMediaFatalError(mediaMsg)) {
+                  throw mediaErr;
+                }
                 this.logger.warn(
-                  `Evolution/nginx recusou o vídeo (payload demasiado grande). A enviar só o texto do anúncio. ${mediaMsg.slice(0, 300)}`,
+                  `WhatsApp vídeo em base64 (${mt}) falhou. ${mediaMsg.slice(0, 400)}`,
+                );
+              }
+            }
+            if (!videoSentToGroup) {
+              if (
+                lastBase64Err &&
+                isEvolutionVideoSendSkippableError(lastBase64Err)
+              ) {
+                this.logger.warn(
+                  `Evolution/WhatsApp não aceitou o vídeo. A enviar só o texto do anúncio. ${lastBase64Err.slice(0, 400)}`,
                 );
                 videoSkippedForWhatsapp = true;
+              } else if (lastBase64Err) {
+                throw new Error(lastBase64Err);
               } else {
-                throw mediaErr;
+                videoSkippedForWhatsapp = true;
               }
             }
           }
