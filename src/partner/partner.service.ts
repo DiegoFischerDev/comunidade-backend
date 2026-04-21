@@ -35,6 +35,21 @@ const RELOCATION_CATEGORY_SLUG = 'relocation';
 /** Limite aproximado de vídeo no WhatsApp (Evolution); acima disto o envio costuma falhar. */
 const WHATSAPP_VIDEO_MAX_BYTES = 16 * 1024 * 1024;
 
+/** Limite opcional de caracteres base64 enviados à Evolution (JSON). Útil se o nginx tiver client_max_body_size baixo. */
+function evolutionMaxMediaBase64Chars(): number {
+  const raw = process.env.EVOLUTION_MAX_MEDIA_BASE64_CHARS?.trim();
+  if (raw && /^\d+$/.test(raw)) {
+    return parseInt(raw, 10);
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function isPayloadTooLargeError(message: string): boolean {
+  return /413|entity too large|request entity too large|content too large/i.test(
+    message,
+  );
+}
+
 @Injectable()
 export class PartnerService {
   private readonly logger = new Logger(PartnerService.name);
@@ -858,6 +873,8 @@ export class PartnerService {
     rendasEntradaCount: number;
     relocationFeeEur: string;
     furnished: boolean;
+    /** Vídeo não foi anexado no grupo (413 / limite de proxy). */
+    videoNotAttachedToGroup?: boolean;
   }): string {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
@@ -886,6 +903,12 @@ export class PartnerService {
       `🔗 *Página do anúncio (Comunidade RPM):*`,
       housePageUrl,
     );
+    if (params.videoNotAttachedToGroup) {
+      lines.push(
+        ``,
+        `ℹ️ _O vídeo não foi anexado nesta mensagem (limite de tamanho no envio ao WhatsApp). Vê o anúncio completo na página acima._`,
+      );
+    }
     return lines.join('\n');
   }
 
@@ -1122,6 +1145,8 @@ export class PartnerService {
       },
     });
 
+    let videoSkippedForWhatsapp = false;
+
     try {
       if (processedVideo) {
         const videoBytes = Math.floor((processedVideo.waBase64.length * 3) / 4);
@@ -1134,15 +1159,41 @@ export class PartnerService {
           });
           throw new BadRequestException(detail);
         }
-        await this.wa.sendMedia({
-          to: this.housesGroupJid,
-          caption: '',
-          base64: processedVideo.waBase64,
-          mimeType: processedVideo.waMimeType,
-          fileName: processedVideo.waFileName,
-          mediaType: 'video',
-          requireDelivery: true,
-        });
+
+        const maxB64 = evolutionMaxMediaBase64Chars();
+        if (processedVideo.waBase64.length > maxB64) {
+          this.logger.warn(
+            `Vídeo omitido no WhatsApp: base64 (${processedVideo.waBase64.length} chars) > EVOLUTION_MAX_MEDIA_BASE64_CHARS (${maxB64}).`,
+          );
+          videoSkippedForWhatsapp = true;
+        } else {
+          try {
+            await this.wa.sendMedia({
+              to: this.housesGroupJid,
+              caption: '',
+              base64: processedVideo.waBase64,
+              mimeType: processedVideo.waMimeType,
+              fileName: processedVideo.waFileName,
+              mediaType: 'video',
+              requireDelivery: true,
+            });
+          } catch (mediaErr: unknown) {
+            const mediaMsg =
+              mediaErr &&
+              typeof mediaErr === 'object' &&
+              'message' in mediaErr
+                ? String((mediaErr as { message?: string }).message)
+                : '';
+            if (isPayloadTooLargeError(mediaMsg)) {
+              this.logger.warn(
+                `Evolution/nginx recusou o vídeo (payload demasiado grande). A enviar só o texto do anúncio. ${mediaMsg.slice(0, 300)}`,
+              );
+              videoSkippedForWhatsapp = true;
+            } else {
+              throw mediaErr;
+            }
+          }
+        }
       } else {
         for (const p of processedImages) {
           await this.wa.sendMedia({
@@ -1170,13 +1221,23 @@ export class PartnerService {
         rendasEntradaCount,
         relocationFeeEur: dto.relocationFeeEur,
         furnished,
+        videoNotAttachedToGroup:
+          Boolean(processedVideo) && videoSkippedForWhatsapp,
       });
       await this.wa.sendText(this.housesGroupJid, text, { requireDelivery: true });
 
       await this.prisma.partnerHouse.update({
         where: { id: created.id },
-        data: { whatsappSentAt: new Date(), whatsappError: null },
+        data: {
+          whatsappSentAt: new Date(),
+          whatsappError: null,
+        },
       });
+      if (videoSkippedForWhatsapp) {
+        this.logger.warn(
+          `Post ${created.id}: texto enviado ao grupo WhatsApp; vídeo omitido (413 ou EVOLUTION_MAX_MEDIA_BASE64_CHARS).`,
+        );
+      }
     } catch (err: unknown) {
       if (err instanceof BadRequestException) {
         throw err;
@@ -1249,6 +1310,7 @@ export class PartnerService {
           select: {
             id: true,
             name: true,
+            whatsapp: true,
             logoUrl: true,
             shortDescription: true,
           },
