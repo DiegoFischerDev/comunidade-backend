@@ -114,6 +114,13 @@ export class PartnerController {
     return this.partnerService.listCategoriesWithPartners();
   }
 
+  /** Imóveis públicos (parceiros relocation, disponíveis). Deve ficar antes de rotas `:id`. */
+  @Public()
+  @Get('relocation/houses')
+  async listRelocationHousesPublic() {
+    return this.partnerService.listPublicRelocationHouses();
+  }
+
   /** Utilizador autenticado: confirma se o anúncio ainda existe e está disponível antes do contacto. */
   @Get('houses/:houseId/contact')
   async getHouseListingForContact(@Param('houseId') houseId: string) {
@@ -162,18 +169,33 @@ export class PartnerController {
   @Post('me/houses')
   @Roles(Role.PARTNER)
   @UseInterceptors(
-    FileFieldsInterceptor([{ name: 'images', maxCount: 6 }], {
-      limits: { files: 6, fileSize: 5 * 1024 * 1024 }, // 5MB por foto (o WhatsApp também limita)
-      storage: memoryStorage(),
-    }),
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: 6 },
+        { name: 'video', maxCount: 1 },
+      ],
+      {
+        limits: {
+          files: 7,
+          // Fotos até ~5MB cada no cliente; vídeo até ~48MB (WhatsApp pode recusar vídeos muito grandes)
+          fileSize: 48 * 1024 * 1024,
+        },
+        storage: memoryStorage(),
+      },
+    ),
   )
   async createMyHousePost(
     @CurrentUser() user: { id: string },
     @Body() dto: CreatePartnerHouseDto,
     @UploadedFiles()
-    files: { images?: Express.Multer.File[] },
+    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
   ) {
-    return this.partnerService.createMyHousePost(user.id, dto, files?.images ?? []);
+    return this.partnerService.createMyHousePost(
+      user.id,
+      dto,
+      files?.images ?? [],
+      files?.video?.[0] ?? null,
+    );
   }
 
   @Patch('me/houses/:id/status')

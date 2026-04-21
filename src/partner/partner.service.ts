@@ -19,12 +19,15 @@ import { CreateLeadDto } from './dto/create-lead.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import { PartnerSaleCommissionPaymentStatus, Prisma, Role } from '@prisma/client';
 import { StripeService } from '../stripe/stripe.service';
-import { readFile, unlink } from 'fs/promises';
+import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
+import { HouseImageStorageService } from './house-image-storage.service';
 
 const SALT_ROUNDS = 10;
+
+const RELOCATION_CATEGORY_SLUG = 'relocation';
 
 @Injectable()
 export class PartnerService {
@@ -32,6 +35,7 @@ export class PartnerService {
     private readonly prisma: PrismaService,
     private readonly stripeService: StripeService,
     private readonly wa: WhatsAppService,
+    private readonly houseImages: HouseImageStorageService,
   ) {}
 
   private async deleteUploadFileIfLocal(url?: string | null) {
@@ -406,6 +410,9 @@ export class PartnerService {
   async getCurrentPartner(userId: string) {
     const partner = await this.prisma.partner.findUnique({
       where: { userId },
+      include: {
+        category: { select: { id: true, slug: true, name: true } },
+      },
     });
 
     if (!partner) {
@@ -498,6 +505,9 @@ export class PartnerService {
               : partner.billingPostalCode,
           ...(whatsappToSet !== undefined && { whatsapp: whatsappToSet }),
         },
+        include: {
+          category: { select: { id: true, slug: true, name: true } },
+        },
       });
     });
 
@@ -527,6 +537,26 @@ export class PartnerService {
 
     if (!partner) {
       throw new NotFoundException('Parceiro não encontrado para este usuário.');
+    }
+
+    return partner;
+  }
+
+  /** Parceiros de casas/relocation: categoria obrigatória e slug relocation. */
+  private async getRelocationPartnerOrThrow(userId: string) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { userId },
+      include: { category: { select: { id: true, slug: true, name: true } } },
+    });
+
+    if (!partner) {
+      throw new NotFoundException('Parceiro não encontrado para este usuário.');
+    }
+
+    if (partner.category?.slug !== RELOCATION_CATEGORY_SLUG) {
+      throw new ForbiddenException(
+        'Apenas parceiros na categoria Relocation podem gerir anúncios de imóveis.',
+      );
     }
 
     return partner;
@@ -919,19 +949,30 @@ export class PartnerService {
     return row;
   }
 
-  async createMyHousePost(userId: string, dto: CreatePartnerHouseDto, files: Express.Multer.File[]) {
-    const partner = await this.getPartnerForUserOrThrow(userId);
+  async createMyHousePost(
+    userId: string,
+    dto: CreatePartnerHouseDto,
+    imageFiles: Express.Multer.File[],
+    videoFile: Express.Multer.File | null,
+  ) {
+    const partner = await this.getRelocationPartnerOrThrow(userId);
     if (!this.housesGroupJid) {
       throw new BadRequestException(
         'EVOLUTION_HOUSES_RELOCATION_GROUP_JID não configurado no backend.',
       );
     }
 
-    const images = (files ?? []).filter((f) => !!f);
-    if (images.length === 0) {
-      throw new BadRequestException('Envia pelo menos 1 imagem.');
+    const images = (imageFiles ?? []).filter((f) => !!f);
+    const hasVideo = !!videoFile;
+    if (hasVideo && images.length > 0) {
+      throw new BadRequestException(
+        'Envia só um vídeo ou só imagens (até 6), não ambos.',
+      );
     }
-    if (images.length > 6) {
+    if (!hasVideo && images.length === 0) {
+      throw new BadRequestException('Envia pelo menos 1 imagem ou 1 vídeo.');
+    }
+    if (!hasVideo && images.length > 6) {
       throw new BadRequestException('Podes enviar no máximo 6 imagens.');
     }
 
@@ -940,7 +981,73 @@ export class PartnerService {
       throw new BadRequestException('Data "Disponível em" inválida.');
     }
 
-    // Guardamos os metadados primeiro; imagens NÃO ficam armazenadas.
+    let imageUrls: string[] = [];
+    let videoUrl: string | null = null;
+
+    const processedImages: {
+      publicUrl: string;
+      waBase64: string;
+      waMimeType: string;
+      waFileName: string;
+      mediaType: 'image';
+    }[] = [];
+
+    let processedVideo: {
+      publicUrl: string;
+      waBase64: string;
+      waMimeType: string;
+      waFileName: string;
+      mediaType: 'video';
+    } | null = null;
+
+    if (hasVideo && videoFile) {
+      try {
+        const v = await this.houseImages.storeHouseVideo(videoFile);
+        videoUrl = v.publicUrl;
+        processedVideo = {
+          publicUrl: v.publicUrl,
+          waBase64: v.waBase64,
+          waMimeType: v.waMimeType,
+          waFileName: v.waFileName,
+          mediaType: 'video',
+        };
+        if (videoFile.path) {
+          await unlink(videoFile.path).catch(() => undefined);
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('inválido') || msg.includes('suportado') || msg.includes('Formato')) {
+          throw new BadRequestException(msg);
+        }
+        throw e;
+      }
+    } else {
+      for (const file of images) {
+        try {
+          const { publicUrl, waBase64, waMimeType } =
+            await this.houseImages.processHouseImageForListing(file);
+          const baseName = (file.originalname || 'imagem').replace(/\.[^.]+$/, '');
+          processedImages.push({
+            publicUrl,
+            waBase64,
+            waMimeType,
+            waFileName: `${baseName}.webp`,
+            mediaType: 'image',
+          });
+          if (file.path) {
+            await unlink(file.path).catch(() => undefined);
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes('processar') || msg.includes('inválida')) {
+            throw new BadRequestException(msg);
+          }
+          throw e;
+        }
+      }
+      imageUrls = processedImages.map((p) => p.publicUrl);
+    }
+
     const created = await this.prisma.partnerHouse.create({
       data: {
         partnerId: partner.id,
@@ -952,38 +1059,34 @@ export class PartnerService {
         priceEur: dto.priceEur.trim(),
         requirements: dto.requirements.trim(),
         status: 'AVAILABLE',
-      } as any,
+        imageUrls,
+        videoUrl,
+      },
     });
 
     try {
-      // 1) Envia as imagens para o grupo (sem caption)
-      for (const file of images) {
-        const buf =
-          file.buffer && file.buffer.length
-            ? file.buffer
-            : file.path
-              ? await readFile(file.path)
-              : null;
-        if (!buf || !buf.length) {
-          throw new Error('Imagem inválida (sem conteúdo).');
-        }
-        const base64 = buf.toString('base64');
+      if (processedVideo) {
         await this.wa.sendMedia({
           to: this.housesGroupJid,
           caption: '',
-          base64,
-          mimeType: file.mimetype || 'image/jpeg',
-          fileName: file.originalname || 'imagem.jpg',
-          mediaType: 'image',
+          base64: processedVideo.waBase64,
+          mimeType: processedVideo.waMimeType,
+          fileName: processedVideo.waFileName,
+          mediaType: 'video',
         });
-
-        // Se por algum motivo o multer tiver gravado em disco, apagamos aqui
-        if (file.path) {
-          await unlink(file.path).catch(() => undefined);
+      } else {
+        for (const p of processedImages) {
+          await this.wa.sendMedia({
+            to: this.housesGroupJid,
+            caption: '',
+            base64: p.waBase64,
+            mimeType: p.waMimeType,
+            fileName: p.waFileName,
+            mediaType: 'image',
+          });
         }
       }
 
-      // 2) Envia o texto formatado
       const text = this.formatHousePostText({
         houseId: created.id,
         partnerId: partner.id,
@@ -1001,10 +1104,14 @@ export class PartnerService {
         where: { id: created.id },
         data: { whatsappSentAt: new Date(), whatsappError: null },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as { message?: string }).message)
+          : 'Falha ao enviar no WhatsApp.';
       await this.prisma.partnerHouse.update({
         where: { id: created.id },
-        data: { whatsappError: err?.message ? String(err.message) : 'Falha ao enviar no WhatsApp.' },
+        data: { whatsappError: message },
       });
       throw new InternalServerErrorException('Não foi possível enviar o post no WhatsApp.');
     }
@@ -1012,8 +1119,48 @@ export class PartnerService {
     return created;
   }
 
+  /** Listagem pública: imóveis disponíveis de parceiros relocation. */
+  async listPublicRelocationHouses() {
+    const cat = await this.prisma.productCategory.findUnique({
+      where: { slug: RELOCATION_CATEGORY_SLUG },
+      select: { id: true },
+    });
+    if (!cat) {
+      return [];
+    }
+
+    return this.prisma.partnerHouse.findMany({
+      where: {
+        status: 'AVAILABLE',
+        partner: { categoryId: cat.id },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        typology: true,
+        city: true,
+        availableFrom: true,
+        priceEur: true,
+        requirements: true,
+        imageUrls: true,
+        videoUrl: true,
+        partnerId: true,
+        partner: {
+          select: {
+            id: true,
+            name: true,
+            logoUrl: true,
+            shortDescription: true,
+          },
+        },
+      },
+    });
+  }
+
   async listMyHouses(userId: string) {
-    const partner = await this.getPartnerForUserOrThrow(userId);
+    const partner = await this.getRelocationPartnerOrThrow(userId);
     return this.prisma.partnerHouse.findMany({
       where: { partnerId: partner.id },
       orderBy: { createdAt: 'desc' },
@@ -1021,7 +1168,7 @@ export class PartnerService {
   }
 
   async updateMyHouseStatus(userId: string, houseId: string, status: 'AVAILABLE' | 'UNAVAILABLE') {
-    const partner = await this.getPartnerForUserOrThrow(userId);
+    const partner = await this.getRelocationPartnerOrThrow(userId);
     const exists = await this.prisma.partnerHouse.findFirst({
       where: { id: houseId, partnerId: partner.id },
       select: { id: true },
