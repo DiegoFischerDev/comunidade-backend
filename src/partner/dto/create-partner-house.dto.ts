@@ -6,6 +6,9 @@ import {
   MinLength,
 } from 'class-validator';
 
+/** Multipart envia "true" | "false" como texto. */
+export const PARTNER_HOUSE_FURNISHED_VALUES = ['true', 'false'] as const;
+
 export const PARTNER_HOUSE_CITY_CODES = [
   'INTERIOR',
   'LISBOA',
@@ -77,4 +80,8 @@ export class CreatePartnerHouseDto {
   @IsString()
   @IsIn([...PARTNER_HOUSE_ENTRADA_COUNT] as unknown as string[])
   rendasEntradaCount!: string;
+
+  @IsString()
+  @IsIn([...PARTNER_HOUSE_FURNISHED_VALUES] as unknown as string[])
+  furnished!: string;
 }
