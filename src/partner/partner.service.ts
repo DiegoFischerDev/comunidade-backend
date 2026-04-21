@@ -1,8 +1,11 @@
 import {
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
@@ -29,8 +32,13 @@ const SALT_ROUNDS = 10;
 
 const RELOCATION_CATEGORY_SLUG = 'relocation';
 
+/** Limite aproximado de vídeo no WhatsApp (Evolution); acima disto o envio costuma falhar. */
+const WHATSAPP_VIDEO_MAX_BYTES = 16 * 1024 * 1024;
+
 @Injectable()
 export class PartnerService {
+  private readonly logger = new Logger(PartnerService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripeService: StripeService,
@@ -1116,6 +1124,16 @@ export class PartnerService {
 
     try {
       if (processedVideo) {
+        const videoBytes = Math.floor((processedVideo.waBase64.length * 3) / 4);
+        if (videoBytes > WHATSAPP_VIDEO_MAX_BYTES) {
+          const mb = (videoBytes / 1024 / 1024).toFixed(1);
+          const detail = `O vídeo tem cerca de ${mb} MB; o WhatsApp aceita no máximo ~16 MB. Comprime ou recorta o ficheiro e tenta outra vez.`;
+          await this.prisma.partnerHouse.update({
+            where: { id: created.id },
+            data: { whatsappError: detail },
+          });
+          throw new BadRequestException(detail);
+        }
         await this.wa.sendMedia({
           to: this.housesGroupJid,
           caption: '',
@@ -1160,6 +1178,9 @@ export class PartnerService {
         data: { whatsappSentAt: new Date(), whatsappError: null },
       });
     } catch (err: unknown) {
+      if (err instanceof BadRequestException) {
+        throw err;
+      }
       const message =
         err && typeof err === 'object' && 'message' in err
           ? String((err as { message?: string }).message)
@@ -1168,7 +1189,16 @@ export class PartnerService {
         where: { id: created.id },
         data: { whatsappError: message },
       });
-      throw new InternalServerErrorException('Não foi possível enviar o post no WhatsApp.');
+      this.logger.error(
+        `Falha ao enviar post de imóvel ${created.id} para o WhatsApp: ${message}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      const safeDetail =
+        message.length > 1500 ? `${message.slice(0, 1500)}…` : message;
+      throw new HttpException(
+        `Não foi possível enviar o post no WhatsApp. Detalhes: ${safeDetail}`,
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
     }
 
     return created;
