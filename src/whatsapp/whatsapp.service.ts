@@ -29,6 +29,21 @@ export class WhatsAppService {
     return !['0', 'false', 'off', 'no'].includes(raw);
   }
 
+  /** Timeout do fetch (backend → Evolution). Vídeos grandes podem demorar a processar no servidor da API. */
+  private evolutionRequestSignal(): AbortSignal | undefined {
+    const raw = process.env.EVOLUTION_REQUEST_TIMEOUT_MS?.trim();
+    const ms =
+      raw && /^\d+$/.test(raw)
+        ? parseInt(raw, 10)
+        : 180000;
+    if (!ms || ms <= 0) return undefined;
+    try {
+      return AbortSignal.timeout(ms);
+    } catch {
+      return undefined;
+    }
+  }
+
   private normalizeRecipient(value: string): string {
     const raw = (value ?? '').toString().trim();
     if (!raw) return '';
@@ -62,6 +77,7 @@ export class WhatsAppService {
     const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
     let lastError = '';
 
+    const reqSignal = this.evolutionRequestSignal();
     for (let i = 0; i < attempts.length; i++) {
       const instance = attempts[i];
       try {
@@ -69,6 +85,7 @@ export class WhatsAppService {
           method: 'POST',
           headers: { apikey: key, 'content-type': 'application/json' },
           body: JSON.stringify({ number, text }),
+          ...(reqSignal ? { signal: reqSignal } : {}),
         });
         if (res.ok) {
           if (i > 0) {
@@ -139,6 +156,7 @@ export class WhatsAppService {
       return;
     }
 
+    const mediaSignal = this.evolutionRequestSignal();
     for (let i = 0; i < attempts.length; i++) {
       const instance = attempts[i];
       try {
@@ -159,6 +177,7 @@ export class WhatsAppService {
             media: mediaPayload,
             fileName: params.fileName,
           }),
+          ...(mediaSignal ? { signal: mediaSignal } : {}),
         });
         if (res.ok) {
           if (i > 0) {
@@ -234,6 +253,7 @@ export class WhatsAppService {
     const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
     let lastError = '';
 
+    const videoSignal = this.evolutionRequestSignal();
     for (let i = 0; i < attempts.length; i++) {
       const instance = attempts[i];
       try {
@@ -245,6 +265,7 @@ export class WhatsAppService {
             video: videoField,
             caption: params.caption ?? '',
           }),
+          ...(videoSignal ? { signal: videoSignal } : {}),
         });
         if (res.ok) {
           if (i > 0) {

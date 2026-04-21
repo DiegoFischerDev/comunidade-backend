@@ -44,6 +44,21 @@ function evolutionMaxMediaBase64Chars(): number {
   return Number.MAX_SAFE_INTEGER;
 }
 
+/**
+ * Acima deste tamanho (bytes do ficheiro) não tentamos enviar vídeo em base64 no JSON — costuma dar 413 no proxy.
+ * Só faz sentido URL pública ou comprimir o vídeo. `EVOLUTION_VIDEO_MAX_BASE64_FALLBACK_BYTES` no .env para afinar.
+ */
+function evolutionVideoMaxBase64FallbackBytes(): number {
+  const raw = process.env.EVOLUTION_VIDEO_MAX_BASE64_FALLBACK_BYTES?.trim();
+  if (raw && /^\d+$/.test(raw)) {
+    return parseInt(raw, 10);
+  }
+  return 2 * 1024 * 1024;
+}
+
+/** Vídeos maiores: tentar documento antes de vídeo no sendMedia (por vezes passa melhor no WhatsApp). */
+const WHATSAPP_LARGE_VIDEO_BYTES = 3 * 1024 * 1024;
+
 /** Erros em que faz sentido omitir o vídeo e enviar só o texto (proxy, Evolution, limites). */
 function isEvolutionVideoSendSkippableError(message: string): boolean {
   const m = message.slice(0, 2500);
@@ -900,6 +915,74 @@ export class PartnerService {
     return u.startsWith('/') ? `${base}${u}` : `${base}/${u}`;
   }
 
+  /**
+   * Confirma que a URL já responde (upload/R2/CDN por vezes só ficam legíveis no edge após um instante).
+   * Evita a Evolution pedir o ficheiro antes de estar disponível.
+   */
+  private async probePublicMediaUrl(url: string): Promise<boolean> {
+    const signal = AbortSignal.timeout(12000);
+    try {
+      const head = await fetch(url, {
+        method: 'HEAD',
+        redirect: 'follow',
+        signal,
+      });
+      if (head.ok) return true;
+    } catch {
+      /* tentar GET */
+    }
+    try {
+      const signal2 = AbortSignal.timeout(12000);
+      const get = await fetch(url, {
+        method: 'GET',
+        headers: { Range: 'bytes=0-0' },
+        redirect: 'follow',
+        signal: signal2,
+      });
+      return get.ok || get.status === 206;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Espera até a URL pública devolver sucesso ou até ao tempo máximo (maior para vídeos grandes).
+   */
+  private async waitUntilPublicMediaUrlReady(
+    url: string,
+    videoBytes: number,
+  ): Promise<void> {
+    const large = videoBytes >= WHATSAPP_LARGE_VIDEO_BYTES;
+    const rawMax = process.env.MEDIA_PUBLIC_URL_READY_MAX_WAIT_MS?.trim();
+    const maxWaitMs =
+      rawMax && /^\d+$/.test(rawMax)
+        ? parseInt(rawMax, 10)
+        : large
+          ? 90000
+          : 20000;
+    const intervalMs = 500;
+    const deadline = Date.now() + maxWaitMs;
+    const started = Date.now();
+    let attempt = 0;
+    while (Date.now() < deadline) {
+      attempt += 1;
+      const ok = await this.probePublicMediaUrl(url);
+      if (ok) {
+        const waitMs = Date.now() - started;
+        if (attempt > 1 || waitMs > 800) {
+          this.logger.log(
+            `URL do vídeo acessível após ${waitMs}ms (${attempt} tentativa(s)).`,
+          );
+        }
+        return;
+      }
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    this.logger.warn(
+      `URL do vídeo não respondeu com sucesso dentro de ${maxWaitMs}ms; a enviar na mesma para a Evolution (pode falhar se o ficheiro ainda não estiver público).`,
+    );
+  }
+
   private formatHouseEntradaLine(caucoes: number, rendas: number): string {
     const c = caucoes === 1 ? '1 caução' : `${caucoes} cauções`;
     const r = rendas === 1 ? '1 renda antecipada' : `${rendas} rendas antecipadas`;
@@ -1247,35 +1330,37 @@ export class PartnerService {
         };
 
         if (absVideoUrl) {
-          const urlChain: Array<{ label: string; fn: () => Promise<void> }> = [
-            {
-              label: 'sendVideo+URL',
-              fn: () =>
-                this.wa.sendVideo({
-                  to: this.housesGroupJid,
-                  caption: '',
-                  mediaUrl: absVideoUrl,
-                  mimeType: processedVideo.waMimeType,
-                  requireDelivery: true,
-                }),
-            },
-            {
-              label: 'sendMedia+video+URL',
-              fn: () =>
-                sendHouseVideoMedia({
-                  mediaUrl: absVideoUrl,
-                  mediaType: 'video',
-                }),
-            },
-            {
-              label: 'sendMedia+document+URL',
-              fn: () =>
-                sendHouseVideoMedia({
-                  mediaUrl: absVideoUrl,
-                  mediaType: 'document',
-                }),
-            },
-          ];
+          await this.waitUntilPublicMediaUrlReady(absVideoUrl, videoBytes);
+          const sendVideoUrl = (): Promise<void> =>
+            this.wa.sendVideo({
+              to: this.housesGroupJid,
+              caption: '',
+              mediaUrl: absVideoUrl,
+              mimeType: processedVideo.waMimeType,
+              requireDelivery: true,
+            });
+          const sendDocUrl = (): Promise<void> =>
+            sendHouseVideoMedia({
+              mediaUrl: absVideoUrl,
+              mediaType: 'document',
+            });
+          const sendVidUrl = (): Promise<void> =>
+            sendHouseVideoMedia({
+              mediaUrl: absVideoUrl,
+              mediaType: 'video',
+            });
+          const urlChain: Array<{ label: string; fn: () => Promise<void> }> =
+            videoBytes >= WHATSAPP_LARGE_VIDEO_BYTES
+              ? [
+                  { label: 'sendVideo+URL', fn: sendVideoUrl },
+                  { label: 'sendMedia+document+URL', fn: sendDocUrl },
+                  { label: 'sendMedia+video+URL', fn: sendVidUrl },
+                ]
+              : [
+                  { label: 'sendVideo+URL', fn: sendVideoUrl },
+                  { label: 'sendMedia+video+URL', fn: sendVidUrl },
+                  { label: 'sendMedia+document+URL', fn: sendDocUrl },
+                ];
           for (const step of urlChain) {
             if (await trySendVideoToGroup(step.label, step.fn)) {
               videoSentToGroup = true;
@@ -1286,37 +1371,49 @@ export class PartnerService {
 
         if (!videoSentToGroup) {
           const maxB64 = evolutionMaxMediaBase64Chars();
-          if (processedVideo.waBase64.length > maxB64) {
-            this.logger.warn(
-              `Vídeo omitido no WhatsApp: base64 (${processedVideo.waBase64.length} chars) > EVOLUTION_MAX_MEDIA_BASE64_CHARS (${maxB64}).`,
-            );
+          const maxBase64FallbackBytes = evolutionVideoMaxBase64FallbackBytes();
+          const base64TooLargeForJson =
+            videoBytes > maxBase64FallbackBytes ||
+            processedVideo.waBase64.length > maxB64;
+
+          if (base64TooLargeForJson) {
+            if (processedVideo.waBase64.length > maxB64) {
+              this.logger.warn(
+                `Vídeo omitido no WhatsApp: base64 (${processedVideo.waBase64.length} chars) > EVOLUTION_MAX_MEDIA_BASE64_CHARS (${maxB64}).`,
+              );
+            } else {
+              this.logger.warn(
+                `Vídeo omitido fallback base64: ${videoBytes} bytes > EVOLUTION_VIDEO_MAX_BASE64_FALLBACK_BYTES (${maxBase64FallbackBytes}). URLs já tentadas ou indisponíveis; comprimir o vídeo (recomendado abaixo de 5 MB) ou aumentar limites no proxy da Evolution.`,
+              );
+            }
             videoSkippedForWhatsapp = true;
           } else {
             let lastBase64Err = '';
             const b64 = processedVideo.waBase64;
-            const baseChain: Array<{ label: string; fn: () => Promise<void> }> = [
-              {
-                label: 'sendVideo+base64(data:…)',
-                fn: () =>
-                  this.wa.sendVideo({
-                    to: this.housesGroupJid,
-                    caption: '',
-                    base64: b64,
-                    mimeType: processedVideo.waMimeType,
-                    requireDelivery: true,
-                  }),
-              },
-              {
-                label: 'sendMedia+video+base64',
-                fn: () =>
-                  sendHouseVideoMedia({ base64: b64, mediaType: 'video' }),
-              },
-              {
-                label: 'sendMedia+document+base64',
-                fn: () =>
-                  sendHouseVideoMedia({ base64: b64, mediaType: 'document' }),
-              },
-            ];
+            const sendVideoB64 = (): Promise<void> =>
+              this.wa.sendVideo({
+                to: this.housesGroupJid,
+                caption: '',
+                base64: b64,
+                mimeType: processedVideo.waMimeType,
+                requireDelivery: true,
+              });
+            const sendDocB64 = (): Promise<void> =>
+              sendHouseVideoMedia({ base64: b64, mediaType: 'document' });
+            const sendVidB64 = (): Promise<void> =>
+              sendHouseVideoMedia({ base64: b64, mediaType: 'video' });
+            const baseChain: Array<{ label: string; fn: () => Promise<void> }> =
+              videoBytes >= WHATSAPP_LARGE_VIDEO_BYTES
+                ? [
+                    { label: 'sendVideo+base64(data:…)', fn: sendVideoB64 },
+                    { label: 'sendMedia+document+base64', fn: sendDocB64 },
+                    { label: 'sendMedia+video+base64', fn: sendVidB64 },
+                  ]
+                : [
+                    { label: 'sendVideo+base64(data:…)', fn: sendVideoB64 },
+                    { label: 'sendMedia+video+base64', fn: sendVidB64 },
+                    { label: 'sendMedia+document+base64', fn: sendDocB64 },
+                  ];
             for (const step of baseChain) {
               try {
                 await step.fn();
@@ -1391,12 +1488,14 @@ export class PartnerService {
         where: { id: created.id },
         data: {
           whatsappSentAt: new Date(),
-          whatsappError: null,
+          whatsappError: videoSkippedForWhatsapp
+            ? 'Vídeo não anexado no grupo WhatsApp (tamanho ou limite da Evolution/proxy). A página pública mantém o vídeo; comprime para ~5 MB ou menos para maior fiabilidade.'
+            : null,
         },
       });
       if (videoSkippedForWhatsapp) {
         this.logger.warn(
-          `Post ${created.id}: texto enviado ao grupo WhatsApp; vídeo omitido (URL falhou + 413/base64 ou EVOLUTION_MAX_MEDIA_BASE64_CHARS).`,
+          `Post ${created.id}: texto enviado ao grupo WhatsApp; vídeo omitido (URL falhou, base64 acima do limite ou 413).`,
         );
       }
     } catch (err: unknown) {
