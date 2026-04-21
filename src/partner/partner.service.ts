@@ -854,6 +854,27 @@ export class PartnerService {
     return `${this.frontendBaseUrl}/casas/${houseId}`;
   }
 
+  /**
+   * URL absoluta acessível pela Evolution (GET) para enviar media sem base64 no JSON.
+   * Caminhos `/uploads/...` usam PUBLIC_API_BASE_URL ou NEXT_PUBLIC_API_URL.
+   */
+  private resolvePublicMediaUrlForEvolution(publicUrl: string): string | null {
+    const u = (publicUrl || '').trim();
+    if (!u) return null;
+    if (u.startsWith('https://') || u.startsWith('http://')) {
+      return u;
+    }
+    const base = (
+      process.env.PUBLIC_API_BASE_URL ||
+      process.env.NEXT_PUBLIC_API_URL ||
+      ''
+    ).replace(/\/$/, '');
+    if (!base) {
+      return null;
+    }
+    return u.startsWith('/') ? `${base}${u}` : `${base}/${u}`;
+  }
+
   private formatHouseEntradaLine(caucoes: number, rendas: number): string {
     const c = caucoes === 1 ? '1 caução' : `${caucoes} cauções`;
     const r = rendas === 1 ? '1 renda antecipada' : `${rendas} rendas antecipadas`;
@@ -1160,37 +1181,73 @@ export class PartnerService {
           throw new BadRequestException(detail);
         }
 
-        const maxB64 = evolutionMaxMediaBase64Chars();
-        if (processedVideo.waBase64.length > maxB64) {
-          this.logger.warn(
-            `Vídeo omitido no WhatsApp: base64 (${processedVideo.waBase64.length} chars) > EVOLUTION_MAX_MEDIA_BASE64_CHARS (${maxB64}).`,
-          );
-          videoSkippedForWhatsapp = true;
-        } else {
+        const absVideoUrl = this.resolvePublicMediaUrlForEvolution(
+          processedVideo.publicUrl,
+        );
+        let videoSentToGroup = false;
+
+        if (absVideoUrl) {
           try {
             await this.wa.sendMedia({
               to: this.housesGroupJid,
               caption: '',
-              base64: processedVideo.waBase64,
+              mediaUrl: absVideoUrl,
               mimeType: processedVideo.waMimeType,
               fileName: processedVideo.waFileName,
               mediaType: 'video',
               requireDelivery: true,
             });
-          } catch (mediaErr: unknown) {
-            const mediaMsg =
-              mediaErr &&
-              typeof mediaErr === 'object' &&
-              'message' in mediaErr
-                ? String((mediaErr as { message?: string }).message)
+            videoSentToGroup = true;
+          } catch (urlErr: unknown) {
+            const urlMsg =
+              urlErr &&
+              typeof urlErr === 'object' &&
+              'message' in urlErr
+                ? String((urlErr as { message?: string }).message)
                 : '';
-            if (isPayloadTooLargeError(mediaMsg)) {
-              this.logger.warn(
-                `Evolution/nginx recusou o vídeo (payload demasiado grande). A enviar só o texto do anúncio. ${mediaMsg.slice(0, 300)}`,
-              );
-              videoSkippedForWhatsapp = true;
-            } else {
-              throw mediaErr;
+            this.logger.warn(
+              `WhatsApp vídeo por URL falhou; a tentar base64. ${urlMsg.slice(0, 400)}`,
+            );
+          }
+        } else if (!process.env.PUBLIC_API_BASE_URL?.trim()) {
+          this.logger.warn(
+            'PUBLIC_API_BASE_URL não definido: não é possível enviar vídeo ao grupo por URL (evita 413). Define PUBLIC_API_BASE_URL com a URL pública da API.',
+          );
+        }
+
+        if (!videoSentToGroup) {
+          const maxB64 = evolutionMaxMediaBase64Chars();
+          if (processedVideo.waBase64.length > maxB64) {
+            this.logger.warn(
+              `Vídeo omitido no WhatsApp: base64 (${processedVideo.waBase64.length} chars) > EVOLUTION_MAX_MEDIA_BASE64_CHARS (${maxB64}).`,
+            );
+            videoSkippedForWhatsapp = true;
+          } else {
+            try {
+              await this.wa.sendMedia({
+                to: this.housesGroupJid,
+                caption: '',
+                base64: processedVideo.waBase64,
+                mimeType: processedVideo.waMimeType,
+                fileName: processedVideo.waFileName,
+                mediaType: 'video',
+                requireDelivery: true,
+              });
+            } catch (mediaErr: unknown) {
+              const mediaMsg =
+                mediaErr &&
+                typeof mediaErr === 'object' &&
+                'message' in mediaErr
+                  ? String((mediaErr as { message?: string }).message)
+                  : '';
+              if (isPayloadTooLargeError(mediaMsg)) {
+                this.logger.warn(
+                  `Evolution/nginx recusou o vídeo (payload demasiado grande). A enviar só o texto do anúncio. ${mediaMsg.slice(0, 300)}`,
+                );
+                videoSkippedForWhatsapp = true;
+              } else {
+                throw mediaErr;
+              }
             }
           }
         }
@@ -1235,7 +1292,7 @@ export class PartnerService {
       });
       if (videoSkippedForWhatsapp) {
         this.logger.warn(
-          `Post ${created.id}: texto enviado ao grupo WhatsApp; vídeo omitido (413 ou EVOLUTION_MAX_MEDIA_BASE64_CHARS).`,
+          `Post ${created.id}: texto enviado ao grupo WhatsApp; vídeo omitido (URL falhou + 413/base64 ou EVOLUTION_MAX_MEDIA_BASE64_CHARS).`,
         );
       }
     } catch (err: unknown) {

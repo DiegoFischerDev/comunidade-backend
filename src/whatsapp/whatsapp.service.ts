@@ -93,7 +93,13 @@ export class WhatsAppService {
   async sendMedia(params: {
     to: string;
     caption: string;
-    base64: string;
+    /** Obrigatório se `mediaUrl` não for uma URL http(s) válida. */
+    base64?: string;
+    /**
+     * URL pública https (ou http) do ficheiro — Evolution usa isto no JSON em vez de base64
+     * (evita 413 no proxy / limite de body da própria API).
+     */
+    mediaUrl?: string;
     mimeType: string;
     fileName: string;
     mediaType?: 'image' | 'video' | 'document';
@@ -121,6 +127,18 @@ export class WhatsAppService {
     const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
     let lastError = '';
 
+    const urlTrim = params.mediaUrl?.trim();
+    const mediaPayload =
+      urlTrim && (urlTrim.startsWith('https://') || urlTrim.startsWith('http://'))
+        ? urlTrim
+        : (params.base64 ?? '');
+    if (!mediaPayload?.length) {
+      const msg = 'sendMedia: falta mediaUrl ou base64.';
+      this.logger.warn(msg);
+      if (requireDelivery) throw new Error(msg);
+      return;
+    }
+
     for (let i = 0; i < attempts.length; i++) {
       const instance = attempts[i];
       try {
@@ -138,7 +156,7 @@ export class WhatsAppService {
                   : 'image',
             mimetype: params.mimeType,
             caption: params.caption ?? '',
-            media: params.base64,
+            media: mediaPayload,
             fileName: params.fileName,
           }),
         });
