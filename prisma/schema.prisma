@@ -63,6 +63,7 @@ enum SupportTicketStatus {
 
 enum PartnerHouseStatus {
   AVAILABLE
+  RESERVED
   UNAVAILABLE
 }
 

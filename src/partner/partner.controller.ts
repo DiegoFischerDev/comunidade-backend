@@ -13,7 +13,7 @@ import {
 import { PartnerService } from './partner.service';
 import { CreatePartnerDto } from './dto/create-partner.dto';
 import { Roles } from '../auth/roles.decorator';
-import { Role } from '@prisma/client';
+import { PartnerHouseStatus, Role } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
@@ -120,6 +120,13 @@ export class PartnerController {
   @Get('relocation/houses')
   async listRelocationHousesPublic() {
     return this.partnerService.listPublicRelocationHouses();
+  }
+
+  /** Categoria Relocation (nome, slug, imagem de capa para hero). */
+  @Public()
+  @Get('relocation/category')
+  async getRelocationCategoryPublic() {
+    return this.partnerService.getRelocationCategoryPublic();
   }
 
   /** Página pública do anúncio (detalhes + parceiro relocation). */
@@ -254,9 +261,19 @@ export class PartnerController {
   async updateMyHouseStatus(
     @CurrentUser() user: { id: string },
     @Param('id') id: string,
-    @Body() body: { status: 'AVAILABLE' | 'UNAVAILABLE' },
+    @Body() body: { status: PartnerHouseStatus },
   ) {
     return this.partnerService.updateMyHouseStatus(user.id, id, body.status);
+  }
+
+  @Delete('me/houses/:id')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  async deleteMyHouse(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+  ) {
+    return this.partnerService.deleteMyHouse(user.id, id);
   }
 
   @Get('me/sales')

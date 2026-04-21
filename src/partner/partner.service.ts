@@ -20,7 +20,12 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
-import { PartnerSaleCommissionPaymentStatus, Prisma, Role } from '@prisma/client';
+import {
+  PartnerHouseStatus,
+  PartnerSaleCommissionPaymentStatus,
+  Prisma,
+  Role,
+} from '@prisma/client';
 import { StripeService } from '../stripe/stripe.service';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
@@ -32,6 +37,18 @@ import { HouseImageStorageService } from './house-image-storage.service';
 const SALT_ROUNDS = 10;
 
 const RELOCATION_CATEGORY_SLUG = 'relocation';
+
+/** Ordem na listagem pública (PG enum não segue esta ordem após ADD VALUE). */
+function relocationHouseStatusRank(status: PartnerHouseStatus): number {
+  switch (status) {
+    case 'AVAILABLE':
+      return 0;
+    case 'RESERVED':
+      return 1;
+    case 'UNAVAILABLE':
+      return 2;
+  }
+}
 
 @Injectable()
 export class PartnerService {
@@ -834,7 +851,7 @@ export class PartnerService {
 
   /** Página pública do anúncio (detalhes + parceiro); pré-visualização WhatsApp usa OG desta URL, não a imagem genérica da comunidade. */
   private buildHousePublicPageLink(houseId: string): string {
-    return `${this.frontendBaseUrl}/casas/${houseId}`;
+    return `${this.frontendBaseUrl}/dashboard/casas/${houseId}`;
   }
 
   /** Texto curto: «2 cauções · 1 renda antecipada» (alinhado à página pública). */
@@ -1163,6 +1180,21 @@ export class PartnerService {
     return house;
   }
 
+  /** Remove o anúncio e ficheiros associados (apenas imóveis do próprio parceiro relocation). */
+  async deleteMyHouse(userId: string, houseId: string) {
+    const partner = await this.getRelocationPartnerOrThrow(userId);
+    const house = await this.prisma.partnerHouse.findFirst({
+      where: { id: houseId, partnerId: partner.id },
+      select: { id: true, imageUrls: true, videoUrl: true },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    await this.removeHouseMediaFiles(house);
+    await this.prisma.partnerHouse.delete({ where: { id: houseId } });
+    return { ok: true as const };
+  }
+
   async updateMyHouse(
     userId: string,
     houseId: string,
@@ -1345,11 +1377,10 @@ export class PartnerService {
       return [];
     }
 
-    return this.prisma.partnerHouse.findMany({
+    const rows = await this.prisma.partnerHouse.findMany({
       where: {
         partner: { categoryId: cat.id },
       },
-      orderBy: [{ status: 'asc' }, { availableFrom: 'desc' }],
       select: {
         id: true,
         title: true,
@@ -1378,6 +1409,29 @@ export class PartnerService {
         },
       },
     });
+    rows.sort((a, b) => {
+      const byStatus =
+        relocationHouseStatusRank(a.status) - relocationHouseStatusRank(b.status);
+      if (byStatus !== 0) return byStatus;
+      return b.availableFrom.getTime() - a.availableFrom.getTime();
+    });
+    return rows;
+  }
+
+  /** Dados públicos da categoria Relocation (hero do dashboard: imagem de capa). */
+  async getRelocationCategoryPublic() {
+    const row = await this.prisma.productCategory.findUnique({
+      where: { slug: RELOCATION_CATEGORY_SLUG },
+      select: { slug: true, name: true, backgroundImageUrl: true },
+    });
+    if (!row) {
+      return {
+        slug: RELOCATION_CATEGORY_SLUG,
+        name: 'Relocation',
+        backgroundImageUrl: null as string | null,
+      };
+    }
+    return row;
   }
 
   async adminListAllHouses() {
@@ -1434,7 +1488,11 @@ export class PartnerService {
     });
   }
 
-  async updateMyHouseStatus(userId: string, houseId: string, status: 'AVAILABLE' | 'UNAVAILABLE') {
+  async updateMyHouseStatus(
+    userId: string,
+    houseId: string,
+    status: PartnerHouseStatus,
+  ) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
     const exists = await this.prisma.partnerHouse.findFirst({
       where: { id: houseId, partnerId: partner.id },
@@ -1443,7 +1501,7 @@ export class PartnerService {
     if (!exists) throw new NotFoundException('Imóvel não encontrado.');
     return this.prisma.partnerHouse.update({
       where: { id: houseId },
-      data: { status } as any,
+      data: { status },
     });
   }
 
