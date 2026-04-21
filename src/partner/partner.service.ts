@@ -826,22 +826,9 @@ export class PartnerService {
     ).replace(/\/$/, '');
   }
 
-  private buildHouseInteresseLink(params: {
-    houseId: string;
-    partnerId: string;
-    title: string;
-    city: string;
-    typology: string;
-    priceEur: string;
-  }): string {
-    const qs = new URLSearchParams();
-    qs.set('houseId', params.houseId);
-    qs.set('partnerId', params.partnerId);
-    qs.set('title', params.title);
-    qs.set('city', params.city);
-    qs.set('typology', params.typology);
-    qs.set('price', params.priceEur);
-    return `${this.frontendBaseUrl}/casas/interesse?${qs.toString()}`;
+  /** Página pública do anúncio (detalhes + parceiro); pré-visualização WhatsApp usa OG desta URL, não a imagem genérica da comunidade. */
+  private buildHousePublicPageLink(houseId: string): string {
+    return `${this.frontendBaseUrl}/casas/${houseId}`;
   }
 
   private formatHousePostText(params: {
@@ -859,14 +846,7 @@ export class PartnerService {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
     const cityLabel = this.formatHouseCityLabel(params.city);
-    const interesseUrl = this.buildHouseInteresseLink({
-      houseId: params.houseId,
-      partnerId: params.partnerId,
-      title: params.title.trim(),
-      city: params.city,
-      typology: params.typology,
-      priceEur: params.priceEur.trim(),
-    });
+    const housePageUrl = this.buildHousePublicPageLink(params.houseId);
     const lines = [
       `🏠 *${params.title.trim()}*`,
       ``,
@@ -885,8 +865,8 @@ export class PartnerService {
       `📝 *Descrição:*`,
       params.description.trim(),
       ``,
-      `🔗 *Mais informações (Comunidade RPM):*`,
-      interesseUrl,
+      `🔗 *Página do anúncio (Comunidade RPM):*`,
+      housePageUrl,
     );
     return lines.join('\n');
   }
@@ -935,6 +915,60 @@ export class PartnerService {
       default:
         return typology;
     }
+  }
+
+  /**
+   * Página pública do anúncio: imóvel de parceiro relocation + dados do parceiro (como em /partners/:id/public).
+   */
+  async getPublicHousePage(houseId: string) {
+    const cat = await this.prisma.productCategory.findUnique({
+      where: { slug: RELOCATION_CATEGORY_SLUG },
+      select: { id: true },
+    });
+    if (!cat) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+
+    const house = await this.prisma.partnerHouse.findFirst({
+      where: {
+        id: houseId,
+        partner: { categoryId: cat.id },
+      },
+      include: {
+        partner: {
+          include: {
+            user: {
+              select: {
+                email: true,
+              },
+            },
+            category: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+              },
+            },
+            services: {
+              orderBy: { sortOrder: 'asc' },
+              select: {
+                id: true,
+                title: true,
+                description: true,
+                price: true,
+                priceOnRequest: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+
+    return house;
   }
 
   /** Qualquer utilizador autenticado: dados mínimos para contacto e verificação de disponibilidade. */

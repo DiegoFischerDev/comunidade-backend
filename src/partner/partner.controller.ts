@@ -121,6 +121,13 @@ export class PartnerController {
     return this.partnerService.listPublicRelocationHouses();
   }
 
+  /** Página pública do anúncio (detalhes + parceiro relocation). */
+  @Public()
+  @Get('houses/:houseId/public')
+  async getHousePublic(@Param('houseId') houseId: string) {
+    return this.partnerService.getPublicHousePage(houseId);
+  }
+
   /** Utilizador autenticado: confirma se o anúncio ainda existe e está disponível antes do contacto. */
   @Get('houses/:houseId/contact')
   async getHouseListingForContact(@Param('houseId') houseId: string) {
