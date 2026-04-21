@@ -240,9 +240,6 @@ export class AuthService {
     const invalidMsg =
       'Não encontrámos um registo com este código ou o código expirou (15 minutos). Volte ao site, crie de novo a conta e envie a mensagem outra vez.';
 
-    const duplicateMsg =
-      'Esse número de WhatsApp já está em uso — já tem conta ativa. Se perdeu a palavra-passe, use "Esqueci a senha" no site.';
-
     const communityUrl =
       process.env.FRONTEND_URL?.replace(/\/$/, '') || 'http://localhost:3000';
     const welcomeMsg =
@@ -322,19 +319,41 @@ export class AuthService {
       return { ok: true };
     }
 
-    const other = await this.prisma.user.findFirst({
+    const existingUser = await this.prisma.user.findFirst({
       where: {
         whatsapp: normalizedFrom,
       },
     });
 
-    if (other) {
-      await this.sendEvolutionText(normalizedFrom, duplicateMsg, evolutionInstance);
-      return { ok: true };
-    }
-
     const handoffExpires = new Date();
     handoffExpires.setMinutes(handoffExpires.getMinutes() + 30);
+
+    const passwordUpdatedMsg =
+      `Confirmámos o seu número. A palavra-passe da sua conta foi atualizada para a que acabou de definir no site. Já pode entrar na comunidade com o mesmo WhatsApp e esta nova senha.\n\n${communityUrl}`;
+
+    if (existingUser) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.user.update({
+          where: { id: existingUser.id },
+          data: { passwordHash: req.passwordHash },
+        });
+
+        await tx.whatsappRegistrationBrowserHandoff.create({
+          data: {
+            sessionToken: req.browserSessionToken,
+            userId: existingUser.id,
+            expiresAt: handoffExpires,
+          },
+        });
+
+        await tx.whatsappRegistrationRequest.delete({
+          where: { id: req.id },
+        });
+      });
+
+      await this.sendEvolutionText(normalizedFrom, passwordUpdatedMsg, evolutionInstance);
+      return { ok: true };
+    }
 
     await this.prisma.$transaction(async (tx) => {
       const created = await tx.user.create({
