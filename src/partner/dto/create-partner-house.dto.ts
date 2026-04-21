@@ -1,6 +1,7 @@
 import {
   IsDateString,
   IsIn,
+  IsOptional,
   IsString,
   MaxLength,
   MinLength,
@@ -100,4 +101,12 @@ export class CreatePartnerHouseDto {
     message: 'Valor de «mobilado» inválido.',
   })
   furnished!: string;
+
+  /** Índice 0–5 da foto principal entre as imagens enviadas (ordem de upload). Omissão = primeira. */
+  @IsOptional()
+  @IsString()
+  @IsIn(['0', '1', '2', '3', '4', '5'], {
+    message: 'Índice da foto principal inválido.',
+  })
+  coverImageIndex?: string;
 }

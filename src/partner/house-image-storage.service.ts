@@ -136,12 +136,10 @@ export class HouseImageStorageService {
   }
 
   /**
-   * Converte para WebP, grava em R2 ou disco, devolve URL pública e base64 para envio WhatsApp.
+   * Converte para WebP, grava em R2 ou disco, devolve URL pública para a página do imóvel.
    */
   async processHouseImageForListing(file: Express.Multer.File): Promise<{
     publicUrl: string;
-    waBase64: string;
-    waMimeType: string;
   }> {
     const buf = await this.readBuffer(file);
     if (!buf?.length) {
@@ -159,11 +157,7 @@ export class HouseImageStorageService {
       throw new Error('Não foi possível processar esta imagem.');
     }
     const publicUrl = await this.uploadWebp(webp);
-    return {
-      publicUrl,
-      waBase64: webp.toString('base64'),
-      waMimeType: 'image/webp',
-    };
+    return { publicUrl };
   }
 
   private async uploadWebp(webp: Buffer): Promise<string> {

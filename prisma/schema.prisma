@@ -290,9 +290,11 @@ model PartnerHouse {
   rendasEntradaCount Int          @default(0) @map("rendas_entrada_count")
   /// Imóvel mobilado (sim/não)
   furnished     Boolean           @default(false) @map("furnished")
-  // URLs públicas (WebP), ex. R2 ou /uploads/houses/ — vazio se usares vídeo
+  // URLs públicas (WebP), ex. R2 ou /uploads/houses/
   imageUrls     String[]          @default([]) @map("image_urls")
-  // Um vídeo em alternativa às imagens (nunca os dois)
+  /// Foto principal (preview OG / cartões); deve existir em imageUrls. Opcional — usa-se a 1.ª imagem.
+  coverImageUrl String?           @map("cover_image_url")
+  /// Vídeo opcional na página pública (não enviado ao grupo WhatsApp)
   videoUrl      String?           @map("video_url")
   status        PartnerHouseStatus @default(AVAILABLE)
   whatsappSentAt DateTime?        @map("whatsapp_sent_at")

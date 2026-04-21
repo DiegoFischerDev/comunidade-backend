@@ -837,10 +837,11 @@ export class PartnerService {
     return `${this.frontendBaseUrl}/casas/${houseId}`;
   }
 
-  private formatHouseEntradaLine(caucoes: number, rendas: number): string {
+  /** Texto curto: «2 cauções · 1 renda antecipada» (alinhado à página pública). */
+  private formatHouseEntradaShortLine(caucoes: number, rendas: number): string {
     const c = caucoes === 1 ? '1 caução' : `${caucoes} cauções`;
     const r = rendas === 1 ? '1 renda antecipada' : `${rendas} rendas antecipadas`;
-    return `${c} + ${r}`;
+    return `${c} · ${r}`;
   }
 
   private formatHousePostText(params: {
@@ -861,7 +862,10 @@ export class PartnerService {
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
     const cityLabel = this.formatHouseCityLabel(params.city);
     const housePageUrl = this.buildHousePublicPageLink(params.houseId);
-    const entrada = this.formatHouseEntradaLine(params.caucoesCount, params.rendasEntradaCount);
+    const entrada = this.formatHouseEntradaShortLine(
+      params.caucoesCount,
+      params.rendasEntradaCount,
+    );
     const fee = params.relocationFeeEur.trim();
     const mobilado = params.furnished ? 'Sim' : 'Não';
     const lines = [
@@ -872,9 +876,8 @@ export class PartnerService {
       `🛋️ *Mobilado:* ${mobilado}`,
       `📅 *Disponível em:* ${datePt}`,
       `💶 *Renda:* ${params.priceEur.trim()} / mês`,
-      `🧾 *Entrada (taxa relocation, cauções e rendas antecipadas):*`,
-      `• Taxa relocation: ${fee} €`,
-      `• Cauções e rendas: ${entrada}`,
+      `*Taxa relocation:* ${fee} €`,
+      `*Entrada:* ${entrada}`,
     ];
     lines.push(
       ``,
@@ -1027,26 +1030,10 @@ export class PartnerService {
     let imageUrls: string[] = [];
     let videoUrl: string | null = null;
 
-    const processedImages: {
-      publicUrl: string;
-      waBase64: string;
-      waMimeType: string;
-      waFileName: string;
-      mediaType: 'image';
-    }[] = [];
-
     for (const file of images) {
       try {
-        const { publicUrl, waBase64, waMimeType } =
-          await this.houseImages.processHouseImageForListing(file);
-        const baseName = (file.originalname || 'imagem').replace(/\.[^.]+$/, '');
-        processedImages.push({
-          publicUrl,
-          waBase64,
-          waMimeType,
-          waFileName: `${baseName}.webp`,
-          mediaType: 'image',
-        });
+        const { publicUrl } = await this.houseImages.processHouseImageForListing(file);
+        imageUrls.push(publicUrl);
         if (file.path) {
           await unlink(file.path).catch(() => undefined);
         }
@@ -1058,7 +1045,19 @@ export class PartnerService {
         throw e;
       }
     }
-    imageUrls = processedImages.map((p) => p.publicUrl);
+
+    let coverImageUrl: string | null = null;
+    if (imageUrls.length > 0) {
+      const raw = dto.coverImageIndex?.trim();
+      const idx =
+        raw != null && raw !== ''
+          ? Math.min(
+              Math.max(0, parseInt(raw, 10)),
+              imageUrls.length - 1,
+            )
+          : 0;
+      coverImageUrl = imageUrls[idx]!;
+    }
 
     if (hasVideo && videoFile) {
       try {
@@ -1096,24 +1095,13 @@ export class PartnerService {
         furnished,
         status: 'AVAILABLE',
         imageUrls,
+        coverImageUrl,
         videoUrl,
       },
     });
 
     try {
-      // Grupo WhatsApp: só imagens + texto (uma vez na criação). Vídeo fica só na página pública.
-      for (const p of processedImages) {
-        await this.wa.sendMedia({
-          to: this.housesGroupJid,
-          caption: '',
-          base64: p.waBase64,
-          mimeType: p.waMimeType,
-          fileName: p.waFileName,
-          mediaType: 'image',
-          requireDelivery: true,
-        });
-      }
-
+      // Grupo WhatsApp: só texto com link (uma vez na criação). Fotos e vídeo ficam na página pública.
       const text = this.formatHousePostText({
         houseId: created.id,
         partnerId: partner.id,
@@ -1295,6 +1283,24 @@ export class PartnerService {
     const furnished =
       dto.furnished != null ? dto.furnished === 'true' : house.furnished;
 
+    let coverImageUrl: string | null = house.coverImageUrl;
+    if (imageUrls.length === 0) {
+      coverImageUrl = null;
+    } else if (dto.coverImageIndex != null && dto.coverImageIndex.trim() !== '') {
+      const idx = Math.min(
+        Math.max(0, parseInt(dto.coverImageIndex.trim(), 10)),
+        imageUrls.length - 1,
+      );
+      coverImageUrl = imageUrls[idx]!;
+    } else if (
+      house.coverImageUrl &&
+      imageUrls.includes(house.coverImageUrl)
+    ) {
+      coverImageUrl = house.coverImageUrl;
+    } else {
+      coverImageUrl = imageUrls[0]!;
+    }
+
     return this.prisma.partnerHouse.update({
       where: { id: houseId },
       data: {
@@ -1313,6 +1319,7 @@ export class PartnerService {
         rendasEntradaCount,
         furnished,
         imageUrls,
+        coverImageUrl,
         videoUrl,
       },
     });
@@ -1356,6 +1363,7 @@ export class PartnerService {
         rendasEntradaCount: true,
         furnished: true,
         imageUrls: true,
+        coverImageUrl: true,
         videoUrl: true,
         partnerId: true,
         status: true,

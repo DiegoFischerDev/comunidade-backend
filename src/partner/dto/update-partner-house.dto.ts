@@ -96,4 +96,12 @@ export class UpdatePartnerHouseDto {
   @IsOptional()
   @IsString()
   removeVideo?: string;
+
+  /** Índice 0–5 da foto principal na lista final (imagens mantidas + novas, nessa ordem). Omissão = manter se ainda válida. */
+  @IsOptional()
+  @IsString()
+  @IsIn(['0', '1', '2', '3', '4', '5'], {
+    message: 'Índice da foto principal inválido.',
+  })
+  coverImageIndex?: string;
 }
