@@ -1,4 +1,4 @@
-import { IsDateString, IsIn, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsDateString, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export const PARTNER_HOUSE_CITY_CODES = [
   'INTERIOR',
@@ -52,6 +52,12 @@ export class CreatePartnerHouseDto {
   @MinLength(1)
   @MaxLength(40)
   priceEur!: string;
+
+  /** Opcional; não aparece na página pública Relocation */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  relocationFeeEur?: string;
 
   @IsString()
   @MinLength(1)

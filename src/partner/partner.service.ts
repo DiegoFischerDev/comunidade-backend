@@ -854,6 +854,7 @@ export class PartnerService {
     availableFrom: Date;
     priceEur: string;
     requirements: string;
+    relocationFeeEur?: string | null;
   }): string {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
@@ -866,21 +867,28 @@ export class PartnerService {
       typology: params.typology,
       priceEur: params.priceEur.trim(),
     });
-    return [
+    const lines = [
       `🏠 *${params.title.trim()}*`,
       ``,
       `📍 *Cidade:* ${cityLabel}`,
       `🏘️ *Tipologia:* ${typologyLabel}`,
       `📅 *Disponível em:* ${datePt}`,
-      `💶 *Preço:* ${params.priceEur.trim()}`,
-      `🧾 *Exigências:* ${params.requirements.trim()}`,
+      `💶 *Renda:* ${params.priceEur.trim()} / mês`,
+      `🧾 *Exigências (rendas e cauções):* ${params.requirements.trim()}`,
+    ];
+    const fee = params.relocationFeeEur?.trim();
+    if (fee) {
+      lines.push(`💼 *Taxa relocation:* ${fee}`);
+    }
+    lines.push(
       ``,
       `📝 *Descrição:*`,
       params.description.trim(),
       ``,
       `🔗 *Mais informações (Comunidade RPM):*`,
       interesseUrl,
-    ].join('\n');
+    );
+    return lines.join('\n');
   }
 
   private formatHouseCityLabel(city: string): string {
@@ -1057,6 +1065,10 @@ export class PartnerService {
         city: dto.city,
         availableFrom,
         priceEur: dto.priceEur.trim(),
+        relocationFeeEur:
+          dto.relocationFeeEur?.trim() !== undefined && dto.relocationFeeEur?.trim() !== ''
+            ? dto.relocationFeeEur.trim()
+            : null,
         requirements: dto.requirements.trim(),
         status: 'AVAILABLE',
         imageUrls,
@@ -1099,6 +1111,7 @@ export class PartnerService {
         availableFrom,
         priceEur: dto.priceEur,
         requirements: dto.requirements,
+        relocationFeeEur: dto.relocationFeeEur,
       });
       await this.wa.sendText(this.housesGroupJid, text, { requireDelivery: true });
 

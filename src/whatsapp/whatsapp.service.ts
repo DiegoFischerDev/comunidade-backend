@@ -129,13 +129,13 @@ export class WhatsAppService {
           headers: { apikey: key, 'content-type': 'application/json' },
           body: JSON.stringify({
             number,
-            // docs: "Image, video or document" (case-sensitive em algumas versões)
+            // Evolution v2.x valida enum em minúsculas: image | document | video | audio
             mediatype:
               params.mediaType === 'video'
                 ? 'video'
                 : params.mediaType === 'document'
                   ? 'document'
-                  : 'Image',
+                  : 'image',
             mimetype: params.mimeType,
             caption: params.caption ?? '',
             media: params.base64,
