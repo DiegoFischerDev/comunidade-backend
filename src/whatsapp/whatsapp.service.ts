@@ -37,17 +37,26 @@ export class WhatsAppService {
     return raw.replace(/\D/g, '');
   }
 
-  async sendText(toDigits: string, text: string): Promise<void> {
+  async sendText(
+    toDigits: string,
+    text: string,
+    opts?: { requireDelivery?: boolean },
+  ): Promise<void> {
+    const requireDelivery = opts?.requireDelivery === true;
     const base = this.base;
     const key = this.key;
     if (!base || !key) {
-      this.logger.warn(
-        'EVOLUTION_API_URL ou EVOLUTION_API_KEY ausentes; WhatsApp não enviado.',
-      );
+      const msg =
+        'EVOLUTION_API_URL ou EVOLUTION_API_KEY ausentes; WhatsApp não enviado.';
+      this.logger.warn(msg);
+      if (requireDelivery) throw new Error(msg);
       return;
     }
     const number = this.normalizeRecipient(toDigits);
-    if (!number) return;
+    if (!number) {
+      if (requireDelivery) throw new Error('Destino WhatsApp vazio (number).');
+      return;
+    }
 
     const instances = this.instancesOrdered;
     const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
@@ -76,6 +85,9 @@ export class WhatsAppService {
       }
     }
     this.logger.warn(`Evolution sendText falhou em todas as instâncias: ${lastError}`);
+    if (requireDelivery) {
+      throw new Error(lastError || 'Evolution sendText falhou.');
+    }
   }
 
   async sendMedia(params: {
@@ -85,18 +97,25 @@ export class WhatsAppService {
     mimeType: string;
     fileName: string;
     mediaType?: 'image' | 'video' | 'document';
+    /** Se true, lança erro quando Evolution falhar (ex. grupo de casas). */
+    requireDelivery?: boolean;
   }): Promise<void> {
+    const requireDelivery = params.requireDelivery === true;
     const base = this.base;
     const key = this.key;
     if (!base || !key) {
-      this.logger.warn(
-        'EVOLUTION_API_URL ou EVOLUTION_API_KEY ausentes; WhatsApp não enviado.',
-      );
+      const msg =
+        'EVOLUTION_API_URL ou EVOLUTION_API_KEY ausentes; WhatsApp não enviado.';
+      this.logger.warn(msg);
+      if (requireDelivery) throw new Error(msg);
       return;
     }
 
     const number = this.normalizeRecipient(params.to);
-    if (!number) return;
+    if (!number) {
+      if (requireDelivery) throw new Error('Destino WhatsApp vazio (number).');
+      return;
+    }
 
     const instances = this.instancesOrdered;
     const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
@@ -138,6 +157,9 @@ export class WhatsAppService {
       }
     }
     this.logger.warn(`Evolution sendMedia falhou em todas as instâncias: ${lastError}`);
+    if (requireDelivery) {
+      throw new Error(lastError || 'Evolution sendMedia falhou.');
+    }
   }
 }
 

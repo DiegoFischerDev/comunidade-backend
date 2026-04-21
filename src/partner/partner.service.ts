@@ -1073,6 +1073,7 @@ export class PartnerService {
           mimeType: processedVideo.waMimeType,
           fileName: processedVideo.waFileName,
           mediaType: 'video',
+          requireDelivery: true,
         });
       } else {
         for (const p of processedImages) {
@@ -1083,6 +1084,7 @@ export class PartnerService {
             mimeType: p.waMimeType,
             fileName: p.waFileName,
             mediaType: 'image',
+            requireDelivery: true,
           });
         }
       }
@@ -1098,7 +1100,7 @@ export class PartnerService {
         priceEur: dto.priceEur,
         requirements: dto.requirements,
       });
-      await this.wa.sendText(this.housesGroupJid, text);
+      await this.wa.sendText(this.housesGroupJid, text, { requireDelivery: true });
 
       await this.prisma.partnerHouse.update({
         where: { id: created.id },
