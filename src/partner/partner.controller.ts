@@ -13,7 +13,7 @@ import {
 import { PartnerService } from './partner.service';
 import { CreatePartnerDto } from './dto/create-partner.dto';
 import { Roles } from '../auth/roles.decorator';
-import { Role } from '@prisma/client';
+import { PartnerHouseStatus, Role } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
@@ -30,6 +30,7 @@ import {
 } from './dto/create-partner-sale.dto';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
+import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { memoryStorage } from 'multer';
 
 @Controller('partners')
@@ -114,6 +115,27 @@ export class PartnerController {
     return this.partnerService.listCategoriesWithPartners();
   }
 
+  /** Imóveis públicos (parceiros relocation, disponíveis). Deve ficar antes de rotas `:id`. */
+  @Public()
+  @Get('relocation/houses')
+  async listRelocationHousesPublic() {
+    return this.partnerService.listPublicRelocationHouses();
+  }
+
+  /** Categoria Relocation (nome, slug, imagem de capa para hero). */
+  @Public()
+  @Get('relocation/category')
+  async getRelocationCategoryPublic() {
+    return this.partnerService.getRelocationCategoryPublic();
+  }
+
+  /** Página pública do anúncio (detalhes + parceiro relocation). */
+  @Public()
+  @Get('houses/:houseId/public')
+  async getHousePublic(@Param('houseId') houseId: string) {
+    return this.partnerService.getPublicHousePage(houseId);
+  }
+
   /** Utilizador autenticado: confirma se o anúncio ainda existe e está disponível antes do contacto. */
   @Get('houses/:houseId/contact')
   async getHouseListingForContact(@Param('houseId') houseId: string) {
@@ -162,18 +184,75 @@ export class PartnerController {
   @Post('me/houses')
   @Roles(Role.PARTNER)
   @UseInterceptors(
-    FileFieldsInterceptor([{ name: 'images', maxCount: 6 }], {
-      limits: { files: 6, fileSize: 5 * 1024 * 1024 }, // 5MB por foto (o WhatsApp também limita)
-      storage: memoryStorage(),
-    }),
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: 6 },
+        { name: 'video', maxCount: 1 },
+      ],
+      {
+        limits: {
+          files: 7,
+          // Fotos até ~5MB cada no cliente; vídeo até ~48MB (WhatsApp pode recusar vídeos muito grandes)
+          fileSize: 48 * 1024 * 1024,
+        },
+        storage: memoryStorage(),
+      },
+    ),
   )
   async createMyHousePost(
     @CurrentUser() user: { id: string },
     @Body() dto: CreatePartnerHouseDto,
     @UploadedFiles()
-    files: { images?: Express.Multer.File[] },
+    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
   ) {
-    return this.partnerService.createMyHousePost(user.id, dto, files?.images ?? []);
+    return this.partnerService.createMyHousePost(
+      user.id,
+      dto,
+      files?.images ?? [],
+      files?.video?.[0] ?? null,
+    );
+  }
+
+  @Get('me/houses/:id')
+  @Roles(Role.PARTNER)
+  async getMyHouse(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+  ) {
+    return this.partnerService.getMyHouse(user.id, id);
+  }
+
+  @Patch('me/houses/:id')
+  @Roles(Role.PARTNER)
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: 6 },
+        { name: 'video', maxCount: 1 },
+      ],
+      {
+        limits: {
+          files: 7,
+          fileSize: 80 * 1024 * 1024,
+        },
+        storage: memoryStorage(),
+      },
+    ),
+  )
+  async updateMyHouse(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Body() dto: UpdatePartnerHouseDto,
+    @UploadedFiles()
+    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
+  ) {
+    return this.partnerService.updateMyHouse(
+      user.id,
+      id,
+      dto,
+      files?.images ?? [],
+      files?.video?.[0] ?? null,
+    );
   }
 
   @Patch('me/houses/:id/status')
@@ -182,9 +261,19 @@ export class PartnerController {
   async updateMyHouseStatus(
     @CurrentUser() user: { id: string },
     @Param('id') id: string,
-    @Body() body: { status: 'AVAILABLE' | 'UNAVAILABLE' },
+    @Body() body: { status: PartnerHouseStatus },
   ) {
     return this.partnerService.updateMyHouseStatus(user.id, id, body.status);
+  }
+
+  @Delete('me/houses/:id')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  async deleteMyHouse(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+  ) {
+    return this.partnerService.deleteMyHouse(user.id, id);
   }
 
   @Get('me/sales')
@@ -212,6 +301,19 @@ export class PartnerController {
   @Roles(Role.ADMIN)
   async adminListAllSales() {
     return this.partnerService.adminListAllSales();
+  }
+
+  @Get('admin/houses')
+  @Roles(Role.ADMIN)
+  async adminListAllHouses() {
+    return this.partnerService.adminListAllHouses();
+  }
+
+  @Delete('admin/houses/:houseId')
+  @Roles(Role.ADMIN)
+  @HttpCode(200)
+  async adminDeleteHouse(@Param('houseId') houseId: string) {
+    return this.partnerService.adminDeleteHouse(houseId);
   }
 
   @Post('me/sales/:id/pay-commission')

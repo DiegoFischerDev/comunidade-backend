@@ -132,7 +132,16 @@ POSTGRES_PASSWORD=senha_forte_postgres_prod
 JWT_SECRET=um_jwt_secreto_longo_e_aleatorio_prod
 FRONTEND_URL=https://comunidade.rafaapelomundo.com
 NEXT_PUBLIC_API_URL=https://api-comunidade.rafaapelomundo.com
+PUBLIC_API_BASE_URL=https://api-comunidade.rafaapelomundo.com
 ```
+
+Crie o diretório de uploads no host (vídeos/imagens em disco) e ajuste dono se precisar:
+
+```bash
+sudo mkdir -p /opt/comunidade-prod/uploads
+```
+
+O `docker-compose.prod.vps.yml` usa `env_file: .env` no backend: **todas** as variáveis necessárias vão no `.env` (ver `backend/.env.example`). O compose só fixa `PORT`, `NODE_ENV`, `DATABASE_URL` e o volume de uploads (`HOST_UPLOADS_PATH_PROD` opcional).
 
 Salve (Ctrl+O, Enter, Ctrl+X).
 
@@ -160,7 +169,14 @@ POSTGRES_PASSWORD=outra_senha_postgres_stage
 JWT_SECRET=outro_jwt_stage
 FRONTEND_URL=https://stage.rafaapelomundo.com
 NEXT_PUBLIC_API_URL=https://api-stage.rafaapelomundo.com
+PUBLIC_API_BASE_URL=https://api-stage.rafaapelomundo.com
 ```
+
+```bash
+sudo mkdir -p /opt/comunidade-stage/uploads
+```
+
+(O compose usa `${HOST_UPLOADS_PATH_STAGE:-/opt/comunidade-stage/uploads}:/app/uploads`.)
 
 Salve.
 

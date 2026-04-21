@@ -1,5 +1,5 @@
 # Stage (branch stage). Copie para a VPS em /opt/comunidade-stage/docker-compose.yml
-# Use imagens com tag :stage (ex: ghcr.io/SEU_USER/comunidade-backend:stage)
+# Variáveis: ficheiro .env junto a este compose (ver backend/.env.example e README).
 
 services:
   postgres:
@@ -20,16 +20,13 @@ services:
   backend:
     image: ${IMAGE_BACKEND:-ghcr.io/SEU_USER/comunidade-backend:stage}
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       PORT: 3001
       NODE_ENV: production
       DATABASE_URL: postgresql://comunidade:${POSTGRES_PASSWORD}@postgres:5432/comunidade?schema=public
-      JWT_SECRET: ${JWT_SECRET}
-      FRONTEND_URL: ${FRONTEND_URL}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
-      STRIPE_AMOUNT_EUR_CENTS: ${STRIPE_AMOUNT_EUR_CENTS}
-      STRIPE_PIX_AMOUNT_BRL: ${STRIPE_PIX_AMOUNT_BRL}
+      # Rafa Call — sobrepõe env_file se definido; omissões abaixo
       STRIPE_RAFA_CALL_EUR_CENTS: ${STRIPE_RAFA_CALL_EUR_CENTS:-2000}
       STRIPE_RAFA_CALL_PIX_BRL: ${STRIPE_RAFA_CALL_PIX_BRL:-2000}
       RAFA_CALL_DURATION_MINUTES: ${RAFA_CALL_DURATION_MINUTES:-30}
@@ -39,6 +36,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && node dist/src/main.js"
+    volumes:
+      - ./uploads:/app/uploads
 
   frontend:
     image: ${IMAGE_FRONTEND:-ghcr.io/SEU_USER/comunidade-frontend:stage}

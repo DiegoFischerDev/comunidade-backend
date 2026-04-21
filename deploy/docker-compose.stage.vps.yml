@@ -1,5 +1,5 @@
-# Stage na VPS compartilhada (sem nginx no container).
-# Nginx do HOST faz proxy para estas portas. Use com deploy/README-VPS-HOSTINGER.md
+# Stage na VPS (nginx no host). Ver deploy/README-VPS-HOSTINGER.md
+# Variáveis: .env no mesmo diretório que o compose.
 
 services:
   postgres:
@@ -20,36 +20,27 @@ services:
   backend:
     image: ${IMAGE_BACKEND:-ghcr.io/SEU_USER/comunidade-backend:stage}
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       PORT: 3001
       NODE_ENV: production
       DATABASE_URL: postgresql://comunidade:${POSTGRES_PASSWORD}@postgres:5432/comunidade?schema=public
-      JWT_SECRET: ${JWT_SECRET}
-      FRONTEND_URL: ${FRONTEND_URL}
-      RESEND_API_KEY: ${RESEND_API_KEY}
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      ADMIN_NAME: ${ADMIN_NAME:-Admin}
-      ADMIN_WHATSAPP: ${ADMIN_WHATSAPP:-}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
-      STRIPE_AMOUNT_EUR_CENTS: ${STRIPE_AMOUNT_EUR_CENTS:-2300}
-      STRIPE_PIX_AMOUNT_BRL: ${STRIPE_PIX_AMOUNT_BRL:-2300}
-      # Registo / confirmação via WhatsApp (Evolution) — mesmo segredo que no wa-verify
-      COMMUNITY_INTERNAL_SECRET: ${COMMUNITY_INTERNAL_SECRET}
-      EVOLUTION_API_URL: ${EVOLUTION_API_URL}
-      EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-comunidade}
-      EVOLUTION_INSTANCE_SECONDARY: ${EVOLUTION_INSTANCE_SECONDARY:-}
-      EVOLUTION_ACTIVE_INSTANCE: ${EVOLUTION_ACTIVE_INSTANCE:-}
-      EVOLUTION_FAILOVER_ENABLED: ${EVOLUTION_FAILOVER_ENABLED:-1}
-      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
-      WHATSAPP_REGISTRATION_NUMBER: ${WHATSAPP_REGISTRATION_NUMBER:-351927398547}
-      WHATSAPP_REGISTRATION_NUMBER_SECONDARY: ${WHATSAPP_REGISTRATION_NUMBER_SECONDARY:-}
+      # Rafa Call — sobrepõe env_file se definido; omissões abaixo
+      STRIPE_RAFA_CALL_EUR_CENTS: ${STRIPE_RAFA_CALL_EUR_CENTS:-2000}
+      STRIPE_RAFA_CALL_PIX_BRL: ${STRIPE_RAFA_CALL_PIX_BRL:-2000}
+      RAFA_CALL_DURATION_MINUTES: ${RAFA_CALL_DURATION_MINUTES:-30}
+      RAFA_CALL_BUFFER_MINUTES: ${RAFA_CALL_BUFFER_MINUTES:-10}
+      RAFA_CALL_WINDOW_DAYS: ${RAFA_CALL_WINDOW_DAYS:-14}
+      RAFA_CALL_WORKING_HOURS_JSON: ${RAFA_CALL_WORKING_HOURS_JSON:-}
     depends_on:
       postgres:
         condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && node dist/src/main.js"
     ports:
       - "127.0.0.1:13003:3001"
+    volumes:
+      - ${HOST_UPLOADS_PATH_STAGE:-/opt/comunidade-stage/uploads}:/app/uploads
 
   frontend:
     image: ${IMAGE_FRONTEND:-ghcr.io/SEU_USER/comunidade-frontend:stage}

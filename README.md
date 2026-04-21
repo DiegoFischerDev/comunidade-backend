@@ -31,6 +31,36 @@
 $ npm install
 ```
 
+Copia `backend/.env.example` para `backend/.env` e preenche os valores.
+
+**Docker Compose** (`deploy/docker-compose*.yml`): o serviço `backend` usa `env_file: .env` — não é preciso repetir cada variável no YAML; só `PORT`, `NODE_ENV` e `DATABASE_URL` ficam explícitos (esta última aponta para o serviço `postgres`).
+
+## Variáveis de ambiente (essenciais)
+
+| Variável | Descrição |
+|----------|-----------|
+| `PORT` / `NODE_ENV` | Porta e ambiente. |
+| `DATABASE_URL` | PostgreSQL (local: porta **5433** no host com `docker compose` na raiz do repo). |
+| `JWT_SECRET` | Segredo JWT (produção: longo e aleatório). |
+| `FRONTEND_URL` | URL do Next.js (CORS, links). |
+| `PUBLIC_API_BASE_URL` | URL pública desta API (links a `/uploads/...` em imóveis; alinhar com `NEXT_PUBLIC_API_URL`). |
+| `COMMUNITY_INTERNAL_SECRET` | Igual ao **wa-verify-receiver** (confirmação de registo WhatsApp). |
+| `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE` (+ secundária / ativa / failover, opcional) | Evolution API. |
+| `EVOLUTION_HOUSES_RELOCATION_GROUP_JID` | JID do grupo de anúncios de imóveis (`EVOLUTION_HOUSES_GROUP_JID` é alias no código). |
+| `WHATSAPP_REGISTRATION_NUMBER` (+ secundário, opcional) | Números nos links `wa.me` (sem `+`). |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_AMOUNT_EUR_CENTS`, `STRIPE_PIX_AMOUNT_BRL` | Stripe. |
+| `STRIPE_RAFA_CALL_EUR_CENTS`, `STRIPE_RAFA_CALL_PIX_BRL`, `RAFA_CALL_*` | Rafa Call (preços e horários em JSON). |
+
+**R2 (opcional):** `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_BASE_URL` — sem isto, media fica em `uploads/houses/` no disco.
+
+### Afinamento (opcional, omissões no código)
+
+Não precisas de definir nada disto no `.env` em condições normais.
+
+- **Transcodificação de vídeo** (`HOUSE_VIDEO_*`): omissões em `src/partner/house-video-transcode.ts` (ex. CRF 28, largura máx. 1280). Define só se quiseres desativar (`HOUSE_VIDEO_TRANSCODE_ENABLED=0`) ou afinar qualidade.
+- **Evolution / timeouts / base64** (`EVOLUTION_REQUEST_TIMEOUT_MS`, `EVOLUTION_VIDEO_MAX_BASE64_FALLBACK_BYTES`, `MEDIA_PUBLIC_URL_READY_MAX_WAIT_MS`, etc.): omissões em `whatsapp.service.ts` e `partner.service.ts`.
+- **Nginx à frente da Evolution:** `client_max_body_size` e `proxy_read_timeout` altos o suficiente para vídeos.
+
 ## Compile and run the project
 
 ```bash
@@ -57,7 +87,7 @@ $ npm run test:e2e
 $ npm run test:cov
 ```
 
-## Deployment
+## Deployment.
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information
 

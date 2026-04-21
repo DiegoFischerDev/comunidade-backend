@@ -26,11 +26,13 @@
     "seed:admin": "node dist/src/scripts/create-admin.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1033.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/schedule": "^6.1.3",
     "@prisma/client": "^6.19.2",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
@@ -40,6 +42,7 @@
     "reflect-metadata": "^0.2.2",
     "resend": "^6.9.3",
     "rxjs": "^7.8.1",
+    "sharp": "^0.34.5",
     "stripe": "^20.4.1",
     "svix": "^1.90.0"
   },

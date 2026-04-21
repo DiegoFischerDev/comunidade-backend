@@ -63,6 +63,7 @@ enum SupportTicketStatus {
 
 enum PartnerHouseStatus {
   AVAILABLE
+  RESERVED
   UNAVAILABLE
 }
 
@@ -282,7 +283,20 @@ model PartnerHouse {
   city          String
   availableFrom DateTime          @map("available_from")
   priceEur      String            @map("price_eur")
-  requirements  String            @map("requirements")
+  /// Valor em euros (texto livre, ex. "500" ou "500,00")
+  relocationFeeEur String         @map("relocation_fee_eur")
+  /// Número de cauções exigidas para entrada (0–12)
+  caucoesCount  Int               @default(0) @map("caucoes_count")
+  /// Número de rendas antecipadas exigidas para entrada (0–12)
+  rendasEntradaCount Int          @default(0) @map("rendas_entrada_count")
+  /// Imóvel mobilado (sim/não)
+  furnished     Boolean           @default(false) @map("furnished")
+  // URLs públicas (WebP), ex. R2 ou /uploads/houses/
+  imageUrls     String[]          @default([]) @map("image_urls")
+  /// Foto principal (preview OG / cartões); deve existir em imageUrls. Opcional — usa-se a 1.ª imagem.
+  coverImageUrl String?           @map("cover_image_url")
+  /// Vídeo opcional na página pública (não enviado ao grupo WhatsApp)
+  videoUrl      String?           @map("video_url")
   status        PartnerHouseStatus @default(AVAILABLE)
   whatsappSentAt DateTime?        @map("whatsapp_sent_at")
   whatsappError  String?          @map("whatsapp_error")
