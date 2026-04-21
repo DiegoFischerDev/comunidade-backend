@@ -1,4 +1,10 @@
-import { IsDateString, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsDateString,
+  IsIn,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export const PARTNER_HOUSE_CITY_CODES = [
   'INTERIOR',
@@ -25,6 +31,11 @@ export const PARTNER_HOUSE_TYPOLOGY_CODES = [
 ] as const;
 
 export type PartnerHouseTypologyCode = (typeof PARTNER_HOUSE_TYPOLOGY_CODES)[number];
+
+/** Valores 0–12 como string (multipart / select). */
+export const PARTNER_HOUSE_ENTRADA_COUNT = Array.from({ length: 13 }, (_, i) =>
+  String(i),
+) as readonly string[];
 
 export class CreatePartnerHouseDto {
   @IsString()
@@ -53,15 +64,17 @@ export class CreatePartnerHouseDto {
   @MaxLength(40)
   priceEur!: string;
 
-  /** Opcional; não aparece na página pública Relocation */
-  @IsOptional()
-  @IsString()
-  @MaxLength(40)
-  relocationFeeEur?: string;
-
+  /** Valor em euros (apenas número, ex. "500" ou "500,50") — obrigatório */
   @IsString()
   @MinLength(1)
-  @MaxLength(120)
-  requirements!: string;
-}
+  @MaxLength(20)
+  relocationFeeEur!: string;
 
+  @IsString()
+  @IsIn([...PARTNER_HOUSE_ENTRADA_COUNT] as unknown as string[])
+  caucoesCount!: string;
+
+  @IsString()
+  @IsIn([...PARTNER_HOUSE_ENTRADA_COUNT] as unknown as string[])
+  rendasEntradaCount!: string;
+}

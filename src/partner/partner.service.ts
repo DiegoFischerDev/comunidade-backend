@@ -831,6 +831,12 @@ export class PartnerService {
     return `${this.frontendBaseUrl}/casas/${houseId}`;
   }
 
+  private formatHouseEntradaLine(caucoes: number, rendas: number): string {
+    const c = caucoes === 1 ? '1 caução' : `${caucoes} cauções`;
+    const r = rendas === 1 ? '1 renda antecipada' : `${rendas} rendas antecipadas`;
+    return `${c} + ${r}`;
+  }
+
   private formatHousePostText(params: {
     houseId: string;
     partnerId: string;
@@ -840,13 +846,16 @@ export class PartnerService {
     typology: string;
     availableFrom: Date;
     priceEur: string;
-    requirements: string;
-    relocationFeeEur?: string | null;
+    caucoesCount: number;
+    rendasEntradaCount: number;
+    relocationFeeEur: string;
   }): string {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
     const cityLabel = this.formatHouseCityLabel(params.city);
     const housePageUrl = this.buildHousePublicPageLink(params.houseId);
+    const entrada = this.formatHouseEntradaLine(params.caucoesCount, params.rendasEntradaCount);
+    const fee = params.relocationFeeEur.trim();
     const lines = [
       `🏠 *${params.title.trim()}*`,
       ``,
@@ -854,12 +863,9 @@ export class PartnerService {
       `🏘️ *Tipologia:* ${typologyLabel}`,
       `📅 *Disponível em:* ${datePt}`,
       `💶 *Renda:* ${params.priceEur.trim()} / mês`,
-      `🧾 *Exigências (rendas e cauções):* ${params.requirements.trim()}`,
+      `🧾 *Entrada (cauções + rendas antecipadas):* ${entrada}`,
+      `💼 *Taxa relocation:* ${fee} €`,
     ];
-    const fee = params.relocationFeeEur?.trim();
-    if (fee) {
-      lines.push(`💼 *Taxa relocation:* ${fee}`);
-    }
     lines.push(
       ``,
       `📝 *Descrição:*`,
@@ -918,7 +924,7 @@ export class PartnerService {
   }
 
   /**
-   * Página pública do anúncio: imóvel de parceiro relocation + dados do parceiro (como em /partners/:id/public).
+   * Página pública do anúncio: imóvel relocation + dados mínimos do parceiro (nome, logo, categoria).
    */
   async getPublicHousePage(houseId: string) {
     const cat = await this.prisma.productCategory.findUnique({
@@ -936,27 +942,16 @@ export class PartnerService {
       },
       include: {
         partner: {
-          include: {
-            user: {
-              select: {
-                email: true,
-              },
-            },
+          select: {
+            id: true,
+            name: true,
+            whatsapp: true,
+            logoUrl: true,
             category: {
               select: {
                 id: true,
                 name: true,
                 slug: true,
-              },
-            },
-            services: {
-              orderBy: { sortOrder: 'asc' },
-              select: {
-                id: true,
-                title: true,
-                description: true,
-                price: true,
-                priceOnRequest: true,
               },
             },
           },
@@ -1090,6 +1085,9 @@ export class PartnerService {
       imageUrls = processedImages.map((p) => p.publicUrl);
     }
 
+    const caucoesCount = Math.min(12, Math.max(0, parseInt(dto.caucoesCount, 10)));
+    const rendasEntradaCount = Math.min(12, Math.max(0, parseInt(dto.rendasEntradaCount, 10)));
+
     const created = await this.prisma.partnerHouse.create({
       data: {
         partnerId: partner.id,
@@ -1099,11 +1097,9 @@ export class PartnerService {
         city: dto.city,
         availableFrom,
         priceEur: dto.priceEur.trim(),
-        relocationFeeEur:
-          dto.relocationFeeEur?.trim() !== undefined && dto.relocationFeeEur?.trim() !== ''
-            ? dto.relocationFeeEur.trim()
-            : null,
-        requirements: dto.requirements.trim(),
+        relocationFeeEur: dto.relocationFeeEur.trim(),
+        caucoesCount,
+        rendasEntradaCount,
         status: 'AVAILABLE',
         imageUrls,
         videoUrl,
@@ -1144,7 +1140,8 @@ export class PartnerService {
         typology: dto.typology,
         availableFrom,
         priceEur: dto.priceEur,
-        requirements: dto.requirements,
+        caucoesCount,
+        rendasEntradaCount,
         relocationFeeEur: dto.relocationFeeEur,
       });
       await this.wa.sendText(this.housesGroupJid, text, { requireDelivery: true });
@@ -1201,7 +1198,9 @@ export class PartnerService {
         city: true,
         availableFrom: true,
         priceEur: true,
-        requirements: true,
+        relocationFeeEur: true,
+        caucoesCount: true,
+        rendasEntradaCount: true,
         imageUrls: true,
         videoUrl: true,
         partnerId: true,

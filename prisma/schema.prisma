@@ -282,9 +282,12 @@ model PartnerHouse {
   city          String
   availableFrom DateTime          @map("available_from")
   priceEur      String            @map("price_eur")
-  /// Taxa de relocation (opcional); não é exposta na listagem pública /relocation
-  relocationFeeEur String?        @map("relocation_fee_eur")
-  requirements  String            @map("requirements")
+  /// Valor em euros (texto livre, ex. "500" ou "500,00")
+  relocationFeeEur String         @map("relocation_fee_eur")
+  /// Número de cauções exigidas para entrada (0–12)
+  caucoesCount  Int               @default(0) @map("caucoes_count")
+  /// Número de rendas antecipadas exigidas para entrada (0–12)
+  rendasEntradaCount Int          @default(0) @map("rendas_entrada_count")
   // URLs públicas (WebP), ex. R2 ou /uploads/houses/ — vazio se usares vídeo
   imageUrls     String[]          @default([]) @map("image_urls")
   // Um vídeo em alternativa às imagens (nunca os dois)
