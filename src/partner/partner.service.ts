@@ -26,69 +26,12 @@ import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
+import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { HouseImageStorageService } from './house-image-storage.service';
 
 const SALT_ROUNDS = 10;
 
 const RELOCATION_CATEGORY_SLUG = 'relocation';
-
-/** Limite aproximado de vídeo no WhatsApp (Evolution); acima disto o envio costuma falhar. */
-const WHATSAPP_VIDEO_MAX_BYTES = 16 * 1024 * 1024;
-
-/** Limite opcional de caracteres base64 enviados à Evolution (JSON). Útil se o nginx tiver client_max_body_size baixo. */
-function evolutionMaxMediaBase64Chars(): number {
-  const raw = process.env.EVOLUTION_MAX_MEDIA_BASE64_CHARS?.trim();
-  if (raw && /^\d+$/.test(raw)) {
-    return parseInt(raw, 10);
-  }
-  return Number.MAX_SAFE_INTEGER;
-}
-
-/**
- * Acima deste tamanho (bytes do ficheiro) não tentamos enviar vídeo em base64 no JSON — costuma dar 413 no proxy.
- * Só faz sentido URL pública ou comprimir o vídeo. `EVOLUTION_VIDEO_MAX_BASE64_FALLBACK_BYTES` no .env para afinar.
- */
-function evolutionVideoMaxBase64FallbackBytes(): number {
-  const raw = process.env.EVOLUTION_VIDEO_MAX_BASE64_FALLBACK_BYTES?.trim();
-  if (raw && /^\d+$/.test(raw)) {
-    return parseInt(raw, 10);
-  }
-  return 2 * 1024 * 1024;
-}
-
-/** Vídeos maiores: tentar documento antes de vídeo no sendMedia (por vezes passa melhor no WhatsApp). */
-const WHATSAPP_LARGE_VIDEO_BYTES = 3 * 1024 * 1024;
-
-/** Erros em que faz sentido omitir o vídeo e enviar só o texto (proxy, Evolution, limites). */
-function isEvolutionVideoSendSkippableError(message: string): boolean {
-  const m = message.slice(0, 2500);
-  if (
-    /413|entity too large|request entity too large|content too large|payload too large/i.test(
-      m,
-    )
-  ) {
-    return true;
-  }
-  if (/50[0-9]\b|502|503|504|408|429/i.test(m)) return true;
-  if (/timeout|timed out|ETIMEDOUT|ECONNRESET|socket hang up|fetch failed/i.test(m))
-    return true;
-  if (
-    /too large|file size|max(imum)? size|limit.*exceed|media.*(fail|error)|video.*(fail|error)/i.test(
-      m,
-    )
-  ) {
-    return true;
-  }
-  if (/400\b.*(media|video|send|file)|cannot.*(send|upload)/i.test(m)) return true;
-  return false;
-}
-
-/** Falha que não deve ser mascarada com “só texto” (credenciais, instância). */
-function isEvolutionMediaFatalError(message: string): boolean {
-  return /401|403|apikey|unauthorized|forbidden|instance.*not found|not connected/i.test(
-    message.slice(0, 1500),
-  );
-}
 
 @Injectable()
 export class PartnerService {
@@ -894,95 +837,6 @@ export class PartnerService {
     return `${this.frontendBaseUrl}/casas/${houseId}`;
   }
 
-  /**
-   * URL absoluta acessível pela Evolution (GET) para enviar media sem base64 no JSON.
-   * Caminhos `/uploads/...` usam PUBLIC_API_BASE_URL ou NEXT_PUBLIC_API_URL.
-   */
-  private resolvePublicMediaUrlForEvolution(publicUrl: string): string | null {
-    const u = (publicUrl || '').trim();
-    if (!u) return null;
-    if (u.startsWith('https://') || u.startsWith('http://')) {
-      return u;
-    }
-    const base = (
-      process.env.PUBLIC_API_BASE_URL ||
-      process.env.NEXT_PUBLIC_API_URL ||
-      ''
-    ).replace(/\/$/, '');
-    if (!base) {
-      return null;
-    }
-    return u.startsWith('/') ? `${base}${u}` : `${base}/${u}`;
-  }
-
-  /**
-   * Confirma que a URL já responde (upload/R2/CDN por vezes só ficam legíveis no edge após um instante).
-   * Evita a Evolution pedir o ficheiro antes de estar disponível.
-   */
-  private async probePublicMediaUrl(url: string): Promise<boolean> {
-    const signal = AbortSignal.timeout(12000);
-    try {
-      const head = await fetch(url, {
-        method: 'HEAD',
-        redirect: 'follow',
-        signal,
-      });
-      if (head.ok) return true;
-    } catch {
-      /* tentar GET */
-    }
-    try {
-      const signal2 = AbortSignal.timeout(12000);
-      const get = await fetch(url, {
-        method: 'GET',
-        headers: { Range: 'bytes=0-0' },
-        redirect: 'follow',
-        signal: signal2,
-      });
-      return get.ok || get.status === 206;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Espera até a URL pública devolver sucesso ou até ao tempo máximo (maior para vídeos grandes).
-   */
-  private async waitUntilPublicMediaUrlReady(
-    url: string,
-    videoBytes: number,
-  ): Promise<void> {
-    const large = videoBytes >= WHATSAPP_LARGE_VIDEO_BYTES;
-    const rawMax = process.env.MEDIA_PUBLIC_URL_READY_MAX_WAIT_MS?.trim();
-    const maxWaitMs =
-      rawMax && /^\d+$/.test(rawMax)
-        ? parseInt(rawMax, 10)
-        : large
-          ? 90000
-          : 20000;
-    const intervalMs = 500;
-    const deadline = Date.now() + maxWaitMs;
-    const started = Date.now();
-    let attempt = 0;
-    while (Date.now() < deadline) {
-      attempt += 1;
-      const ok = await this.probePublicMediaUrl(url);
-      if (ok) {
-        const waitMs = Date.now() - started;
-        if (attempt > 1 || waitMs > 800) {
-          this.logger.log(
-            `URL do vídeo acessível após ${waitMs}ms (${attempt} tentativa(s)).`,
-          );
-        }
-        return;
-      }
-      await new Promise((r) => setTimeout(r, intervalMs));
-    }
-    this.logger.warn(
-      `URL do vídeo não respondeu com sucesso dentro de ${maxWaitMs}ms; a enviar na mesma para a Evolution (pode falhar se o ficheiro ainda não estiver público).`,
-    );
-  }
-
   private formatHouseEntradaLine(caucoes: number, rendas: number): string {
     const c = caucoes === 1 ? '1 caução' : `${caucoes} cauções`;
     const r = rendas === 1 ? '1 renda antecipada' : `${rendas} rendas antecipadas`;
@@ -1002,8 +856,6 @@ export class PartnerService {
     rendasEntradaCount: number;
     relocationFeeEur: string;
     furnished: boolean;
-    /** Vídeo não foi anexado no grupo (Evolution/WhatsApp ou limites de envio). */
-    videoNotAttachedToGroup?: boolean;
   }): string {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
@@ -1032,12 +884,6 @@ export class PartnerService {
       `🔗 *Página do anúncio (Comunidade RPM):*`,
       housePageUrl,
     );
-    if (params.videoNotAttachedToGroup) {
-      lines.push(
-        ``,
-        `ℹ️ _O vídeo não foi anexado nesta mensagem (o envio pelo WhatsApp passa pela Evolution e tem limites variáveis). Vê o anúncio completo, com vídeo, na página acima._`,
-      );
-    }
     return lines.join('\n');
   }
 
@@ -1166,16 +1012,11 @@ export class PartnerService {
 
     const images = (imageFiles ?? []).filter((f) => !!f);
     const hasVideo = !!videoFile;
-    if (hasVideo && images.length > 0) {
-      throw new BadRequestException(
-        'Envia só um vídeo ou só imagens (até 6), não ambos.',
-      );
-    }
-    if (!hasVideo && images.length === 0) {
-      throw new BadRequestException('Envia pelo menos 1 imagem ou 1 vídeo.');
-    }
-    if (!hasVideo && images.length > 6) {
+    if (images.length > 6) {
       throw new BadRequestException('Podes enviar no máximo 6 imagens.');
+    }
+    if (images.length === 0 && !hasVideo) {
+      throw new BadRequestException('Envia pelo menos 1 imagem ou 1 vídeo.');
     }
 
     const availableFrom = new Date(dto.availableFrom);
@@ -1194,25 +1035,35 @@ export class PartnerService {
       mediaType: 'image';
     }[] = [];
 
-    let processedVideo: {
-      publicUrl: string;
-      waBase64: string;
-      waMimeType: string;
-      waFileName: string;
-      mediaType: 'video';
-    } | null = null;
+    for (const file of images) {
+      try {
+        const { publicUrl, waBase64, waMimeType } =
+          await this.houseImages.processHouseImageForListing(file);
+        const baseName = (file.originalname || 'imagem').replace(/\.[^.]+$/, '');
+        processedImages.push({
+          publicUrl,
+          waBase64,
+          waMimeType,
+          waFileName: `${baseName}.webp`,
+          mediaType: 'image',
+        });
+        if (file.path) {
+          await unlink(file.path).catch(() => undefined);
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('processar') || msg.includes('inválida')) {
+          throw new BadRequestException(msg);
+        }
+        throw e;
+      }
+    }
+    imageUrls = processedImages.map((p) => p.publicUrl);
 
     if (hasVideo && videoFile) {
       try {
         const v = await this.houseImages.storeHouseVideo(videoFile);
         videoUrl = v.publicUrl;
-        processedVideo = {
-          publicUrl: v.publicUrl,
-          waBase64: v.waBase64,
-          waMimeType: v.waMimeType,
-          waFileName: v.waFileName,
-          mediaType: 'video',
-        };
         if (videoFile.path) {
           await unlink(videoFile.path).catch(() => undefined);
         }
@@ -1223,31 +1074,6 @@ export class PartnerService {
         }
         throw e;
       }
-    } else {
-      for (const file of images) {
-        try {
-          const { publicUrl, waBase64, waMimeType } =
-            await this.houseImages.processHouseImageForListing(file);
-          const baseName = (file.originalname || 'imagem').replace(/\.[^.]+$/, '');
-          processedImages.push({
-            publicUrl,
-            waBase64,
-            waMimeType,
-            waFileName: `${baseName}.webp`,
-            mediaType: 'image',
-          });
-          if (file.path) {
-            await unlink(file.path).catch(() => undefined);
-          }
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
-          if (msg.includes('processar') || msg.includes('inválida')) {
-            throw new BadRequestException(msg);
-          }
-          throw e;
-        }
-      }
-      imageUrls = processedImages.map((p) => p.publicUrl);
     }
 
     const caucoesCount = Math.min(12, Math.max(0, parseInt(dto.caucoesCount, 10)));
@@ -1274,196 +1100,18 @@ export class PartnerService {
       },
     });
 
-    let videoSkippedForWhatsapp = false;
-
     try {
-      if (processedVideo) {
-        const videoBytes = Math.floor((processedVideo.waBase64.length * 3) / 4);
-        if (videoBytes > WHATSAPP_VIDEO_MAX_BYTES) {
-          const mb = (videoBytes / 1024 / 1024).toFixed(1);
-          const detail = `O vídeo tem cerca de ${mb} MB; o WhatsApp aceita no máximo ~16 MB. Comprime ou recorta o ficheiro e tenta outra vez.`;
-          await this.prisma.partnerHouse.update({
-            where: { id: created.id },
-            data: { whatsappError: detail },
-          });
-          throw new BadRequestException(detail);
-        }
-
-        const absVideoUrl = this.resolvePublicMediaUrlForEvolution(
-          processedVideo.publicUrl,
-        );
-        let videoSentToGroup = false;
-
-        const sendHouseVideoMedia = (opts: {
-          mediaUrl?: string;
-          base64?: string;
-          mediaType: 'video' | 'document';
-        }) =>
-          this.wa.sendMedia({
-            to: this.housesGroupJid,
-            caption: '',
-            mediaUrl: opts.mediaUrl,
-            base64: opts.base64,
-            mimeType: processedVideo.waMimeType,
-            fileName: processedVideo.waFileName,
-            mediaType: opts.mediaType,
-            requireDelivery: true,
-          });
-
-        const trySendVideoToGroup = async (label: string, fn: () => Promise<void>) => {
-          try {
-            await fn();
-            return true;
-          } catch (err: unknown) {
-            const msg =
-              err && typeof err === 'object' && 'message' in err
-                ? String((err as { message?: string }).message)
-                : '';
-            if (isEvolutionMediaFatalError(msg)) {
-              throw err;
-            }
-            this.logger.warn(
-              `WhatsApp envio vídeo (${label}) falhou; a tentar outro modo. ${msg.slice(0, 400)}`,
-            );
-            return false;
-          }
-        };
-
-        if (absVideoUrl) {
-          await this.waitUntilPublicMediaUrlReady(absVideoUrl, videoBytes);
-          const sendVideoUrl = (): Promise<void> =>
-            this.wa.sendVideo({
-              to: this.housesGroupJid,
-              caption: '',
-              mediaUrl: absVideoUrl,
-              mimeType: processedVideo.waMimeType,
-              requireDelivery: true,
-            });
-          const sendDocUrl = (): Promise<void> =>
-            sendHouseVideoMedia({
-              mediaUrl: absVideoUrl,
-              mediaType: 'document',
-            });
-          const sendVidUrl = (): Promise<void> =>
-            sendHouseVideoMedia({
-              mediaUrl: absVideoUrl,
-              mediaType: 'video',
-            });
-          const urlChain: Array<{ label: string; fn: () => Promise<void> }> =
-            videoBytes >= WHATSAPP_LARGE_VIDEO_BYTES
-              ? [
-                  { label: 'sendVideo+URL', fn: sendVideoUrl },
-                  { label: 'sendMedia+document+URL', fn: sendDocUrl },
-                  { label: 'sendMedia+video+URL', fn: sendVidUrl },
-                ]
-              : [
-                  { label: 'sendVideo+URL', fn: sendVideoUrl },
-                  { label: 'sendMedia+video+URL', fn: sendVidUrl },
-                  { label: 'sendMedia+document+URL', fn: sendDocUrl },
-                ];
-          for (const step of urlChain) {
-            if (await trySendVideoToGroup(step.label, step.fn)) {
-              videoSentToGroup = true;
-              break;
-            }
-          }
-        }
-
-        if (!videoSentToGroup) {
-          const maxB64 = evolutionMaxMediaBase64Chars();
-          const maxBase64FallbackBytes = evolutionVideoMaxBase64FallbackBytes();
-          const base64TooLargeForJson =
-            videoBytes > maxBase64FallbackBytes ||
-            processedVideo.waBase64.length > maxB64;
-
-          if (base64TooLargeForJson) {
-            if (processedVideo.waBase64.length > maxB64) {
-              this.logger.warn(
-                `Vídeo omitido no WhatsApp: base64 (${processedVideo.waBase64.length} chars) > EVOLUTION_MAX_MEDIA_BASE64_CHARS (${maxB64}).`,
-              );
-            } else {
-              this.logger.warn(
-                `Vídeo omitido fallback base64: ${videoBytes} bytes > EVOLUTION_VIDEO_MAX_BASE64_FALLBACK_BYTES (${maxBase64FallbackBytes}). URLs já tentadas ou indisponíveis; comprimir o vídeo (recomendado abaixo de 5 MB) ou aumentar limites no proxy da Evolution.`,
-              );
-            }
-            videoSkippedForWhatsapp = true;
-          } else {
-            let lastBase64Err = '';
-            const b64 = processedVideo.waBase64;
-            const sendVideoB64 = (): Promise<void> =>
-              this.wa.sendVideo({
-                to: this.housesGroupJid,
-                caption: '',
-                base64: b64,
-                mimeType: processedVideo.waMimeType,
-                requireDelivery: true,
-              });
-            const sendDocB64 = (): Promise<void> =>
-              sendHouseVideoMedia({ base64: b64, mediaType: 'document' });
-            const sendVidB64 = (): Promise<void> =>
-              sendHouseVideoMedia({ base64: b64, mediaType: 'video' });
-            const baseChain: Array<{ label: string; fn: () => Promise<void> }> =
-              videoBytes >= WHATSAPP_LARGE_VIDEO_BYTES
-                ? [
-                    { label: 'sendVideo+base64(data:…)', fn: sendVideoB64 },
-                    { label: 'sendMedia+document+base64', fn: sendDocB64 },
-                    { label: 'sendMedia+video+base64', fn: sendVidB64 },
-                  ]
-                : [
-                    { label: 'sendVideo+base64(data:…)', fn: sendVideoB64 },
-                    { label: 'sendMedia+video+base64', fn: sendVidB64 },
-                    { label: 'sendMedia+document+base64', fn: sendDocB64 },
-                  ];
-            for (const step of baseChain) {
-              try {
-                await step.fn();
-                videoSentToGroup = true;
-                break;
-              } catch (mediaErr: unknown) {
-                const mediaMsg =
-                  mediaErr &&
-                  typeof mediaErr === 'object' &&
-                  'message' in mediaErr
-                    ? String((mediaErr as { message?: string }).message)
-                    : '';
-                lastBase64Err = mediaMsg;
-                if (isEvolutionMediaFatalError(mediaMsg)) {
-                  throw mediaErr;
-                }
-                this.logger.warn(
-                  `WhatsApp vídeo (${step.label}) falhou. ${mediaMsg.slice(0, 400)}`,
-                );
-              }
-            }
-            if (!videoSentToGroup) {
-              if (
-                lastBase64Err &&
-                isEvolutionVideoSendSkippableError(lastBase64Err)
-              ) {
-                this.logger.warn(
-                  `Evolution/WhatsApp não aceitou o vídeo. A enviar só o texto do anúncio. ${lastBase64Err.slice(0, 400)}`,
-                );
-                videoSkippedForWhatsapp = true;
-              } else if (lastBase64Err) {
-                throw new Error(lastBase64Err);
-              } else {
-                videoSkippedForWhatsapp = true;
-              }
-            }
-          }
-        }
-      } else {
-        for (const p of processedImages) {
-          await this.wa.sendMedia({
-            to: this.housesGroupJid,
-            caption: '',
-            base64: p.waBase64,
-            mimeType: p.waMimeType,
-            fileName: p.waFileName,
-            mediaType: 'image',
-            requireDelivery: true,
-          });
-        }
+      // Grupo WhatsApp: só imagens + texto (uma vez na criação). Vídeo fica só na página pública.
+      for (const p of processedImages) {
+        await this.wa.sendMedia({
+          to: this.housesGroupJid,
+          caption: '',
+          base64: p.waBase64,
+          mimeType: p.waMimeType,
+          fileName: p.waFileName,
+          mediaType: 'image',
+          requireDelivery: true,
+        });
       }
 
       const text = this.formatHousePostText({
@@ -1479,8 +1127,6 @@ export class PartnerService {
         rendasEntradaCount,
         relocationFeeEur: dto.relocationFeeEur,
         furnished,
-        videoNotAttachedToGroup:
-          Boolean(processedVideo) && videoSkippedForWhatsapp,
       });
       await this.wa.sendText(this.housesGroupJid, text, { requireDelivery: true });
 
@@ -1488,16 +1134,9 @@ export class PartnerService {
         where: { id: created.id },
         data: {
           whatsappSentAt: new Date(),
-          whatsappError: videoSkippedForWhatsapp
-            ? 'Vídeo não anexado no grupo WhatsApp (tamanho ou limite da Evolution/proxy). A página pública mantém o vídeo; comprime para ~5 MB ou menos para maior fiabilidade.'
-            : null,
+          whatsappError: null,
         },
       });
-      if (videoSkippedForWhatsapp) {
-        this.logger.warn(
-          `Post ${created.id}: texto enviado ao grupo WhatsApp; vídeo omitido (URL falhou, base64 acima do limite ou 413).`,
-        );
-      }
     } catch (err: unknown) {
       if (err instanceof BadRequestException) {
         throw err;
@@ -1523,6 +1162,160 @@ export class PartnerService {
     }
 
     return created;
+  }
+
+  async getMyHouse(userId: string, houseId: string) {
+    const partner = await this.getRelocationPartnerOrThrow(userId);
+    const house = await this.prisma.partnerHouse.findFirst({
+      where: { id: houseId, partnerId: partner.id },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    return house;
+  }
+
+  async updateMyHouse(
+    userId: string,
+    houseId: string,
+    dto: UpdatePartnerHouseDto,
+    imageFiles: Express.Multer.File[],
+    videoFile: Express.Multer.File | null,
+  ) {
+    const partner = await this.getRelocationPartnerOrThrow(userId);
+    const house = await this.prisma.partnerHouse.findFirst({
+      where: { id: houseId, partnerId: partner.id },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+
+    const images = (imageFiles ?? []).filter((f) => !!f);
+    if (images.length > 6) {
+      throw new BadRequestException('Podes enviar no máximo 6 imagens de uma vez.');
+    }
+
+    const newUrlsFromFiles: string[] = [];
+    for (const file of images) {
+      try {
+        const { publicUrl } = await this.houseImages.processHouseImageForListing(file);
+        newUrlsFromFiles.push(publicUrl);
+        if (file.path) {
+          await unlink(file.path).catch(() => undefined);
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('processar') || msg.includes('inválida')) {
+          throw new BadRequestException(msg);
+        }
+        throw e;
+      }
+    }
+
+    const rawKeep = dto.keepImageUrls?.trim();
+    let imageUrls: string[];
+
+    if (rawKeep != null && rawKeep !== '') {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawKeep);
+      } catch {
+        throw new BadRequestException(
+          'keepImageUrls deve ser JSON válido (array de URLs).',
+        );
+      }
+      if (!Array.isArray(parsed) || !parsed.every((u) => typeof u === 'string')) {
+        throw new BadRequestException('keepImageUrls deve ser um array de strings (URLs).');
+      }
+      for (const u of parsed) {
+        if (!house.imageUrls.includes(u)) {
+          throw new BadRequestException(
+            'Uma das imagens a manter não pertence a este imóvel.',
+          );
+        }
+      }
+      imageUrls = [...parsed, ...newUrlsFromFiles].slice(0, 6);
+    } else if (newUrlsFromFiles.length > 0) {
+      imageUrls = [...house.imageUrls, ...newUrlsFromFiles].slice(0, 6);
+    } else {
+      imageUrls = [...house.imageUrls];
+    }
+
+    for (const u of house.imageUrls) {
+      if (!imageUrls.includes(u)) {
+        await this.houseImages.deleteStoredUrl(u);
+      }
+    }
+
+    let videoUrl = house.videoUrl;
+    if (dto.removeVideo?.toLowerCase() === 'true') {
+      if (videoUrl) {
+        await this.houseImages.deleteStoredUrl(videoUrl);
+      }
+      videoUrl = null;
+    }
+    if (videoFile) {
+      if (videoUrl) {
+        await this.houseImages.deleteStoredUrl(videoUrl);
+      }
+      try {
+        const v = await this.houseImages.storeHouseVideo(videoFile);
+        videoUrl = v.publicUrl;
+        if (videoFile.path) {
+          await unlink(videoFile.path).catch(() => undefined);
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('inválido') || msg.includes('suportado') || msg.includes('Formato')) {
+          throw new BadRequestException(msg);
+        }
+        throw e;
+      }
+    }
+
+    if (imageUrls.length === 0 && !videoUrl) {
+      throw new BadRequestException('O anúncio deve ter pelo menos 1 imagem ou 1 vídeo.');
+    }
+
+    if (dto.availableFrom != null) {
+      const d = new Date(dto.availableFrom);
+      if (Number.isNaN(d.getTime())) {
+        throw new BadRequestException('Data «Disponível em» inválida.');
+      }
+    }
+
+    const caucoesCount =
+      dto.caucoesCount != null
+        ? Math.min(12, Math.max(0, parseInt(dto.caucoesCount, 10)))
+        : house.caucoesCount;
+    const rendasEntradaCount =
+      dto.rendasEntradaCount != null
+        ? Math.min(12, Math.max(0, parseInt(dto.rendasEntradaCount, 10)))
+        : house.rendasEntradaCount;
+    const furnished =
+      dto.furnished != null ? dto.furnished === 'true' : house.furnished;
+
+    return this.prisma.partnerHouse.update({
+      where: { id: houseId },
+      data: {
+        ...(dto.title != null && { title: dto.title.trim() }),
+        ...(dto.description != null && { description: dto.description.trim() }),
+        ...(dto.city != null && { city: dto.city }),
+        ...(dto.typology != null && { typology: dto.typology }),
+        ...(dto.availableFrom != null && {
+          availableFrom: new Date(dto.availableFrom),
+        }),
+        ...(dto.priceEur != null && { priceEur: dto.priceEur.trim() }),
+        ...(dto.relocationFeeEur != null && {
+          relocationFeeEur: dto.relocationFeeEur.trim(),
+        }),
+        caucoesCount,
+        rendasEntradaCount,
+        furnished,
+        imageUrls,
+        videoUrl,
+      },
+    });
   }
 
   private async removeHouseMediaFiles(house: {

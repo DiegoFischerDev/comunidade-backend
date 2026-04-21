@@ -4,11 +4,6 @@ import { randomBytes } from 'crypto';
 import { readFile, writeFile, mkdir, unlink } from 'fs/promises';
 import { join } from 'path';
 import sharp from 'sharp';
-import {
-  extensionForHouseVideoMime,
-  isHouseVideoTranscodeEnabled,
-  transcodeVideoToWhatsappMp4,
-} from './house-video-transcode';
 
 const HOUSE_VIDEO_MIMES = new Set([
   'video/mp4',
@@ -195,16 +190,8 @@ export class HouseImageStorageService {
     return `/uploads/houses/${name}`;
   }
 
-  /**
-   * Grava vídeo para listagem pública e WhatsApp.
-   * Ficheiros acima de ~400 KB são reencodados (ffmpeg) para MP4 H.264/AAC mais leve, quando possível.
-   */
-  async storeHouseVideo(file: Express.Multer.File): Promise<{
-    publicUrl: string;
-    waBase64: string;
-    waMimeType: string;
-    waFileName: string;
-  }> {
+  /** Grava vídeo original para a página pública do imóvel (não enviado ao WhatsApp). */
+  async storeHouseVideo(file: Express.Multer.File): Promise<{ publicUrl: string }> {
     const buf = await this.readBuffer(file);
     if (!buf?.length) {
       throw new Error('Vídeo inválido (sem conteúdo).');
@@ -215,41 +202,16 @@ export class HouseImageStorageService {
         'Formato de vídeo não suportado. Usa MP4, MOV, WebM ou 3GP.',
       );
     }
-    const srcExt = extensionForHouseVideoMime(mime);
-    let body = buf;
-    let outMime = mime;
-    let outExt = srcExt;
-    const compressed = await transcodeVideoToWhatsappMp4(buf, srcExt);
-    if (compressed?.length) {
-      const beforeMb = buf.length / 1024 / 1024;
-      const afterMb = compressed.length / 1024 / 1024;
-      body = compressed;
-      outMime = 'video/mp4';
-      outExt = '.mp4';
-      this.logger.log(
-        `Vídeo otimizado para envio: ${beforeMb.toFixed(2)} MB → ${afterMb.toFixed(2)} MB`,
-      );
-    } else if (
-      isHouseVideoTranscodeEnabled() &&
-      buf.length > 512 * 1024
-    ) {
-      this.logger.warn(
-        'ffmpeg não produziu versão mais leve (timeout ou erro). A usar ficheiro original.',
-      );
-    }
-    const publicUrl = await this.uploadBinary(
-      body,
-      outMime,
-      'houses/videos',
-      outExt,
-    );
-    const baseName = (file.originalname || 'video').replace(/\.[^.]+$/, '');
-    return {
-      publicUrl,
-      waBase64: body.toString('base64'),
-      waMimeType: outMime,
-      waFileName: `${baseName}${outExt}`,
-    };
+    const ext =
+      mime === 'video/quicktime'
+        ? '.mov'
+        : mime === 'video/webm'
+          ? '.webm'
+          : mime === 'video/3gpp'
+            ? '.3gp'
+            : '.mp4';
+    const publicUrl = await this.uploadBinary(buf, mime, 'houses/videos', ext);
+    return { publicUrl };
   }
 
   private async uploadBinary(

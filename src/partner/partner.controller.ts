@@ -30,6 +30,7 @@ import {
 } from './dto/create-partner-sale.dto';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
+import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { memoryStorage } from 'multer';
 
 @Controller('partners')
@@ -199,6 +200,48 @@ export class PartnerController {
   ) {
     return this.partnerService.createMyHousePost(
       user.id,
+      dto,
+      files?.images ?? [],
+      files?.video?.[0] ?? null,
+    );
+  }
+
+  @Get('me/houses/:id')
+  @Roles(Role.PARTNER)
+  async getMyHouse(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+  ) {
+    return this.partnerService.getMyHouse(user.id, id);
+  }
+
+  @Patch('me/houses/:id')
+  @Roles(Role.PARTNER)
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: 6 },
+        { name: 'video', maxCount: 1 },
+      ],
+      {
+        limits: {
+          files: 7,
+          fileSize: 80 * 1024 * 1024,
+        },
+        storage: memoryStorage(),
+      },
+    ),
+  )
+  async updateMyHouse(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Body() dto: UpdatePartnerHouseDto,
+    @UploadedFiles()
+    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
+  ) {
+    return this.partnerService.updateMyHouse(
+      user.id,
+      id,
       dto,
       files?.images ?? [],
       files?.video?.[0] ?? null,

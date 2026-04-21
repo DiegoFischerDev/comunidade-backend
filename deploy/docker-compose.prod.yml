@@ -1,5 +1,5 @@
 # Produção (branch main). Copie para a VPS em /opt/comunidade-prod/docker-compose.yml
-# Ajuste IMAGE_BACKEND e IMAGE_FRONTEND para seu GHCR (ex: ghcr.io/SEU_USER/comunidade-backend:latest)
+# Variáveis: ficheiro .env junto a este compose (ver backend/.env.example e README).
 
 services:
   postgres:
@@ -20,12 +20,15 @@ services:
   backend:
     image: ${IMAGE_BACKEND:-ghcr.io/SEU_USER/comunidade-backend:latest}
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       PORT: 3001
       NODE_ENV: production
       DATABASE_URL: postgresql://comunidade:${POSTGRES_PASSWORD}@postgres:5432/comunidade?schema=public
-      JWT_SECRET: ${JWT_SECRET}
-      FRONTEND_URL: ${FRONTEND_URL}
+      # Rafa Call (valores do .env; omissões abaixo se a chave não existir)
+      STRIPE_RAFA_CALL_EUR_CENTS: ${STRIPE_RAFA_CALL_EUR_CENTS:-2000}
+      STRIPE_RAFA_CALL_PIX_BRL: ${STRIPE_RAFA_CALL_PIX_BRL:-2000}
       RAFA_CALL_DURATION_MINUTES: ${RAFA_CALL_DURATION_MINUTES:-30}
       RAFA_CALL_BUFFER_MINUTES: ${RAFA_CALL_BUFFER_MINUTES:-10}
       RAFA_CALL_WINDOW_DAYS: ${RAFA_CALL_WINDOW_DAYS:-14}
@@ -33,6 +36,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && node dist/src/main.js"
+    volumes:
+      - ./uploads:/app/uploads
 
   frontend:
     image: ${IMAGE_FRONTEND:-ghcr.io/SEU_USER/comunidade-frontend:latest}
