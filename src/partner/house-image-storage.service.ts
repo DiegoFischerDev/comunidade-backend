@@ -90,10 +90,8 @@ export class HouseImageStorageService {
     await mkdir(dir, { recursive: true });
     const name = `${Date.now()}-${randomBytes(8).toString('hex')}.webp`;
     await writeFile(join(dir, name), webp);
-    const base =
-      process.env.PUBLIC_API_BASE_URL?.replace(/\/$/, '') ||
-      `http://localhost:${process.env.PORT ?? 3001}`;
-    return `${base}/uploads/houses/${name}`;
+    // Caminho relativo: o browser usa NEXT_PUBLIC_API_URL + path (evita localhost na BD em stage/prod).
+    return `/uploads/houses/${name}`;
   }
 
   /** Vídeo original (sem transcodificação), para listagem e envio WhatsApp. */
@@ -168,9 +166,6 @@ export class HouseImageStorageService {
     await mkdir(dir, { recursive: true });
     const fileName = `${Date.now()}-${randomBytes(8).toString('hex')}${extension}`;
     await writeFile(join(dir, fileName), body);
-    const base =
-      process.env.PUBLIC_API_BASE_URL?.replace(/\/$/, '') ||
-      `http://localhost:${process.env.PORT ?? 3001}`;
-    return `${base}/uploads/houses/${relativeDir}/${fileName}`;
+    return `/uploads/houses/${relativeDir}/${fileName}`;
   }
 }
