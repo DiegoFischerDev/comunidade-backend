@@ -1211,7 +1211,7 @@ export class PartnerService {
         );
         let videoSentToGroup = false;
 
-        const sendHouseVideo = (opts: {
+        const sendHouseVideoMedia = (opts: {
           mediaUrl?: string;
           base64?: string;
           mediaType: 'video' | 'document';
@@ -1227,25 +1227,59 @@ export class PartnerService {
             requireDelivery: true,
           });
 
+        const trySendVideoToGroup = async (label: string, fn: () => Promise<void>) => {
+          try {
+            await fn();
+            return true;
+          } catch (err: unknown) {
+            const msg =
+              err && typeof err === 'object' && 'message' in err
+                ? String((err as { message?: string }).message)
+                : '';
+            if (isEvolutionMediaFatalError(msg)) {
+              throw err;
+            }
+            this.logger.warn(
+              `WhatsApp envio vídeo (${label}) falhou; a tentar outro modo. ${msg.slice(0, 400)}`,
+            );
+            return false;
+          }
+        };
+
         if (absVideoUrl) {
-          for (const mt of ['video', 'document'] as const) {
-            try {
-              await sendHouseVideo({ mediaUrl: absVideoUrl, mediaType: mt });
+          const urlChain: Array<{ label: string; fn: () => Promise<void> }> = [
+            {
+              label: 'sendVideo+URL',
+              fn: () =>
+                this.wa.sendVideo({
+                  to: this.housesGroupJid,
+                  caption: '',
+                  mediaUrl: absVideoUrl,
+                  mimeType: processedVideo.waMimeType,
+                  requireDelivery: true,
+                }),
+            },
+            {
+              label: 'sendMedia+video+URL',
+              fn: () =>
+                sendHouseVideoMedia({
+                  mediaUrl: absVideoUrl,
+                  mediaType: 'video',
+                }),
+            },
+            {
+              label: 'sendMedia+document+URL',
+              fn: () =>
+                sendHouseVideoMedia({
+                  mediaUrl: absVideoUrl,
+                  mediaType: 'document',
+                }),
+            },
+          ];
+          for (const step of urlChain) {
+            if (await trySendVideoToGroup(step.label, step.fn)) {
               videoSentToGroup = true;
               break;
-            } catch (urlErr: unknown) {
-              const urlMsg =
-                urlErr &&
-                typeof urlErr === 'object' &&
-                'message' in urlErr
-                  ? String((urlErr as { message?: string }).message)
-                  : '';
-              if (isEvolutionMediaFatalError(urlMsg)) {
-                throw urlErr;
-              }
-              this.logger.warn(
-                `WhatsApp media por URL (${mt}) falhou; a tentar outro modo. ${urlMsg.slice(0, 400)}`,
-              );
             }
           }
         }
@@ -1259,12 +1293,33 @@ export class PartnerService {
             videoSkippedForWhatsapp = true;
           } else {
             let lastBase64Err = '';
-            for (const mt of ['video', 'document'] as const) {
+            const b64 = processedVideo.waBase64;
+            const baseChain: Array<{ label: string; fn: () => Promise<void> }> = [
+              {
+                label: 'sendVideo+base64(data:…)',
+                fn: () =>
+                  this.wa.sendVideo({
+                    to: this.housesGroupJid,
+                    caption: '',
+                    base64: b64,
+                    mimeType: processedVideo.waMimeType,
+                    requireDelivery: true,
+                  }),
+              },
+              {
+                label: 'sendMedia+video+base64',
+                fn: () =>
+                  sendHouseVideoMedia({ base64: b64, mediaType: 'video' }),
+              },
+              {
+                label: 'sendMedia+document+base64',
+                fn: () =>
+                  sendHouseVideoMedia({ base64: b64, mediaType: 'document' }),
+              },
+            ];
+            for (const step of baseChain) {
               try {
-                await sendHouseVideo({
-                  base64: processedVideo.waBase64,
-                  mediaType: mt,
-                });
+                await step.fn();
                 videoSentToGroup = true;
                 break;
               } catch (mediaErr: unknown) {
@@ -1279,7 +1334,7 @@ export class PartnerService {
                   throw mediaErr;
                 }
                 this.logger.warn(
-                  `WhatsApp vídeo em base64 (${mt}) falhou. ${mediaMsg.slice(0, 400)}`,
+                  `WhatsApp vídeo (${step.label}) falhou. ${mediaMsg.slice(0, 400)}`,
                 );
               }
             }

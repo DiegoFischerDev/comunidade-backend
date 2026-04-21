@@ -179,5 +179,94 @@ export class WhatsAppService {
       throw new Error(lastError || 'Evolution sendMedia falhou.');
     }
   }
+
+  /**
+   * Endpoint dedicado a vídeo (Evolution v2): `POST /message/sendVideo/{instance}`.
+   * Campo `video`: URL pública ou `data:video/mp4;base64,...` (recomendado pela documentação).
+   */
+  async sendVideo(params: {
+    to: string;
+    caption?: string;
+    mediaUrl?: string;
+    /** Base64 cru (sem prefixo data:) — será enviado como data URI. */
+    base64?: string;
+    mimeType: string;
+    requireDelivery?: boolean;
+  }): Promise<void> {
+    const requireDelivery = params.requireDelivery === true;
+    const base = this.base;
+    const key = this.key;
+    if (!base || !key) {
+      const msg =
+        'EVOLUTION_API_URL ou EVOLUTION_API_KEY ausentes; WhatsApp não enviado.';
+      this.logger.warn(msg);
+      if (requireDelivery) throw new Error(msg);
+      return;
+    }
+
+    const number = this.normalizeRecipient(params.to);
+    if (!number) {
+      if (requireDelivery) throw new Error('Destino WhatsApp vazio (number).');
+      return;
+    }
+
+    const urlTrim = params.mediaUrl?.trim();
+    let videoField = '';
+    if (urlTrim && (urlTrim.startsWith('https://') || urlTrim.startsWith('http://'))) {
+      videoField = urlTrim;
+    } else {
+      const raw = (params.base64 ?? '').trim();
+      if (raw.length) {
+        const mime =
+          (params.mimeType || 'video/mp4').split(';')[0].trim() || 'video/mp4';
+        videoField = `data:${mime};base64,${raw}`;
+      }
+    }
+
+    if (!videoField.length) {
+      const msg = 'sendVideo: falta mediaUrl ou base64.';
+      this.logger.warn(msg);
+      if (requireDelivery) throw new Error(msg);
+      return;
+    }
+
+    const instances = this.instancesOrdered;
+    const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
+    let lastError = '';
+
+    for (let i = 0; i < attempts.length; i++) {
+      const instance = attempts[i];
+      try {
+        const res = await fetch(`${base}/message/sendVideo/${instance}`, {
+          method: 'POST',
+          headers: { apikey: key, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            number,
+            video: videoField,
+            caption: params.caption ?? '',
+          }),
+        });
+        if (res.ok) {
+          if (i > 0) {
+            this.logger.warn(
+              `sendVideo entregue via instância de reserva: ${instance}`,
+            );
+          }
+          return;
+        }
+        const body = await res.text().catch(() => '');
+        lastError = `${res.status} ${body}`.trim();
+      } catch (err: unknown) {
+        lastError =
+          err && typeof err === 'object' && 'message' in err
+            ? String((err as { message?: string }).message)
+            : 'erro de rede';
+      }
+    }
+    this.logger.warn(`Evolution sendVideo falhou em todas as instâncias: ${lastError}`);
+    if (requireDelivery) {
+      throw new Error(lastError || 'Evolution sendVideo falhou.');
+    }
+  }
 }
 
