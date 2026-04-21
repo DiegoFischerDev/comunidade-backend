@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomBytes } from 'crypto';
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, unlink } from 'fs/promises';
 import { join } from 'path';
 import sharp from 'sharp';
 
@@ -15,6 +15,113 @@ const HOUSE_VIDEO_MIMES = new Set([
 @Injectable()
 export class HouseImageStorageService {
   private readonly logger = new Logger(HouseImageStorageService.name);
+
+  private getR2Context(): {
+    client: S3Client;
+    bucket: string;
+    publicBase: string;
+  } | null {
+    const r2Endpoint = process.env.R2_ENDPOINT?.trim();
+    const r2Bucket = process.env.R2_BUCKET?.trim();
+    const r2Access = process.env.R2_ACCESS_KEY_ID?.trim();
+    const r2Secret = process.env.R2_SECRET_ACCESS_KEY?.trim();
+    const r2Public = process.env.R2_PUBLIC_BASE_URL?.trim()?.replace(/\/$/, '');
+    if (!r2Endpoint || !r2Bucket || !r2Access || !r2Secret || !r2Public) {
+      return null;
+    }
+    return {
+      client: new S3Client({
+        region: 'auto',
+        endpoint: r2Endpoint,
+        credentials: { accessKeyId: r2Access, secretAccessKey: r2Secret },
+        forcePathStyle: true,
+      }),
+      bucket: r2Bucket,
+      publicBase: r2Public,
+    };
+  }
+
+  /**
+   * Remove ficheiro local (`/uploads/...`) ou objeto em R2 quando a URL corresponde a `R2_PUBLIC_BASE_URL`.
+   */
+  async deleteStoredUrl(url: string | null | undefined): Promise<void> {
+    if (!url?.trim()) return;
+    const raw = url.trim();
+
+    let pathname = raw;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      try {
+        pathname = new URL(raw).pathname;
+      } catch {
+        this.logger.warn(`deleteStoredUrl: URL inválida (${raw.slice(0, 64)}…)`);
+        return;
+      }
+    }
+
+    if (pathname.startsWith('/uploads/')) {
+      const rel = pathname.replace(/^\/uploads\//, '');
+      if (!rel) return;
+      const filePath = join(process.cwd(), 'uploads', rel);
+      try {
+        await unlink(filePath);
+      } catch (e: unknown) {
+        const code =
+          e && typeof e === 'object' && 'code' in e
+            ? String((e as { code?: string }).code)
+            : '';
+        if (code !== 'ENOENT') {
+          this.logger.warn(`deleteStoredUrl: ${filePath}: ${e}`);
+        }
+      }
+      return;
+    }
+
+    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+      return;
+    }
+
+    const cfg = this.getR2Context();
+    if (!cfg) {
+      this.logger.warn(
+        `deleteStoredUrl: R2 não configurado; ficheiro remoto pode ficar órfão: ${raw.slice(0, 80)}`,
+      );
+      return;
+    }
+
+    const pub = cfg.publicBase;
+    let key: string | null = null;
+    if (raw.startsWith(pub)) {
+      key = raw.slice(pub.length).replace(/^\/+/, '');
+    } else {
+      try {
+        const asset = new URL(raw);
+        const base = new URL(pub);
+        if (asset.origin === base.origin) {
+          const basePath = base.pathname.replace(/\/$/, '') || '';
+          let p = asset.pathname;
+          if (basePath && p.startsWith(basePath)) {
+            p = p.slice(basePath.length);
+          }
+          key = p.replace(/^\/+/, '');
+        }
+      } catch {
+        key = null;
+      }
+    }
+
+    if (!key) {
+      this.logger.warn(`deleteStoredUrl: não foi possível obter a chave R2 de ${raw.slice(0, 80)}`);
+      return;
+    }
+
+    try {
+      await cfg.client.send(
+        new DeleteObjectCommand({ Bucket: cfg.bucket, Key: key }),
+      );
+    } catch (e) {
+      this.logger.warn(`deleteStoredUrl: DeleteObject ${key}: ${e}`);
+    }
+  }
 
   private async readBuffer(file: Express.Multer.File): Promise<Buffer | null> {
     if (file.buffer?.length) return file.buffer;
@@ -61,29 +168,18 @@ export class HouseImageStorageService {
 
   private async uploadWebp(webp: Buffer): Promise<string> {
     const key = `houses/${Date.now()}-${randomBytes(8).toString('hex')}.webp`;
-    const r2Endpoint = process.env.R2_ENDPOINT?.trim();
-    const r2Bucket = process.env.R2_BUCKET?.trim();
-    const r2Access = process.env.R2_ACCESS_KEY_ID?.trim();
-    const r2Secret = process.env.R2_SECRET_ACCESS_KEY?.trim();
-    const r2Public = process.env.R2_PUBLIC_BASE_URL?.trim()?.replace(/\/$/, '');
-
-    if (r2Endpoint && r2Bucket && r2Access && r2Secret && r2Public) {
-      const client = new S3Client({
-        region: 'auto',
-        endpoint: r2Endpoint,
-        credentials: { accessKeyId: r2Access, secretAccessKey: r2Secret },
-        forcePathStyle: true,
-      });
-      await client.send(
+    const r2 = this.getR2Context();
+    if (r2) {
+      await r2.client.send(
         new PutObjectCommand({
-          Bucket: r2Bucket,
+          Bucket: r2.bucket,
           Key: key,
           Body: webp,
           ContentType: 'image/webp',
           CacheControl: 'public, max-age=31536000, immutable',
         }),
       );
-      return `${r2Public}/${key}`;
+      return `${r2.publicBase}/${key}`;
     }
 
     const dir = join(process.cwd(), 'uploads', 'houses');
@@ -136,29 +232,18 @@ export class HouseImageStorageService {
     extension: string,
   ): Promise<string> {
     const key = `${keyPrefix}/${Date.now()}-${randomBytes(8).toString('hex')}${extension}`;
-    const r2Endpoint = process.env.R2_ENDPOINT?.trim();
-    const r2Bucket = process.env.R2_BUCKET?.trim();
-    const r2Access = process.env.R2_ACCESS_KEY_ID?.trim();
-    const r2Secret = process.env.R2_SECRET_ACCESS_KEY?.trim();
-    const r2Public = process.env.R2_PUBLIC_BASE_URL?.trim()?.replace(/\/$/, '');
-
-    if (r2Endpoint && r2Bucket && r2Access && r2Secret && r2Public) {
-      const client = new S3Client({
-        region: 'auto',
-        endpoint: r2Endpoint,
-        credentials: { accessKeyId: r2Access, secretAccessKey: r2Secret },
-        forcePathStyle: true,
-      });
-      await client.send(
+    const r2 = this.getR2Context();
+    if (r2) {
+      await r2.client.send(
         new PutObjectCommand({
-          Bucket: r2Bucket,
+          Bucket: r2.bucket,
           Key: key,
           Body: body,
           ContentType: contentType,
           CacheControl: 'public, max-age=31536000, immutable',
         }),
       );
-      return `${r2Public}/${key}`;
+      return `${r2.publicBase}/${key}`;
     }
 
     const relativeDir = keyPrefix.replace(/^houses\//, '');

@@ -236,6 +236,19 @@ export class PartnerController {
     return this.partnerService.adminListAllSales();
   }
 
+  @Get('admin/houses')
+  @Roles(Role.ADMIN)
+  async adminListAllHouses() {
+    return this.partnerService.adminListAllHouses();
+  }
+
+  @Delete('admin/houses/:houseId')
+  @Roles(Role.ADMIN)
+  @HttpCode(200)
+  async adminDeleteHouse(@Param('houseId') houseId: string) {
+    return this.partnerService.adminDeleteHouse(houseId);
+  }
+
   @Post('me/sales/:id/pay-commission')
   @Roles(Role.PARTNER)
   async startSaleCommissionCheckout(

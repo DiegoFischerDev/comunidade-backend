@@ -1134,7 +1134,17 @@ export class PartnerService {
     return created;
   }
 
-  /** Listagem pública: imóveis disponíveis de parceiros relocation. */
+  private async removeHouseMediaFiles(house: {
+    imageUrls: string[];
+    videoUrl: string | null;
+  }) {
+    for (const u of house.imageUrls ?? []) {
+      await this.houseImages.deleteStoredUrl(u);
+    }
+    await this.houseImages.deleteStoredUrl(house.videoUrl);
+  }
+
+  /** Listagem pública: relocation — disponíveis primeiro; depois por data de disponibilidade mais futura. */
   async listPublicRelocationHouses() {
     const cat = await this.prisma.productCategory.findUnique({
       where: { slug: RELOCATION_CATEGORY_SLUG },
@@ -1146,10 +1156,9 @@ export class PartnerService {
 
     return this.prisma.partnerHouse.findMany({
       where: {
-        status: 'AVAILABLE',
         partner: { categoryId: cat.id },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ status: 'asc' }, { availableFrom: 'desc' }],
       select: {
         id: true,
         title: true,
@@ -1162,6 +1171,7 @@ export class PartnerService {
         imageUrls: true,
         videoUrl: true,
         partnerId: true,
+        status: true,
         partner: {
           select: {
             id: true,
@@ -1172,6 +1182,52 @@ export class PartnerService {
         },
       },
     });
+  }
+
+  async adminListAllHouses() {
+    return this.prisma.partnerHouse.findMany({
+      orderBy: [{ createdAt: 'desc' }],
+      include: {
+        partner: {
+          select: {
+            id: true,
+            name: true,
+            category: { select: { slug: true, name: true } },
+          },
+        },
+      },
+    });
+  }
+
+  async adminDeleteHouse(houseId: string) {
+    const house = await this.prisma.partnerHouse.findUnique({
+      where: { id: houseId },
+      select: { id: true, imageUrls: true, videoUrl: true },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    await this.removeHouseMediaFiles(house);
+    await this.prisma.partnerHouse.delete({ where: { id: houseId } });
+    return { ok: true as const };
+  }
+
+  /** Anúncios indisponíveis com data de disponibilidade há pelo menos 2 meses — remove registo e médias. */
+  async purgeStaleUnavailableHouses(): Promise<{ deleted: number }> {
+    const threshold = new Date();
+    threshold.setMonth(threshold.getMonth() - 2);
+    const stale = await this.prisma.partnerHouse.findMany({
+      where: {
+        status: 'UNAVAILABLE',
+        availableFrom: { lte: threshold },
+      },
+      select: { id: true, imageUrls: true, videoUrl: true },
+    });
+    for (const h of stale) {
+      await this.removeHouseMediaFiles(h);
+      await this.prisma.partnerHouse.delete({ where: { id: h.id } });
+    }
+    return { deleted: stale.length };
   }
 
   async listMyHouses(userId: string) {
