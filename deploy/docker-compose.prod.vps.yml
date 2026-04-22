@@ -36,7 +36,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "npx prisma migrate deploy && node dist/src/main.js"
+    # Não correr migrate no arranque: npx + Prisma em VPS pequenas → OOM (exit 137).
+    # Migrações: no deploy, `docker compose run --rm --no-deps backend npx prisma migrate deploy` antes do up.
     ports:
       - "127.0.0.1:13001:3001"
     volumes:

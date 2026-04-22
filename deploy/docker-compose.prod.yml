@@ -36,7 +36,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "npx prisma migrate deploy && node dist/src/main.js"
+    # Não correr migrate no arranque (ver docker-compose.prod.vps.yml e README).
     volumes:
       - ./uploads:/app/uploads
 

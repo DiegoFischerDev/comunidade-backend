@@ -70,18 +70,17 @@ STRIPE_RAFA_CALL_PIX_BRL=2000
 
 ## 4. Subir os ambientes
 
+Não usamos `migrate` no `command` do serviço `backend` (juntar `npx` + Prisma a cada **arranque** do serviço em VPS com pouca RAM costumava acabar com **exit 137** / OOM). A imagem inicia só `node dist/src/main.js` (ver `backend/Dockerfile`).
+
+Aplica as migrações **depois** do `up` (o backend já corre só com o Nest):
+
 **Produção:**
 
 ```bash
 cd /opt/comunidade-prod
 docker compose pull
 docker compose up -d
-```
-
-**Migrações (rodar uma vez após o primeiro deploy do backend):**
-
-```bash
-docker compose exec backend npx prisma migrate deploy
+docker compose exec -T backend npx prisma migrate deploy
 ```
 
 **Stage:**
@@ -90,8 +89,11 @@ docker compose exec backend npx prisma migrate deploy
 cd /opt/comunidade-stage
 docker compose pull
 docker compose up -d
-docker compose exec backend npx prisma migrate deploy
+docker compose exec -T backend npx prisma migrate deploy
 ```
+
+**O mesmo passo de migração que o GitHub Actions** (só Postgres levantado primeiro, depois `migrate` num one-shot):  
+`docker compose up -d postgres` → `docker compose run --rm --no-deps backend npx prisma migrate deploy` → `docker compose up -d`
 
 ## 5. GitHub Actions (secrets no repositório)
 
