@@ -1,8 +1,8 @@
 -- CreateEnum
 CREATE TYPE "PartnerReactionType" AS ENUM ('LIKE', 'DISLIKE');
 
--- AlterTable
-ALTER TABLE "partners" ADD COLUMN "share_count" INTEGER NOT NULL DEFAULT 0;
+-- AlterTable (o modelo Prisma mapeia para a tabela "Partner", legado do init)
+ALTER TABLE "Partner" ADD COLUMN "share_count" INTEGER NOT NULL DEFAULT 0;
 
 -- CreateTable
 CREATE TABLE "partner_reactions" (
@@ -41,16 +41,16 @@ CREATE INDEX "partner_comments_partner_id_created_at_idx" ON "partner_comments"(
 CREATE INDEX "partner_comments_user_id_idx" ON "partner_comments"("user_id");
 
 -- AddForeignKey
-ALTER TABLE "partner_reactions" ADD CONSTRAINT "partner_reactions_partner_id_fkey" FOREIGN KEY ("partner_id") REFERENCES "partners"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "partner_reactions" ADD CONSTRAINT "partner_reactions_partner_id_fkey" FOREIGN KEY ("partner_id") REFERENCES "Partner"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "partner_reactions" ADD CONSTRAINT "partner_reactions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "partner_reactions" ADD CONSTRAINT "partner_reactions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "partner_comments" ADD CONSTRAINT "partner_comments_partner_id_fkey" FOREIGN KEY ("partner_id") REFERENCES "partners"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "partner_comments" ADD CONSTRAINT "partner_comments_partner_id_fkey" FOREIGN KEY ("partner_id") REFERENCES "Partner"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "partner_comments" ADD CONSTRAINT "partner_comments_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "partner_comments" ADD CONSTRAINT "partner_comments_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- CreateIndex
 CREATE UNIQUE INDEX "partner_reaction_user_partner_unique" ON "partner_reactions"("user_id", "partner_id");
