@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PartnerSaleCommissionPaymentStatus, SubscriptionStatus, UserTier } from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { getFrontendBaseUrl } from '../config/frontend-base-url';
 
 const MEMBERSHIP_DURATION_YEARS = 1;
 
@@ -803,9 +804,7 @@ export class StripeService {
         select: { name: true, email: true },
       });
       if (user?.email) {
-        const frontendBase =
-          process.env.FRONTEND_URL?.replace(/\/$/, '') ||
-          'https://comunidade.rafaapelomundo.com';
+        const frontendBase = getFrontendBaseUrl();
         const heroUrl = `${frontendBase}/comunidade_bg.svg`;
         await sendEmailBase({
           to: user.email,

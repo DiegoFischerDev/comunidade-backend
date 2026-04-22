@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { RafaCallBookingStatus } from '@prisma/client';
+import { getFrontendBaseUrl } from '../config/frontend-base-url';
 
 type DayAvailability = {
   date: string; // YYYY-MM-DD no tz do utilizador
@@ -258,10 +259,11 @@ export class RafacallBookingService {
         : kind === 'rescheduled'
           ? `🔁 ${who}, a tua chamada com a Rafa foi reagendada!`
           : `🗑️ ${who}, a tua chamada com a Rafa foi cancelada.`;
+    const reschedUrl = getFrontendBaseUrl();
     const followup =
       kind === 'cancelled'
         ? ''
-        : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?\n\nSe precisar reagendar, acesse www.comunidade.rafaapelomundo.com`;
+        : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?\n\nSe precisar reagendar, acesse: ${reschedUrl}`;
     const when =
       kind === 'cancelled'
         ? `\n\nEstava marcada para: ${startLocal} (até ${endLocal})\nHorário de Lisboa`

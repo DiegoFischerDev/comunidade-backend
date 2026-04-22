@@ -35,6 +35,7 @@ import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { HouseImageStorageService } from './house-image-storage.service';
+import { getFrontendBaseUrl } from '../config/frontend-base-url';
 
 const SALT_ROUNDS = 10;
 
@@ -1100,11 +1101,7 @@ export class PartnerService {
   }
 
   private get frontendBaseUrl(): string {
-    return (
-      process.env.FRONTEND_URL ||
-      process.env.NEXT_PUBLIC_SITE_URL ||
-      'https://comunidade.rafaapelomundo.com'
-    ).replace(/\/$/, '');
+    return getFrontendBaseUrl();
   }
 
   /** Página pública do anúncio (detalhes + parceiro); pré-visualização WhatsApp usa OG desta URL, não a imagem genérica da comunidade. */

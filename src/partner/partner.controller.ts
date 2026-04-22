@@ -13,6 +13,7 @@ import {
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
+import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PartnerService } from './partner.service';
 import { CreatePartnerDto } from './dto/create-partner.dto';
 import { Roles } from '../auth/roles.decorator';
@@ -328,9 +329,7 @@ export class PartnerController {
     @Param('id') id: string,
     @Body() dto: StartPartnerSaleCommissionCheckoutDto,
   ) {
-    const frontendBase =
-      process.env.FRONTEND_URL?.replace(/\/$/, '') ||
-      'https://comunidade.rafaapelomundo.com';
+    const frontendBase = getFrontendBaseUrl();
     const successUrl =
       dto.successUrl ?? `${frontendBase}/dashboard/my-sales?paid=1`;
     const cancelUrl = dto.cancelUrl ?? `${frontendBase}/dashboard/my-sales`;
@@ -353,9 +352,7 @@ export class PartnerController {
     @Param('id') id: string,
     @Body() dto: StartPartnerSaleCommissionCheckoutDto,
   ) {
-    const frontendBase =
-      process.env.FRONTEND_URL?.replace(/\/$/, '') ||
-      'https://comunidade.rafaapelomundo.com';
+    const frontendBase = getFrontendBaseUrl();
     const successUrl =
       dto.successUrl ?? `${frontendBase}/dashboard/my-sales?paid=1`;
     const cancelUrl = dto.cancelUrl ?? `${frontendBase}/dashboard/my-sales`;
