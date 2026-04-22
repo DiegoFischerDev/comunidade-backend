@@ -14,10 +14,9 @@ export function getCorsOrigins(): string[] {
     }
     return [...new Set(out)];
   }
-  const fe = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(
-    /\/$/,
-    '',
-  );
+  const fe = (process.env.FRONTEND_URL || 'http://localhost:3000')
+    .trim()
+    .replace(/\/$/, '');
   return [
     ...new Set([fe, 'http://localhost:3000']),
   ];
