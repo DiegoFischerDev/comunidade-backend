@@ -307,11 +307,16 @@ model PartnerComment {
   userId    String   @map("user_id")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   body      String
+  /// Comentário pai, quando é resposta a outro (thread / cascata).
+  parentId  String?  @map("parent_id")
+  parent    PartnerComment?  @relation("PartnerCommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   PartnerComment[] @relation("PartnerCommentReplies")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([partnerId, createdAt])
   @@index([userId])
+  @@index([parentId])
   @@map("partner_comments")
 }
 

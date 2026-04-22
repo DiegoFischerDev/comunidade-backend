@@ -414,13 +414,12 @@ export class PartnerController {
   async listPartnerComments(
     @Param('id') id: string,
     @Query('take') takeStr?: string,
-    @Query('before') before?: string,
   ) {
     const take = Math.min(
-      50,
-      Math.max(1, Number.parseInt(takeStr ?? '30', 10) || 30),
+      2000,
+      Math.max(1, Number.parseInt(takeStr ?? '500', 10) || 500),
     );
-    return this.partnerService.listPartnerComments(id, take, before);
+    return this.partnerService.listPartnerComments(id, take);
   }
 
   @Public()
@@ -446,7 +445,27 @@ export class PartnerController {
     @CurrentUser() user: { id: string },
     @Body() dto: CreatePartnerCommentDto,
   ) {
-    return this.partnerService.createPartnerComment(id, user.id, dto.body);
+    return this.partnerService.createPartnerComment(
+      id,
+      user.id,
+      dto.body,
+      dto.parentId,
+    );
+  }
+
+  @Delete(':id/comments/:commentId')
+  @HttpCode(200)
+  async deletePartnerComment(
+    @Param('id') partnerId: string,
+    @Param('commentId') commentId: string,
+    @CurrentUser() user: { id: string; role: Role },
+  ) {
+    return this.partnerService.deletePartnerComment(
+      partnerId,
+      commentId,
+      user.id,
+      user.role,
+    );
   }
 
   @Post(':id/leads')

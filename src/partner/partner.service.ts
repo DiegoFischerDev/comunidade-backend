@@ -450,7 +450,7 @@ export class PartnerService {
     return { myReaction: type };
   }
 
-  async listPartnerComments(partnerId: string, take: number, beforeId?: string) {
+  async listPartnerComments(partnerId: string, take: number) {
     const exists = await this.prisma.partner.findUnique({
       where: { id: partnerId },
       select: { id: true },
@@ -458,37 +458,33 @@ export class PartnerService {
     if (!exists) {
       throw new NotFoundException('Parceiro não encontrado.');
     }
-    const takeN = Math.min(Math.max(take, 1), 50);
-    const where: Prisma.PartnerCommentWhereInput = { partnerId };
-    if (beforeId) {
-      const cursor = await this.prisma.partnerComment.findUnique({
-        where: { id: beforeId },
-        select: { createdAt: true, partnerId: true },
-      });
-      if (cursor && cursor.partnerId === partnerId) {
-        where.createdAt = { lt: cursor.createdAt };
-      }
-    }
+    const takeN = Math.min(Math.max(take, 1), 2000);
+    const total = await this.prisma.partnerComment.count({ where: { partnerId } });
     const rows = await this.prisma.partnerComment.findMany({
-      where,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: takeN + 1,
+      where: { partnerId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: takeN,
       include: { user: { select: { id: true, name: true } } },
     });
-    const hasMore = rows.length > takeN;
-    const page = hasMore ? rows.slice(0, takeN) : rows;
     return {
-      items: page.map((c) => ({
+      items: rows.map((c) => ({
         id: c.id,
         body: c.body,
         createdAt: c.createdAt.toISOString(),
+        parentId: c.parentId,
         user: c.user,
       })),
-      hasMore,
+      hasMore: total > takeN,
+      total,
     };
   }
 
-  async createPartnerComment(partnerId: string, userId: string, body: string) {
+  async createPartnerComment(
+    partnerId: string,
+    userId: string,
+    body: string,
+    parentId?: string,
+  ) {
     const exists = await this.prisma.partner.findUnique({
       where: { id: partnerId },
       select: { id: true },
@@ -500,16 +496,58 @@ export class PartnerService {
     if (!text) {
       throw new BadRequestException('O comentário não pode ser vazio.');
     }
+    let parent: { id: string; partnerId: string } | null = null;
+    if (parentId?.trim()) {
+      parent = await this.prisma.partnerComment.findUnique({
+        where: { id: parentId.trim() },
+        select: { id: true, partnerId: true },
+      });
+      if (!parent) {
+        throw new BadRequestException('Comentário a que responde não foi encontrado.');
+      }
+      if (parent.partnerId !== partnerId) {
+        throw new BadRequestException('Não podes responder a um comentário de outro parceiro.');
+      }
+    }
     const c = await this.prisma.partnerComment.create({
-      data: { partnerId, userId, body: text },
+      data: {
+        partnerId,
+        userId,
+        body: text,
+        parentId: parent?.id ?? null,
+      },
       include: { user: { select: { id: true, name: true } } },
     });
     return {
       id: c.id,
       body: c.body,
       createdAt: c.createdAt.toISOString(),
+      parentId: c.parentId,
       user: c.user,
     };
+  }
+
+  async deletePartnerComment(
+    partnerId: string,
+    commentId: string,
+    userId: string,
+    role: Role,
+  ) {
+    const c = await this.prisma.partnerComment.findUnique({
+      where: { id: commentId },
+      select: { id: true, partnerId: true, userId: true },
+    });
+    if (!c) {
+      throw new NotFoundException('Comentário não encontrado.');
+    }
+    if (c.partnerId !== partnerId) {
+      throw new BadRequestException('Comentário não pertence a este parceiro.');
+    }
+    if (role !== Role.ADMIN && c.userId !== userId) {
+      throw new ForbiddenException('Não tens permissão para eliminar este comentário.');
+    }
+    await this.prisma.partnerComment.delete({ where: { id: commentId } });
+    return { ok: true as const, partnerId: c.partnerId };
   }
 
   async recordPartnerShare(partnerId: string) {
