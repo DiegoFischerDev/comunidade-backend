@@ -3,10 +3,13 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   Param,
   Patch,
   Post,
+  Put,
+  Query,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
@@ -32,6 +35,8 @@ import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { memoryStorage } from 'multer';
+import { SetPartnerReactionDto } from './dto/set-partner-reaction.dto';
+import { CreatePartnerCommentDto } from './dto/create-partner-comment.dto';
 
 @Controller('partners')
 export class PartnerController {
@@ -392,6 +397,56 @@ export class PartnerController {
     @Param('id') id: string,
   ) {
     return this.partnerService.deleteMyService(user.id, id);
+  }
+
+  @Public()
+  @Get(':id/engagement')
+  async getPartnerEngagement(
+    @Param('id') id: string,
+    @Headers('authorization') authorization?: string,
+  ) {
+    const userId = this.partnerService.getOptionalUserIdFromAuthHeader(authorization);
+    return this.partnerService.getPartnerEngagement(id, userId);
+  }
+
+  @Public()
+  @Get(':id/comments')
+  async listPartnerComments(
+    @Param('id') id: string,
+    @Query('take') takeStr?: string,
+    @Query('before') before?: string,
+  ) {
+    const take = Math.min(
+      50,
+      Math.max(1, Number.parseInt(takeStr ?? '30', 10) || 30),
+    );
+    return this.partnerService.listPartnerComments(id, take, before);
+  }
+
+  @Public()
+  @Post(':id/share')
+  @HttpCode(200)
+  async recordPartnerShare(@Param('id') id: string) {
+    return this.partnerService.recordPartnerShare(id);
+  }
+
+  @Put(':id/engagement/reaction')
+  async setPartnerReaction(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+    @Body() dto: SetPartnerReactionDto,
+  ) {
+    return this.partnerService.setPartnerReaction(id, user.id, dto.type);
+  }
+
+  @Post(':id/comments')
+  @HttpCode(201)
+  async createPartnerComment(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+    @Body() dto: CreatePartnerCommentDto,
+  ) {
+    return this.partnerService.createPartnerComment(id, user.id, dto.body);
   }
 
   @Post(':id/leads')

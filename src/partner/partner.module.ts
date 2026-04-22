@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { PartnerService } from './partner.service';
 import { PartnerController } from './partner.controller';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -8,7 +9,15 @@ import { HouseImageStorageService } from './house-image-storage.service';
 import { PartnerHouseCleanupTask } from './partner-house-cleanup.task';
 
 @Module({
-  imports: [PrismaModule, StripeModule, WhatsAppModule],
+  imports: [
+    PrismaModule,
+    StripeModule,
+    WhatsAppModule,
+    JwtModule.register({
+      secret: process.env.JWT_SECRET || 'change-me-in-production',
+      signOptions: { expiresIn: '7d' },
+    }),
+  ],
   controllers: [PartnerController],
   providers: [PartnerService, HouseImageStorageService, PartnerHouseCleanupTask],
 })

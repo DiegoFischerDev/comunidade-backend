@@ -76,6 +76,11 @@ enum PartnerHouseTypology {
   QUARTO_AP_COMPARTILHADO
 }
 
+enum PartnerReactionType {
+  LIKE
+  DISLIKE
+}
+
 model WhatsappRegistrationRequest {
   id                    String   @id @default(cuid())
   code                  String   @unique
@@ -154,6 +159,8 @@ model User {
   whatsappRegistrationBrowserHandoffs WhatsappRegistrationBrowserHandoff[]
   supportTickets SupportTicket[]
   immigrationChecklist ImmigrationChecklist?
+  partnerReactions   PartnerReaction[]
+  partnerComments    PartnerComment[]
 }
 
 model ImmigrationChecklist {
@@ -264,13 +271,48 @@ model Partner {
   billingPostalCode    String?          @map("billing_postal_code")
   categoryId           String?          @map("category_id")
   category             ProductCategory? @relation(fields: [categoryId], references: [id])
+  /// Contador de ações "partilhar" (abrir o fluxo e registar partilha).
+  shareCount           Int              @default(0) @map("share_count")
   createdAt            DateTime         @default(now()) @map("created_at")
   updatedAt            DateTime         @updatedAt @map("updated_at")
 
-  services Service[]
-  leads    Lead[]
-  sales    PartnerSale[]
-  houses   PartnerHouse[]
+  services  Service[]
+  leads     Lead[]
+  sales     PartnerSale[]
+  houses    PartnerHouse[]
+  reactions PartnerReaction[]
+  comments  PartnerComment[]
+}
+
+model PartnerReaction {
+  id        String              @id @default(cuid())
+  partnerId String              @map("partner_id")
+  partner   Partner             @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  userId    String              @map("user_id")
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      PartnerReactionType
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @updatedAt @map("updated_at")
+
+  @@unique([userId, partnerId], map: "partner_reaction_user_partner_unique")
+  @@index([partnerId])
+  @@index([type])
+  @@map("partner_reactions")
+}
+
+model PartnerComment {
+  id        String   @id @default(cuid())
+  partnerId String   @map("partner_id")
+  partner   Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([partnerId, createdAt])
+  @@index([userId])
+  @@map("partner_comments")
 }
 
 model PartnerHouse {

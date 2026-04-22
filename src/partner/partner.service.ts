@@ -22,10 +22,12 @@ import { CreateLeadDto } from './dto/create-lead.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import {
   PartnerHouseStatus,
+  PartnerReactionType,
   PartnerSaleCommissionPaymentStatus,
   Prisma,
   Role,
 } from '@prisma/client';
+import { JwtService } from '@nestjs/jwt';
 import { StripeService } from '../stripe/stripe.service';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
@@ -59,6 +61,7 @@ export class PartnerService {
     private readonly stripeService: StripeService,
     private readonly wa: WhatsAppService,
     private readonly houseImages: HouseImageStorageService,
+    private readonly jwtService: JwtService,
   ) {}
 
   private async deleteUploadFileIfLocal(url?: string | null) {
@@ -305,7 +308,224 @@ export class PartnerService {
       },
     });
 
-    return categories.filter((category) => category.partners.length > 0);
+    const withPartners = categories.filter((c) => c.partners.length > 0);
+    const partnerIds = withPartners.flatMap((c) => c.partners.map((p) => p.id));
+    const engagement = await this.getEngagementSummariesForPartnerIds(partnerIds);
+
+    return withPartners.map((category) => ({
+      ...category,
+      partners: category.partners.map((p) => ({
+        ...p,
+        engagement: engagement.get(p.id) ?? {
+          likeCount: 0,
+          dislikeCount: 0,
+          commentCount: 0,
+          shareCount: 0,
+        },
+      })),
+    }));
+  }
+
+  private async getEngagementSummariesForPartnerIds(
+    partnerIds: string[],
+  ): Promise<
+    Map<
+      string,
+      {
+        likeCount: number;
+        dislikeCount: number;
+        commentCount: number;
+        shareCount: number;
+      }
+    >
+  > {
+    const map = new Map<
+      string,
+      {
+        likeCount: number;
+        dislikeCount: number;
+        commentCount: number;
+        shareCount: number;
+      }
+    >();
+    for (const id of partnerIds) {
+      map.set(id, { likeCount: 0, dislikeCount: 0, commentCount: 0, shareCount: 0 });
+    }
+    if (partnerIds.length === 0) {
+      return map;
+    }
+    const [reactionGroups, commentGroups, partners] = await Promise.all([
+      this.prisma.partnerReaction.groupBy({
+        by: ['partnerId', 'type'],
+        where: { partnerId: { in: partnerIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.partnerComment.groupBy({
+        by: ['partnerId'],
+        where: { partnerId: { in: partnerIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.partner.findMany({
+        where: { id: { in: partnerIds } },
+        select: { id: true, shareCount: true },
+      }),
+    ]);
+    for (const p of partners) {
+      const e = map.get(p.id);
+      if (e) e.shareCount = p.shareCount;
+    }
+    for (const c of commentGroups) {
+      const e = map.get(c.partnerId);
+      if (e) e.commentCount = c._count._all;
+    }
+    for (const r of reactionGroups) {
+      const e = map.get(r.partnerId);
+      if (!e) continue;
+      if (r.type === 'LIKE') e.likeCount = r._count._all;
+      if (r.type === 'DISLIKE') e.dislikeCount = r._count._all;
+    }
+    return map;
+  }
+
+  getOptionalUserIdFromAuthHeader(authorization?: string): string | null {
+    if (!authorization?.trim().toLowerCase().startsWith('bearer ')) {
+      return null;
+    }
+    const token = authorization.slice(7).trim();
+    if (!token) return null;
+    try {
+      const payload = this.jwtService.verify<{ sub: string }>(token);
+      return typeof payload?.sub === 'string' ? payload.sub : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async getPartnerEngagement(partnerId: string, userId: string | null) {
+    const p = await this.prisma.partner.findUnique({
+      where: { id: partnerId },
+      select: { id: true, shareCount: true },
+    });
+    if (!p) {
+      throw new NotFoundException('Parceiro não encontrado.');
+    }
+    const [likeCount, dislikeCount, commentCount, myReaction] = await Promise.all([
+      this.prisma.partnerReaction.count({ where: { partnerId, type: 'LIKE' } }),
+      this.prisma.partnerReaction.count({ where: { partnerId, type: 'DISLIKE' } }),
+      this.prisma.partnerComment.count({ where: { partnerId } }),
+      userId
+        ? this.prisma.partnerReaction.findUnique({
+            where: { userId_partnerId: { userId, partnerId } },
+            select: { type: true },
+          })
+        : Promise.resolve(null),
+    ]);
+    return {
+      likeCount,
+      dislikeCount,
+      commentCount,
+      shareCount: p.shareCount,
+      myReaction: myReaction?.type ?? null,
+    };
+  }
+
+  async setPartnerReaction(
+    partnerId: string,
+    userId: string,
+    type: PartnerReactionType | null,
+  ) {
+    await this.prisma.partner.findUniqueOrThrow({
+      where: { id: partnerId },
+      select: { id: true },
+    });
+    if (type === null) {
+      await this.prisma.partnerReaction.deleteMany({ where: { userId, partnerId } });
+      return { myReaction: null as PartnerReactionType | null };
+    }
+    await this.prisma.partnerReaction.upsert({
+      where: { userId_partnerId: { userId, partnerId } },
+      create: { userId, partnerId, type },
+      update: { type },
+    });
+    return { myReaction: type };
+  }
+
+  async listPartnerComments(partnerId: string, take: number, beforeId?: string) {
+    const exists = await this.prisma.partner.findUnique({
+      where: { id: partnerId },
+      select: { id: true },
+    });
+    if (!exists) {
+      throw new NotFoundException('Parceiro não encontrado.');
+    }
+    const takeN = Math.min(Math.max(take, 1), 50);
+    const where: Prisma.PartnerCommentWhereInput = { partnerId };
+    if (beforeId) {
+      const cursor = await this.prisma.partnerComment.findUnique({
+        where: { id: beforeId },
+        select: { createdAt: true, partnerId: true },
+      });
+      if (cursor && cursor.partnerId === partnerId) {
+        where.createdAt = { lt: cursor.createdAt };
+      }
+    }
+    const rows = await this.prisma.partnerComment.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: takeN + 1,
+      include: { user: { select: { id: true, name: true } } },
+    });
+    const hasMore = rows.length > takeN;
+    const page = hasMore ? rows.slice(0, takeN) : rows;
+    return {
+      items: page.map((c) => ({
+        id: c.id,
+        body: c.body,
+        createdAt: c.createdAt.toISOString(),
+        user: c.user,
+      })),
+      hasMore,
+    };
+  }
+
+  async createPartnerComment(partnerId: string, userId: string, body: string) {
+    const exists = await this.prisma.partner.findUnique({
+      where: { id: partnerId },
+      select: { id: true },
+    });
+    if (!exists) {
+      throw new NotFoundException('Parceiro não encontrado.');
+    }
+    const text = body.trim();
+    if (!text) {
+      throw new BadRequestException('O comentário não pode ser vazio.');
+    }
+    const c = await this.prisma.partnerComment.create({
+      data: { partnerId, userId, body: text },
+      include: { user: { select: { id: true, name: true } } },
+    });
+    return {
+      id: c.id,
+      body: c.body,
+      createdAt: c.createdAt.toISOString(),
+      user: c.user,
+    };
+  }
+
+  async recordPartnerShare(partnerId: string) {
+    try {
+      const p = await this.prisma.partner.update({
+        where: { id: partnerId },
+        data: { shareCount: { increment: 1 } },
+        select: { shareCount: true },
+      });
+      return { shareCount: p.shareCount };
+    } catch (e) {
+      if (e && typeof e === 'object' && (e as { code?: string }).code === 'P2025') {
+        throw new NotFoundException('Parceiro não encontrado.');
+      }
+      throw e;
+    }
   }
 
   async getPartnerPublic(id: string) {
