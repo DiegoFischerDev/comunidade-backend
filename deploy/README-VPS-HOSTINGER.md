@@ -364,10 +364,10 @@ docker compose pull
 docker compose up -d
 ```
 
-2. Rodar migrações do Prisma (uma vez):
+2. Rodar migrações do Prisma (o `docker-compose` **não** deve correr `migrate` no arranque do backend — isso em VPS pequenas pode dar **exit 137** / OOM; as migrações aplicam-se aqui):
 
 ```bash
-docker compose exec backend npx prisma migrate deploy
+docker compose exec -T backend npx prisma migrate deploy
 ```
 
 3. Verificar:
@@ -388,10 +388,16 @@ curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:13000/   # frontend
 cd /opt/comunidade-stage
 docker compose pull
 docker compose up -d
-docker compose exec backend npx prisma migrate deploy
+docker compose exec -T backend npx prisma migrate deploy
 ```
 
 Teste: **https://stage.rafaapelomundo.com** e **https://api-stage.rafaapelomundo.com**.
+
+---
+
+### Deploy com exit 137 durante o Prisma
+
+O código **137** (processo morto por SIGKILL) ao correr migrações costuma ser **falta de RAM** no contentor ou no host. Evite `npx prisma migrate deploy` no **mesmo** `command` do serviço `backend` no `docker-compose` (use a imagem que só inicia o Node; migrações num passo `exec` ou `compose run` à parte, como acima). Se ainda falhar, aumente RAM na VPS ou corra `migrate` uma vez em SSH com poucos outros serviços ativos.
 
 ---
 
