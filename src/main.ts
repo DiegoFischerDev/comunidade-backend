@@ -5,6 +5,7 @@ import { join } from 'path';
 import * as express from 'express';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { validationExceptionFactory } from './validation-exception.factory';
+import { getCorsOrigins } from './config/cors-origins';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -28,12 +29,7 @@ async function bootstrap() {
     }),
   );
   app.enableCors({
-    origin: [
-      process.env.FRONTEND_URL || 'http://localhost:3000',
-      'http://localhost:3000',
-      'https://stage.rafaapelomundo.com',
-      'https://comunidade.rafaapelomundo.com',
-    ],
+    origin: getCorsOrigins(),
     credentials: true,
   });
   // Servir arquivos estáticos de uploads
