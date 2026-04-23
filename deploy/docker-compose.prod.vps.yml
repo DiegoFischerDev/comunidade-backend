@@ -46,8 +46,11 @@ services:
   frontend:
     image: ${IMAGE_FRONTEND:-ghcr.io/SEU_USER/comunidade-frontend:latest}
     restart: unless-stopped
+    # URLs públicas: o JS do browser já vem com estes valores do build (CI: build-args). Aqui
+    # alinhamos o .env da VPS e o processo do servidor Node; para mudar o que o cliente vê, reconstrói a imagem.
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
     depends_on:
       - backend
     ports:

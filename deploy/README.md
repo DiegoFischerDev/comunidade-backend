@@ -34,7 +34,10 @@ POSTGRES_PASSWORD=senha_forte_postgres
 JWT_SECRET=seu_jwt_secreto_longo
 FRONTEND_URL=https://app.seudominio.com
 NEXT_PUBLIC_API_URL=https://api.seudominio.com
+NEXT_PUBLIC_SITE_URL=https://app.seudominio.com
 ```
+
+O `NEXT_PUBLIC_*` que o **browser** usa vem do **build** da imagem (GitHub Actions). O `.env` na máquina alinha o serviço; para alterar o URL no JS do cliente, reconstrói a imagem do frontend.
 
 - Ajuste em `nginx.conf` os `server_name` para seus domínios
 
@@ -53,6 +56,7 @@ POSTGRES_PASSWORD=outra_senha_postgres_stage
 JWT_SECRET=outro_jwt_stage
 FRONTEND_URL=https://stage.seudominio.com
 NEXT_PUBLIC_API_URL=https://api-stage.seudominio.com
+NEXT_PUBLIC_SITE_URL=https://stage.seudominio.com
 
 # Rafa Call (agendamento interno)
 RAFA_CALL_DURATION_MINUTES=30
@@ -126,10 +130,12 @@ Se a falha tiver deixado objetos na base (enum, tabelas a meio), pode ser precis
 
 **Frontend:** os mesmos acima e mais:
 
-| Nome                        | Descrição (build do Next usa em tempo de build) |
-|-----------------------------|--------------------------------------------------|
-| `NEXT_PUBLIC_API_URL`       | URL da API de **produção** (ex.: `https://api.seudominio.com`) |
-| `NEXT_PUBLIC_API_URL_STAGE` | URL da API de **stage** (ex.: `https://api-stage.seudominio.com`) |
+| Nome                         | Descrição (build do Next usa em tempo de build) |
+|------------------------------|--------------------------------------------------|
+| `NEXT_PUBLIC_API_URL`        | URL da API de **produção** (ex.: `https://api.seudominio.com`) |
+| `NEXT_PUBLIC_API_URL_STAGE`  | URL da API de **stage** (ex.: `https://api-stage.seudominio.com`) |
+| `NEXT_PUBLIC_SITE_URL`       | URL pública do site de **produção** (ex.: `https://app.seudominio.com`) |
+| `NEXT_PUBLIC_SITE_URL_STAGE` | URL pública do site em **stage** (ex.: `https://stage.seudominio.com`) |
 
 Ao dar **push** em `main`, o workflow faz build da imagem, envia para o GHCR e na VPS executa `docker compose pull backend` (ou `frontend`) e `up -d` em `/opt/comunidade-prod`. Em **push** em `stage`, o mesmo em `/opt/comunidade-stage`.
 

@@ -132,8 +132,11 @@ POSTGRES_PASSWORD=senha_forte_postgres_prod
 JWT_SECRET=um_jwt_secreto_longo_e_aleatorio_prod
 FRONTEND_URL=https://comunidade.rafaapelomundo.com
 NEXT_PUBLIC_API_URL=https://api-comunidade.rafaapelomundo.com
+NEXT_PUBLIC_SITE_URL=https://comunidade.rafaapelomundo.com
 PUBLIC_API_BASE_URL=https://api-comunidade.rafaapelomundo.com
 ```
+
+O **conteúdo de `NEXT_PUBLIC_*` que o browser usa** (links, partilhas) vem do **build da imagem** no GitHub Actions (`build-args` com os secrets). O `NEXT_PUBLIC_SITE_URL` no `.env` da VPS alinha o container e a documentação; se mudares só o `.env` sem publicar **nova** imagem de frontend, o JS antigo pode continuar com o URL antigo.
 
 Crie o diretório de uploads no host (vídeos/imagens em disco) e ajuste dono se precisar:
 
@@ -169,8 +172,11 @@ POSTGRES_PASSWORD=outra_senha_postgres_stage
 JWT_SECRET=outro_jwt_stage
 FRONTEND_URL=https://stage.rafaapelomundo.com
 NEXT_PUBLIC_API_URL=https://api-stage.rafaapelomundo.com
+NEXT_PUBLIC_SITE_URL=https://stage.rafaapelomundo.com
 PUBLIC_API_BASE_URL=https://api-stage.rafaapelomundo.com
 ```
+
+O **conteúdo de `NEXT_PUBLIC_*` no browser** vem do build da imagem (CI). O `NEXT_PUBLIC_SITE_URL` no `.env` alinha o serviço; após alterar o secret no GitHub, é preciso **rebuild e pull** da imagem `comunidade-frontend:stage`.
 
 ```bash
 sudo mkdir -p /opt/comunidade-stage/uploads
