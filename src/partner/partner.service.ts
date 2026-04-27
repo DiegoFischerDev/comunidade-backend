@@ -22,6 +22,7 @@ import { CreateLeadDto } from './dto/create-lead.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import {
   PartnerHouseStatus,
+  PartnerHouseTypology,
   PartnerReactionType,
   PartnerSaleCommissionPaymentStatus,
   Prisma,
@@ -1623,7 +1624,11 @@ export class PartnerService {
   }
 
   /** Listagem pública: relocation — disponíveis primeiro; depois por data de disponibilidade mais futura. */
-  async listPublicRelocationHouses() {
+  async listPublicRelocationHouses(filters?: {
+    partnerId?: string;
+    city?: string;
+    typology?: string;
+  }) {
     const cat = await this.prisma.productCategory.findUnique({
       where: { slug: RELOCATION_CATEGORY_SLUG },
       select: { id: true },
@@ -1632,9 +1637,21 @@ export class PartnerService {
       return [];
     }
 
+    const partnerId = filters?.partnerId?.trim() || undefined;
+    const city = filters?.city?.trim() || undefined;
+    const rawTyp = filters?.typology?.trim();
+    const typology: PartnerHouseTypology | undefined =
+      rawTyp &&
+      (Object.values(PartnerHouseTypology) as string[]).includes(rawTyp)
+        ? (rawTyp as PartnerHouseTypology)
+        : undefined;
+
     const rows = await this.prisma.partnerHouse.findMany({
       where: {
         partner: { categoryId: cat.id },
+        ...(partnerId ? { partnerId } : {}),
+        ...(city ? { city } : {}),
+        ...(typology ? { typology } : {}),
       },
       select: {
         id: true,

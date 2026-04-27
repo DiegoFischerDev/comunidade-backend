@@ -124,8 +124,16 @@ export class PartnerController {
   /** Imóveis públicos (parceiros relocation, disponíveis). Deve ficar antes de rotas `:id`. */
   @Public()
   @Get('relocation/houses')
-  async listRelocationHousesPublic() {
-    return this.partnerService.listPublicRelocationHouses();
+  async listRelocationHousesPublic(
+    @Query('partnerId') partnerId?: string,
+    @Query('city') city?: string,
+    @Query('typology') typology?: string,
+  ) {
+    return this.partnerService.listPublicRelocationHouses({
+      partnerId: partnerId || undefined,
+      city: city || undefined,
+      typology: typology || undefined,
+    });
   }
 
   /** Categoria Relocation (nome, slug, imagem de capa para hero). */
