@@ -24,7 +24,7 @@ export async function sendEmailBase(params: {
     throw new Error('Envio de email não está configurado (Resend).');
   }
 
-  const fromFormatted = 'Comunidade RPM <noreply@ia.rafaapelomundo.com>';
+  const fromFormatted = 'Comunidade Rafa Portugal <noreply@ia.rafaapelomundo.com>';
 
   return await resend.emails.send(
     {

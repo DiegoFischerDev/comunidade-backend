@@ -96,7 +96,7 @@ export class AuthService {
   private buildWhatsappRegistrationUrl(name: string, code: string): string {
     const num =
       this.getRegistrationNumbers()[0] || '351927398547';
-    const text = `Olá, meu nome é ${name}, gostaria de confirmar meu acesso a comunidade RPM. meu codigo é ${code}`;
+    const text = `Olá, meu nome é ${name}, gostaria de confirmar meu acesso à Comunidade Rafa Portugal. meu codigo é ${code}`;
     return `https://wa.me/${num.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
   }
 
@@ -243,7 +243,7 @@ export class AuthService {
     const communityUrl =
       process.env.FRONTEND_URL?.replace(/\/$/, '') || 'http://localhost:3000';
     const welcomeMsg =
-      `Bem-vindo(a) à Comunidade RPM! A sua conta foi ativada. Já pode acessar a comunidade com o seu WhatsApp e palavra-passe.\n\n${communityUrl}`;
+      `Bem-vindo(a) à Comunidade Rafa Portugal! A sua conta foi ativada. Já pode acessar a comunidade com o seu WhatsApp e palavra-passe.\n\n${communityUrl}`;
     const termsMsg =
       `*TERMOS E CONDIÇÕES – COMUNIDADE RAFA PELO MUNDO*\n\n` +
       `Ao participar da Comunidade Rafa Pelo Mundo, você concorda com os termos e condições descritos abaixo. Nosso objetivo é manter um ambiente seguro, respeitoso e realmente útil para todos que desejam planejar sua imigração para Portugal.\n\n` +
@@ -568,7 +568,7 @@ export class AuthService {
 
     const waText = `Olá ${user.name},
 
-Recebemos um pedido para redefinir a sua palavra-passe na Comunidade RPM.
+Recebemos um pedido para redefinir a sua palavra-passe na Comunidade Rafa Portugal.
 
 Utilize este código no site (válido por 30 minutos): ${resetCode}
 
@@ -578,10 +578,10 @@ Se não foi você, ignore esta mensagem.`;
 
     if (user.email) {
       try {
-        const subject = 'Pedido de redefinição de senha – Comunidade RPM';
+        const subject = 'Pedido de redefinição de senha – Comunidade Rafa Portugal';
         const text = `Olá ${user.name},
 
-Recebemos um pedido para redefinir a sua senha na Comunidade RPM.
+Recebemos um pedido para redefinir a sua senha na Comunidade Rafa Portugal.
 
 Utilize o código abaixo para criar uma nova senha:
 
@@ -592,7 +592,7 @@ Este código é válido por 30 minutos.
 Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
 
         const html = `<p>Olá ${user.name},</p>
-<p>Recebemos um pedido para redefinir a sua senha na <strong>Comunidade RPM</strong>.</p>
+<p>Recebemos um pedido para redefinir a sua senha na <strong>Comunidade Rafa Portugal</strong>.</p>
 <p>Utilize o código abaixo para criar uma nova senha:</p>
 <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${resetCode}</p>
 <p>Este código é válido por 30 minutos.</p>
@@ -694,10 +694,10 @@ Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
           'E-mail do utilizador não está configurado.',
         );
       }
-      const subject = 'Novo código de confirmação da Comunidade RPM';
+      const subject = 'Novo código de confirmação da Comunidade Rafa Portugal';
       const text = `Olá ${user.name},
 
-Recebemos um pedido para reenviar o seu código de confirmação da Comunidade RPM.
+Recebemos um pedido para reenviar o seu código de confirmação da Comunidade Rafa Portugal.
 
 Utilize o seguinte código para confirmar o seu e-mail:
 
@@ -708,7 +708,7 @@ Este código é válido por 15 minutos.
 Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
 
       const html = `<p>Olá ${user.name},</p>
-<p>Recebemos um pedido para reenviar o seu código de confirmação da <strong>Comunidade RPM</strong>.</p>
+<p>Recebemos um pedido para reenviar o seu código de confirmação da <strong>Comunidade Rafa Portugal</strong>.</p>
 <p>Utilize o seguinte código para confirmar o seu e-mail:</p>
 <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${verificationCode}</p>
 <p>Este código é válido por 15 minutos.</p>

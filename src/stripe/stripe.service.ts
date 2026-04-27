@@ -462,7 +462,7 @@ export class StripeService {
             currency: 'eur',
             unit_amount: amount,
             product_data: {
-              name: 'Anuidade Comunidade RPM',
+              name: 'Anuidade Comunidade Rafa Portugal',
               description: 'Acesso à comunidade por 1 ano (pagamento único)',
             },
           },
@@ -513,7 +513,7 @@ export class StripeService {
             currency: 'eur',
             unit_amount: amount,
             product_data: {
-              name: 'Anuidade Comunidade RPM',
+              name: 'Anuidade Comunidade Rafa Portugal',
               description: 'Acesso à comunidade por 1 ano (pagamento único)',
             },
           },
@@ -564,7 +564,7 @@ export class StripeService {
             currency: 'brl',
             unit_amount: amount,
             product_data: {
-              name: 'Anuidade Comunidade RPM',
+              name: 'Anuidade Comunidade Rafa Portugal',
               description: 'Acesso à comunidade por 1 ano (pagamento único)',
             },
           },
@@ -784,14 +784,14 @@ export class StripeService {
           : undefined;
       await this.sendPaymentConfirmationWhatsApp({
         userId,
-        reason: 'Anuidade Comunidade RPM (1 ano)',
+        reason: 'Anuidade Comunidade Rafa Portugal (1 ano)',
         amountLabel,
         paidAt,
         methodLabel,
       });
       await this.notifyAdminsNewPayment({
         payerUserId: userId,
-        reason: 'Anuidade Comunidade RPM (1 ano)',
+        reason: 'Anuidade Comunidade Rafa Portugal (1 ano)',
         amountLabel,
         paidAt,
         methodLabel,
@@ -808,19 +808,19 @@ export class StripeService {
         const heroUrl = `${frontendBase}/comunidade_bg.svg`;
         await sendEmailBase({
           to: user.email,
-          subject: 'Bem-vindo à Comunidade RPM – já és membro',
-          text: `Olá ${user.name},\n\nObrigado por te juntares à Comunidade RPM. O teu pagamento foi confirmado e agora tens acesso a todos os benefícios durante um ano.\n\nAté já!\nA equipa Comunidade RPM`,
+          subject: 'Bem-vindo à Comunidade Rafa Portugal – já és membro',
+          text: `Olá ${user.name},\n\nObrigado por te juntares à Comunidade Rafa Portugal. O teu pagamento foi confirmado e agora tens acesso a todos os benefícios durante um ano.\n\nAté já!\nA equipa Comunidade Rafa Portugal`,
           html: `
             <div style="max-width:640px;margin:0 auto;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
               <div style="width:100%;height:180px;overflow:hidden;">
-                <img src="${heroUrl}" alt="Comunidade RPM" style="width:100%;height:100%;object-fit:cover;display:block;" />
+                <img src="${heroUrl}" alt="Comunidade Rafa Portugal" style="width:100%;height:100%;object-fit:cover;display:block;" />
               </div>
               <div style="padding:24px 20px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827;">
                 <p style="font-size:16px;margin:0 0 12px;">Olá <strong>${user.name}</strong>,</p>
-                <p style="margin:0 0 12px;">Obrigado por te juntares à <strong>Comunidade RPM</strong>. O teu pagamento foi confirmado e agora tens acesso a todos os benefícios durante um ano.</p>
+                <p style="margin:0 0 12px;">Obrigado por te juntares à <strong>Comunidade Rafa Portugal</strong>. O teu pagamento foi confirmado e agora tens acesso a todos os benefícios durante um ano.</p>
                 <p style="margin:0 0 8px;">Sempre que precisares de ajuda, é só entrar no teu dashboard e falar connosco.</p>
                 <p style="margin:16px 0 0;">Até já!</p>
-                <p style="margin:4px 0 0;">A equipa Comunidade RPM</p>
+                <p style="margin:4px 0 0;">A equipa Comunidade Rafa Portugal</p>
               </div>
             </div>
           `,
@@ -920,14 +920,14 @@ export class StripeService {
         const amountLabel = this.formatMoney(amountPaid, currency);
         await this.sendPaymentConfirmationWhatsApp({
           userId,
-          reason: 'Renovação — Anuidade Comunidade RPM',
+          reason: 'Renovação — Anuidade Comunidade Rafa Portugal',
           amountLabel,
           paidAt,
           methodLabel: 'Stripe',
         });
         await this.notifyAdminsNewPayment({
           payerUserId: userId,
-          reason: 'Renovação — Anuidade Comunidade RPM',
+          reason: 'Renovação — Anuidade Comunidade Rafa Portugal',
           amountLabel,
           paidAt,
           methodLabel: 'Stripe',
