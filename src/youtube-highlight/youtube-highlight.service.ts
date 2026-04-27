@@ -4,6 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  extractYouTubeVideoId,
+  youtubeHqDefaultThumbnailUrl,
+} from './youtube-video-id.util';
 
 const DEFAULT_CARDS: Array<{
   position: number;
@@ -17,7 +21,7 @@ const DEFAULT_CARDS: Array<{
       '🏡 Ep 8 | VALEU A PENA? Valor e financiamento da nossa casa numa vila no interior de Portugal 🇵🇹',
     videoUrl:
       'https://www.youtube.com/watch?v=nSuXTX0z9Vk&list=PLE6qyBhvOLI0C0Ardu5fY3z8JK3kv-OKI&index=8',
-    thumbnailUrl: '/youtube_1.png',
+    thumbnailUrl: youtubeHqDefaultThumbnailUrl('nSuXTX0z9Vk'),
   },
   {
     position: 2,
@@ -25,7 +29,7 @@ const DEFAULT_CARDS: Array<{
       '🏡 Ep 13 | Tiramos as maiores dúvidas sobre crédito habitação em Portugal 🇵🇹',
     videoUrl:
       'https://www.youtube.com/watch?v=v04RVqeT9aQ&list=PLE6qyBhvOLI0C0Ardu5fY3z8JK3kv-OKI&index=12',
-    thumbnailUrl: '/youtube_2.png',
+    thumbnailUrl: youtubeHqDefaultThumbnailUrl('v04RVqeT9aQ'),
   },
   {
     position: 3,
@@ -33,7 +37,7 @@ const DEFAULT_CARDS: Array<{
       '🏡 Ep 6 | Primeiros dias na nossa casa na aldeia em Portugal 🇵🇹',
     videoUrl:
       'https://www.youtube.com/watch?v=Z4Dv3M2ZLOQ&list=PLE6qyBhvOLI0C0Ardu5fY3z8JK3kv-OKI',
-    thumbnailUrl: '/youtube_3.png',
+    thumbnailUrl: youtubeHqDefaultThumbnailUrl('Z4Dv3M2ZLOQ'),
   },
 ];
 
@@ -74,12 +78,17 @@ export class YoutubeHighlightService {
       throw new NotFoundException('Configuração de destaques YouTube incompleta.');
     }
     return {
-      cards: rows.map((r) => ({
-        position: r.position,
-        title: r.title,
-        videoUrl: r.videoUrl,
-        thumbnailUrl: r.thumbnailUrl,
-      })),
+      cards: rows.map((r) => {
+        const id = extractYouTubeVideoId(r.videoUrl);
+        return {
+          position: r.position,
+          title: r.title,
+          videoUrl: r.videoUrl,
+          thumbnailUrl: id
+            ? youtubeHqDefaultThumbnailUrl(id)
+            : r.thumbnailUrl,
+        };
+      }),
     };
   }
 
@@ -118,7 +127,7 @@ export class YoutubeHighlightService {
         throw new BadRequestException('Cada posição (1, 2, 3) deve aparecer uma vez.');
       }
       positions.add(pos);
-      for (const key of ['title', 'videoUrl', 'thumbnailUrl'] as const) {
+      for (const key of ['title', 'videoUrl'] as const) {
         if (typeof o[key] !== 'string') {
           throw new BadRequestException(
             `O card ${pos} deve ter "${key}" em texto.`,
@@ -127,7 +136,6 @@ export class YoutubeHighlightService {
       }
       const title = (o.title as string).trim();
       const videoUrl = (o.videoUrl as string).trim();
-      const thumbnailUrl = (o.thumbnailUrl as string).trim();
       if (title.length === 0 || title.length > 500) {
         throw new BadRequestException(
           'O título de cada card é obrigatório (máx. 500 caracteres).',
@@ -138,11 +146,13 @@ export class YoutubeHighlightService {
           'O URL do vídeo é obrigatório (máx. 2048 caracteres).',
         );
       }
-      if (thumbnailUrl.length === 0 || thumbnailUrl.length > 2048) {
+      const videoId = extractYouTubeVideoId(videoUrl);
+      if (!videoId) {
         throw new BadRequestException(
-          'A miniatura (URL) é obrigatória (máx. 2048 caracteres).',
+          `O card ${pos}: URL de vídeo do YouTube inválida (não foi possível obter o ID do vídeo).`,
         );
       }
+      const thumbnailUrl = youtubeHqDefaultThumbnailUrl(videoId);
       out.push({ position: pos, title, videoUrl, thumbnailUrl });
     }
     if (positions.size !== 3) {
