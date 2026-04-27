@@ -106,13 +106,18 @@ export class SupportTicketsService {
 
     const current = await this.prisma.supportTicket.findUnique({
       where: { id },
-      select: { id: true, userId: true, status: true },
+      select: { id: true, userId: true, status: true, adminReply: true },
     });
     if (!current || current.userId !== params.userId) {
       throw new BadRequestException('Ticket não encontrado.');
     }
     if (current.status === SupportTicketStatus.DONE) {
       throw new BadRequestException('Não é possível editar um ticket concluído.');
+    }
+    if ((current.adminReply ?? '').trim().length > 0) {
+      throw new BadRequestException(
+        'Não é possível editar depois de a equipa ter deixado uma resposta.',
+      );
     }
 
     const updated = await this.prisma.supportTicket.update({
