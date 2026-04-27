@@ -1110,10 +1110,10 @@ export class PartnerService {
     return `${this.frontendBaseUrl}/dashboard/casas/${houseId}`;
   }
 
-  /** Texto curto: «2 cauções · 1 renda antecipada» (alinhado à página pública). */
+  /** Texto curto: «2 cauções · 1 renda» (alinhado à página pública). */
   private formatHouseEntradaShortLine(caucoes: number, rendas: number): string {
     const c = caucoes === 1 ? '1 caução' : `${caucoes} cauções`;
-    const r = rendas === 1 ? '1 renda antecipada' : `${rendas} rendas antecipadas`;
+    const r = rendas === 1 ? '1 renda' : `${rendas} rendas`;
     return `${c} · ${r}`;
   }
 
@@ -1157,7 +1157,7 @@ export class PartnerService {
       `📝 *Descrição:*`,
       params.description.trim(),
       ``,
-      `🔗 *Página do anúncio (Comunidade RPM):*`,
+      `🔗 *Página do anúncio (Comunidade Rafa Portugal):*`,
       housePageUrl,
     );
     return lines.join('\n');

@@ -1,4 +1,4 @@
-# Deploy na VPS (Comunidade RPM)
+# Deploy na VPS (Comunidade Rafa Portugal)
 
 Este repositório contém o **backend**. O frontend fica em outro repositório. Os dois são implantados na mesma VPS, com dois ambientes: **produção** (branch `main`) e **stage** (branch `stage`).
 

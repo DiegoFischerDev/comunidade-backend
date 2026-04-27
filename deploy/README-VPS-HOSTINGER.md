@@ -1,6 +1,6 @@
-# Configurar VPS Hostinger para Comunidade RPM (sem afetar o evo)
+# Configurar VPS Hostinger para Comunidade Rafa Portugal (sem afetar o evo)
 
-Este guia configura a aplicação **Comunidade RPM** na mesma VPS onde já roda o **evo** (RPM/evo), usando subdomínios e portas internas para não interferir no projeto existente.
+Este guia configura a aplicação **Comunidade Rafa Portugal** na mesma VPS onde já roda o **evo** (RPM/evo), usando subdomínios e portas internas para não interferir no projeto existente.
 
 **Subdomínios usados:**
 
@@ -203,7 +203,7 @@ sudo nano /etc/nginx/sites-available/comunidade
 2. Cole o conteúdo abaixo.
 
 ```nginx
-# Comunidade RPM - Produção e Stage (proxy para containers)
+# Comunidade Rafa Portugal - Produção e Stage (proxy para containers)
 # Não altera o comportamento do evo.
 
 # Redirecionar HTTP -> HTTPS (produção)
@@ -504,4 +504,4 @@ Os workflows fazem deploy em **/opt/comunidade-prod** (branch main) e **/opt/com
   - Containers em **/opt/comunidade-prod** e **/opt/comunidade-stage**, escutando só em **127.0.0.1** (13000, 13001, 13002, 13003).  
   - Nginx do **host** recebe tráfego em 80/443 e encaminha por `server_name` para essas portas, sem alterar a configuração do evo.
 
-Assim a Comunidade RPM fica isolada por subdomínio e porta, e o evo segue funcionando como antes.
+Assim a Comunidade Rafa Portugal fica isolada por subdomínio e porta, e o evo segue funcionando como antes.
