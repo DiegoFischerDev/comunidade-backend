@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
 import { PartnerSaleCommissionPaymentStatus, SubscriptionStatus, UserTier } from '@prisma/client';
@@ -10,6 +10,7 @@ const MEMBERSHIP_DURATION_YEARS = 1;
 
 @Injectable()
 export class StripeService {
+  private readonly logger = new Logger(StripeService.name);
   private stripe: Stripe | null = null;
 
   constructor(
@@ -648,9 +649,36 @@ export class StripeService {
     }
   }
 
+  /**
+   * Checkout pode ficar `no_payment_required` quando o total é 0€ (ex.: cupão 100%).
+   * Nesse caso o webhook deixa de ser `paid` e o handler antigo ignorava a sessão — tier ficava VISITOR.
+   */
+  private isCheckoutSessionSuccessfullyPaid(session: Stripe.Checkout.Session): boolean {
+    const sess = session as any;
+    const ps = sess.payment_status as string | undefined;
+    if (ps === 'paid') return true;
+    if (ps !== 'no_payment_required') return false;
+    const meta = (sess.metadata ?? {}) as Record<string, string | undefined>;
+    const checkoutType = meta.checkoutType;
+    return (
+      meta.membershipEurCents != null ||
+      checkoutType === 'rafa_call_unlock' ||
+      checkoutType === 'partner_sale_commission'
+    );
+  }
+
   private async handleCheckoutCompleted(session: Stripe.Checkout.Session): Promise<void> {
     const sess = session as any;
-    if (sess.payment_status !== 'paid') return;
+    if (!this.isCheckoutSessionSuccessfullyPaid(session)) {
+      const ps = sess.payment_status as string | undefined;
+      // `unpaid` é esperado em métodos assíncronos até vir async_payment_succeeded — não spammar logs.
+      if (ps !== 'unpaid') {
+        this.logger.warn(
+          `Stripe checkout não atualizou conta (session=${sess.id}, payment_status=${ps ?? 'undefined'})`,
+        );
+      }
+      return;
+    }
 
     const subIdFromSession = resolveSubscriptionId(session.subscription);
     const userId =
