@@ -851,6 +851,69 @@ export class PartnerService {
     return partner;
   }
 
+  private async getOrCreateRelocationPartnerForAdmin(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        name: true,
+        whatsapp: true,
+        partner: {
+          select: {
+            id: true,
+            name: true,
+            whatsapp: true,
+            categoryId: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Administrador não encontrado.');
+    }
+    if (user.role !== Role.ADMIN) {
+      throw new ForbiddenException('Apenas administradores podem criar anúncios nesta área.');
+    }
+
+    const relocationCategory = await this.prisma.productCategory.findUnique({
+      where: { slug: RELOCATION_CATEGORY_SLUG },
+      select: { id: true },
+    });
+    if (!relocationCategory) {
+      throw new BadRequestException('Categoria relocation não encontrada.');
+    }
+
+    if (!user.partner) {
+      return this.prisma.partner.create({
+        data: {
+          userId: user.id,
+          name: user.name?.trim() || 'Admin',
+          whatsapp: user.whatsapp,
+          categoryId: relocationCategory.id,
+        },
+      });
+    }
+
+    if (
+      user.partner.categoryId !== relocationCategory.id ||
+      user.partner.whatsapp !== user.whatsapp ||
+      user.partner.name !== user.name
+    ) {
+      return this.prisma.partner.update({
+        where: { id: user.partner.id },
+        data: {
+          categoryId: relocationCategory.id,
+          whatsapp: user.whatsapp,
+          ...(user.name ? { name: user.name } : {}),
+        },
+      });
+    }
+
+    return user.partner;
+  }
+
   async listMyServices(userId: string) {
     const partner = await this.getPartnerForUserOrThrow(userId);
 
@@ -1288,13 +1351,12 @@ export class PartnerService {
     return row;
   }
 
-  async createMyHousePost(
-    userId: string,
+  private async createHousePostForPartner(
+    partnerId: string,
     dto: CreatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
   ) {
-    const partner = await this.getRelocationPartnerOrThrow(userId);
     if (!this.housesGroupJid) {
       throw new BadRequestException(
         'EVOLUTION_HOUSES_RELOCATION_GROUP_JID não configurado no backend.',
@@ -1370,12 +1432,12 @@ export class PartnerService {
 
     const created = await this.prisma.partnerHouse.create({
       data: {
-        partnerId: partner.id,
+        partnerId,
         title: dto.title.trim(),
         description: dto.description.trim(),
         businessType: dto.businessType ?? 'RENT',
         typology: dto.typology,
-        city: dto.city,
+        city: dto.city.trim(),
         availableFrom,
         priceEur: dto.priceEur.trim(),
         relocationFeeEur: dto.relocationFeeEur.trim(),
@@ -1393,11 +1455,11 @@ export class PartnerService {
       // Grupo WhatsApp: só texto com link (uma vez na criação). Fotos e vídeo ficam na página pública.
       const text = this.formatHousePostText({
         houseId: created.id,
-        partnerId: partner.id,
+        partnerId,
         title: dto.title,
         description: dto.description,
         businessType: dto.businessType ?? 'RENT',
-        city: dto.city,
+        city: dto.city.trim(),
         typology: dto.typology,
         availableFrom,
         priceEur: dto.priceEur,
@@ -1440,6 +1502,26 @@ export class PartnerService {
     }
 
     return created;
+  }
+
+  async createMyHousePost(
+    userId: string,
+    dto: CreatePartnerHouseDto,
+    imageFiles: Express.Multer.File[],
+    videoFile: Express.Multer.File | null,
+  ) {
+    const partner = await this.getRelocationPartnerOrThrow(userId);
+    return this.createHousePostForPartner(partner.id, dto, imageFiles, videoFile);
+  }
+
+  async adminCreateHousePost(
+    adminUserId: string,
+    dto: CreatePartnerHouseDto,
+    imageFiles: Express.Multer.File[],
+    videoFile: Express.Multer.File | null,
+  ) {
+    const partner = await this.getOrCreateRelocationPartnerForAdmin(adminUserId);
+    return this.createHousePostForPartner(partner.id, dto, imageFiles, videoFile);
   }
 
   async getMyHouse(userId: string, houseId: string) {
@@ -1611,7 +1693,7 @@ export class PartnerService {
       data: {
         ...(dto.title != null && { title: dto.title.trim() }),
         ...(dto.description != null && { description: dto.description.trim() }),
-        ...(dto.city != null && { city: dto.city }),
+        ...(dto.city != null && { city: dto.city.trim() }),
         ...(dto.typology != null && { typology: dto.typology }),
         ...(dto.businessType != null && { businessType: dto.businessType }),
         ...(dto.availableFrom != null && {

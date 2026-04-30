@@ -325,6 +325,37 @@ export class PartnerController {
     return this.partnerService.adminListAllHouses();
   }
 
+  @Post('admin/houses')
+  @Roles(Role.ADMIN)
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: 6 },
+        { name: 'video', maxCount: 1 },
+      ],
+      {
+        limits: {
+          files: 7,
+          fileSize: 48 * 1024 * 1024,
+        },
+        storage: memoryStorage(),
+      },
+    ),
+  )
+  async adminCreateHousePost(
+    @CurrentUser() user: { id: string },
+    @Body() dto: CreatePartnerHouseDto,
+    @UploadedFiles()
+    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
+  ) {
+    return this.partnerService.adminCreateHousePost(
+      user.id,
+      dto,
+      files?.images ?? [],
+      files?.video?.[0] ?? null,
+    );
+  }
+
   @Delete('admin/houses/:houseId')
   @Roles(Role.ADMIN)
   @HttpCode(200)

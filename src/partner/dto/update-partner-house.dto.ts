@@ -8,7 +8,6 @@ import {
 } from 'class-validator';
 import {
   PARTNER_HOUSE_BUSINESS_TYPE_CODES,
-  PARTNER_HOUSE_CITY_CODES,
   PARTNER_HOUSE_ENTRADA_COUNT,
   PARTNER_HOUSE_FURNISHED_VALUES,
   PARTNER_HOUSE_TYPOLOGY_CODES,
@@ -29,11 +28,10 @@ export class UpdatePartnerHouseDto {
   description?: string;
 
   @IsOptional()
-  @IsString({ message: 'Indica uma cidade válida.' })
-  @IsIn(PARTNER_HOUSE_CITY_CODES as unknown as string[], {
-    message: 'Cidade inválida.',
-  })
-  city?: (typeof PARTNER_HOUSE_CITY_CODES)[number];
+  @IsString({ message: 'Indica a cidade.' })
+  @MinLength(1, { message: 'Indica a cidade.' })
+  @MaxLength(120, { message: 'O nome da cidade é demasiado longo.' })
+  city?: string;
 
   @IsOptional()
   @IsString({ message: 'Indica uma tipologia válida.' })

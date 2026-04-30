@@ -10,21 +10,6 @@ import {
 /** Multipart envia "true" | "false" como texto. */
 export const PARTNER_HOUSE_FURNISHED_VALUES = ['true', 'false'] as const;
 
-export const PARTNER_HOUSE_CITY_CODES = [
-  'INTERIOR',
-  'LISBOA',
-  'PORTO',
-  'BRAGA',
-  'COIMBRA',
-  'AVEIRO',
-  'FARO',
-  'ALGARVE',
-  'EVORA',
-  'VISEU',
-] as const;
-
-export type PartnerHouseCityCode = (typeof PARTNER_HOUSE_CITY_CODES)[number];
-
 export const PARTNER_HOUSE_TYPOLOGY_CODES = [
   'T1',
   'T2',
@@ -55,11 +40,10 @@ export class CreatePartnerHouseDto {
   @MaxLength(2000, { message: 'A descrição não pode ter mais de 2000 caracteres.' })
   description!: string;
 
-  @IsString({ message: 'Indica uma cidade válida.' })
-  @IsIn(PARTNER_HOUSE_CITY_CODES as unknown as string[], {
-    message: 'Cidade inválida.',
-  })
-  city!: PartnerHouseCityCode;
+  @IsString({ message: 'Indica a cidade.' })
+  @MinLength(1, { message: 'Indica a cidade.' })
+  @MaxLength(120, { message: 'O nome da cidade é demasiado longo.' })
+  city!: string;
 
   @IsString({ message: 'Indica uma tipologia válida.' })
   @IsIn(PARTNER_HOUSE_TYPOLOGY_CODES as unknown as string[], {
