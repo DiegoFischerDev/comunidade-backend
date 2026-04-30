@@ -11,6 +11,7 @@ const MEMBERSHIP_DURATION_YEARS = 1;
 @Injectable()
 export class StripeService {
   private stripe: Stripe | null = null;
+  private readonly membershipLotSize = 100;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -134,6 +135,65 @@ export class StripeService {
     return n;
   }
 
+  /** Incremento por lote (a cada 100 membros VIP): +10,00 € */
+  private get membershipLotIncrementEurCents(): number {
+    const raw = process.env.STRIPE_MEMBERSHIP_LOT_INCREMENT_EUR_CENTS;
+    const n = raw ? parseInt(raw, 10) : 1000;
+    if (!Number.isFinite(n) || n < 0) return 1000;
+    return n;
+  }
+
+  /** Incremento por lote para Pix (BRL), padrão equivalente: +R$ 10,00 */
+  private get membershipLotIncrementPixCentavos(): number {
+    const raw = process.env.STRIPE_MEMBERSHIP_LOT_INCREMENT_PIX_CENTAVOS;
+    const n = raw ? parseInt(raw, 10) : 1000;
+    if (!Number.isFinite(n) || n < 0) return 1000;
+    return n;
+  }
+
+  private async countActiveMembers(): Promise<number> {
+    const now = new Date();
+    return this.prisma.user.count({
+      where: {
+        tier: UserTier.MEMBER,
+        OR: [{ membershipExpiresAt: null }, { membershipExpiresAt: { gte: now } }],
+      },
+    });
+  }
+
+  private async getMembershipPricingSnapshot(): Promise<{
+    eurCents: number;
+    pixCentavos: number;
+    membersCount: number;
+    lotSize: number;
+    lotIndex: number;
+    lotNumber: number;
+    membersInCurrentLot: number;
+    membersUntilNextLot: number;
+    nextLotEurCents: number;
+    nextLotPixCentavos: number;
+  }> {
+    const membersCount = await this.countActiveMembers();
+    const lotSize = this.membershipLotSize;
+    const lotIndex = Math.floor(membersCount / lotSize);
+    const membersInCurrentLot = membersCount % lotSize;
+    const membersUntilNextLot = lotSize - membersInCurrentLot;
+    const eurCents = this.eurAmountCents + lotIndex * this.membershipLotIncrementEurCents;
+    const pixCentavos = this.pixAmountCentavos + lotIndex * this.membershipLotIncrementPixCentavos;
+    return {
+      eurCents,
+      pixCentavos,
+      membersCount,
+      lotSize,
+      lotIndex,
+      lotNumber: lotIndex + 1,
+      membersInCurrentLot,
+      membersUntilNextLot,
+      nextLotEurCents: eurCents + this.membershipLotIncrementEurCents,
+      nextLotPixCentavos: pixCentavos + this.membershipLotIncrementPixCentavos,
+    };
+  }
+
   /** Taxa para novo agendamento Cal.com após consumir a chamada (EUR). */
   private get rafaCallEurCents(): number {
     const raw = process.env.STRIPE_RAFA_CALL_EUR_CENTS;
@@ -204,11 +264,19 @@ export class StripeService {
   }
 
   /** Valores atuais da anuidade (para exibir no frontend). */
-  getMembershipAmounts(): { eurCents: number; pixCentavos: number } {
-    return {
-      eurCents: this.eurAmountCents,
-      pixCentavos: this.pixAmountCentavos,
-    };
+  async getMembershipAmounts(): Promise<{
+    eurCents: number;
+    pixCentavos: number;
+    membersCount: number;
+    lotSize: number;
+    lotIndex: number;
+    lotNumber: number;
+    membersInCurrentLot: number;
+    membersUntilNextLot: number;
+    nextLotEurCents: number;
+    nextLotPixCentavos: number;
+  }> {
+    return this.getMembershipPricingSnapshot();
   }
 
   private stripeCustomerEmail(
@@ -450,7 +518,8 @@ export class StripeService {
     }
 
     const stripe = this.getClient();
-    const amount = this.eurAmountCents;
+    const pricing = await this.getMembershipPricingSnapshot();
+    const amount = pricing.eurCents;
     const email = userEmail?.trim() || null;
 
     const session = await stripe.checkout.sessions.create({
@@ -473,7 +542,13 @@ export class StripeService {
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: userId,
-      metadata: { userId },
+      metadata: {
+        userId,
+        membershipLotNumber: String(pricing.lotNumber),
+        membershipMembersCount: String(pricing.membersCount),
+        membershipEurCents: String(pricing.eurCents),
+        membershipPixCentavos: String(pricing.pixCentavos),
+      },
       allow_promotion_codes: true,
     });
 
@@ -501,7 +576,8 @@ export class StripeService {
     }
 
     const stripe = this.getClient();
-    const amount = this.eurAmountCents;
+    const pricing = await this.getMembershipPricingSnapshot();
+    const amount = pricing.eurCents;
     const email = userEmail?.trim() || null;
 
     const session = await stripe.checkout.sessions.create({
@@ -524,7 +600,13 @@ export class StripeService {
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: userId,
-      metadata: { userId },
+      metadata: {
+        userId,
+        membershipLotNumber: String(pricing.lotNumber),
+        membershipMembersCount: String(pricing.membersCount),
+        membershipEurCents: String(pricing.eurCents),
+        membershipPixCentavos: String(pricing.pixCentavos),
+      },
     });
 
     if (!session.url) {
@@ -552,7 +634,8 @@ export class StripeService {
     }
 
     const stripe = this.getClient();
-    const amount = this.pixAmountCentavos;
+    const pricing = await this.getMembershipPricingSnapshot();
+    const amount = pricing.pixCentavos;
     const email = userEmail?.trim() || null;
 
     const session = await stripe.checkout.sessions.create({
@@ -575,7 +658,13 @@ export class StripeService {
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: userId,
-      metadata: { userId },
+      metadata: {
+        userId,
+        membershipLotNumber: String(pricing.lotNumber),
+        membershipMembersCount: String(pricing.membersCount),
+        membershipEurCents: String(pricing.eurCents),
+        membershipPixCentavos: String(pricing.pixCentavos),
+      },
       payment_method_options: {
         pix: {
           expires_after_seconds: 30 * 60, // 30 minutos
@@ -739,7 +828,7 @@ export class StripeService {
     const customerId = typeof sess.customer === 'string' ? sess.customer : sess.customer?.id;
     const subscriptionId = resolveSubscriptionId(session.subscription);
     const validUntil = addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
-    const grantRafaUnlock = false;
+    const grantRafaUnlock = true;
 
     await this.prisma.$transaction([
       this.prisma.subscription.upsert({
@@ -763,7 +852,13 @@ export class StripeService {
         data: {
           tier: UserTier.MEMBER,
           membershipExpiresAt: validUntil,
-          ...(grantRafaUnlock ? { rafaCallSchedulingUnlocked: true } : {}),
+          ...(grantRafaUnlock
+            ? {
+                rafaCallSchedulingUnlocked: true,
+                // Pagou anuidade: ganha 1 agendamento com a Rafa.
+                rafaCallUnlockOrigin: 'USER_PAID',
+              }
+            : {}),
         },
       }),
     ]);
@@ -904,7 +999,13 @@ export class StripeService {
     });
     await this.prisma.user.update({
       where: { id: userId },
-      data: { tier: UserTier.MEMBER, membershipExpiresAt: validUntil },
+      data: {
+        tier: UserTier.MEMBER,
+        membershipExpiresAt: validUntil,
+        // Renovação/ativação da anuidade também libera novo agendamento.
+        rafaCallSchedulingUnlocked: true,
+        rafaCallUnlockOrigin: 'USER_PAID',
+      },
     });
 
     if (
@@ -946,6 +1047,13 @@ export class StripeService {
     const cur =
       ((session as any).currency as string | undefined)?.toLowerCase() ?? 'eur';
     if (cur === 'brl') {
+      const fromMeta = Number.parseInt(
+        String((session as any).metadata?.membershipEurCents ?? ''),
+        10,
+      );
+      if (Number.isFinite(fromMeta) && fromMeta > 0) {
+        return Math.round(fromMeta) / 100;
+      }
       return Math.round(this.eurAmountCents) / 100;
     }
     const total = (session as any).amount_total as number | null | undefined;
