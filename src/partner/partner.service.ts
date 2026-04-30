@@ -28,6 +28,8 @@ import {
   Prisma,
   Role,
 } from '@prisma/client';
+type HouseBusinessType = 'RENT' | 'SALE';
+
 import { JwtService } from '@nestjs/jwt';
 import { StripeService } from '../stripe/stripe.service';
 import { unlink } from 'fs/promises';
@@ -1122,6 +1124,7 @@ export class PartnerService {
     partnerId: string;
     title: string;
     description: string;
+    businessType: HouseBusinessType;
     city: string;
     typology: string;
     availableFrom: Date;
@@ -1134,6 +1137,7 @@ export class PartnerService {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
     const cityLabel = this.formatHouseCityLabel(params.city);
+    const businessTypeLabel = this.formatHouseBusinessTypeLabel(params.businessType);
     const housePageUrl = this.buildHousePublicPageLink(params.houseId);
     const entrada = this.formatHouseEntradaShortLine(
       params.caucoesCount,
@@ -1144,11 +1148,13 @@ export class PartnerService {
     const lines = [
       `🏠 *${params.title.trim()}*`,
       ``,
+      `*Casa para ${params.businessType === 'SALE' ? 'venda' : 'arrendamento'}*`,
       `📍 *Cidade:* ${cityLabel}`,
       `🏘️ *Tipologia:* ${typologyLabel}`,
+      `🏷️ *Finalidade:* ${businessTypeLabel}`,
       `🛋️ *Mobilado:* ${mobilado}`,
       `📅 *Disponível em:* ${datePt}`,
-      `💶 *Renda:* ${params.priceEur.trim()} / mês`,
+      `💶 *${params.businessType === 'SALE' ? 'Preço de venda' : 'Renda'}:* ${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`,
       `*Taxa relocation:* ${fee} €`,
       `*Entrada:* ${entrada}`,
     ];
@@ -1209,6 +1215,10 @@ export class PartnerService {
     }
   }
 
+  private formatHouseBusinessTypeLabel(type: HouseBusinessType): string {
+    return type === 'SALE' ? 'Venda' : 'Arrendamento';
+  }
+
   /**
    * Página pública do anúncio: imóvel relocation + dados mínimos do parceiro (nome, logo, categoria).
    */
@@ -1260,12 +1270,13 @@ export class PartnerService {
         id: true,
         status: true,
         title: true,
+        businessType: true,
         city: true,
         typology: true,
         priceEur: true,
         furnished: true,
         partnerId: true,
-      },
+      } as any,
     });
     if (!row) {
       throw new NotFoundException('Imóvel não encontrado.');
@@ -1358,6 +1369,7 @@ export class PartnerService {
         partnerId: partner.id,
         title: dto.title.trim(),
         description: dto.description.trim(),
+        businessType: dto.businessType ?? 'RENT',
         typology: dto.typology,
         city: dto.city,
         availableFrom,
@@ -1370,7 +1382,7 @@ export class PartnerService {
         imageUrls,
         coverImageUrl,
         videoUrl,
-      },
+      } as any,
     });
 
     try {
@@ -1380,6 +1392,7 @@ export class PartnerService {
         partnerId: partner.id,
         title: dto.title,
         description: dto.description,
+        businessType: dto.businessType ?? 'RENT',
         city: dto.city,
         typology: dto.typology,
         availableFrom,
@@ -1596,6 +1609,7 @@ export class PartnerService {
         ...(dto.description != null && { description: dto.description.trim() }),
         ...(dto.city != null && { city: dto.city }),
         ...(dto.typology != null && { typology: dto.typology }),
+        ...(dto.businessType != null && { businessType: dto.businessType }),
         ...(dto.availableFrom != null && {
           availableFrom: new Date(dto.availableFrom),
         }),
@@ -1628,6 +1642,7 @@ export class PartnerService {
     partnerId?: string;
     city?: string;
     typology?: string;
+    businessType?: string;
   }) {
     const cat = await this.prisma.productCategory.findUnique({
       where: { slug: RELOCATION_CATEGORY_SLUG },
@@ -1645,6 +1660,12 @@ export class PartnerService {
       (Object.values(PartnerHouseTypology) as string[]).includes(rawTyp)
         ? (rawTyp as PartnerHouseTypology)
         : undefined;
+    const rawBusinessType = filters?.businessType?.trim();
+    const businessType: HouseBusinessType | undefined =
+      rawBusinessType &&
+      (['RENT', 'SALE'] as string[]).includes(rawBusinessType)
+        ? (rawBusinessType as HouseBusinessType)
+        : undefined;
 
     const rows = await this.prisma.partnerHouse.findMany({
       where: {
@@ -1652,11 +1673,13 @@ export class PartnerService {
         ...(partnerId ? { partnerId } : {}),
         ...(city ? { city } : {}),
         ...(typology ? { typology } : {}),
+        ...(businessType ? { businessType } : {}),
       },
       select: {
         id: true,
         title: true,
         description: true,
+        businessType: true,
         typology: true,
         city: true,
         availableFrom: true,
@@ -1679,13 +1702,16 @@ export class PartnerService {
             shortDescription: true,
           },
         },
-      },
+      } as any,
     });
     rows.sort((a, b) => {
       const byStatus =
         relocationHouseStatusRank(a.status) - relocationHouseStatusRank(b.status);
       if (byStatus !== 0) return byStatus;
-      return b.availableFrom.getTime() - a.availableFrom.getTime();
+      return (
+        new Date(b.availableFrom as any).getTime() -
+        new Date(a.availableFrom as any).getTime()
+      );
     });
     return rows;
   }

@@ -128,11 +128,13 @@ export class PartnerController {
     @Query('partnerId') partnerId?: string,
     @Query('city') city?: string,
     @Query('typology') typology?: string,
+    @Query('businessType') businessType?: string,
   ) {
     return this.partnerService.listPublicRelocationHouses({
       partnerId: partnerId || undefined,
       city: city || undefined,
       typology: typology || undefined,
+      businessType: businessType || undefined,
     });
   }
 

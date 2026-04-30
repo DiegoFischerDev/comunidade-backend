@@ -7,6 +7,7 @@ import {
   MinLength,
 } from 'class-validator';
 import {
+  PARTNER_HOUSE_BUSINESS_TYPE_CODES,
   PARTNER_HOUSE_CITY_CODES,
   PARTNER_HOUSE_ENTRADA_COUNT,
   PARTNER_HOUSE_FURNISHED_VALUES,
@@ -40,6 +41,13 @@ export class UpdatePartnerHouseDto {
     message: 'Tipologia inválida.',
   })
   typology?: (typeof PARTNER_HOUSE_TYPOLOGY_CODES)[number];
+
+  @IsOptional()
+  @IsString({ message: 'Indica uma finalidade válida.' })
+  @IsIn(PARTNER_HOUSE_BUSINESS_TYPE_CODES as unknown as string[], {
+    message: 'Finalidade inválida.',
+  })
+  businessType?: (typeof PARTNER_HOUSE_BUSINESS_TYPE_CODES)[number];
 
   @IsOptional()
   @IsDateString(

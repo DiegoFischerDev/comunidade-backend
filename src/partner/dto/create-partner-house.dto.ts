@@ -36,6 +36,9 @@ export const PARTNER_HOUSE_TYPOLOGY_CODES = [
 
 export type PartnerHouseTypologyCode = (typeof PARTNER_HOUSE_TYPOLOGY_CODES)[number];
 
+export const PARTNER_HOUSE_BUSINESS_TYPE_CODES = ['RENT', 'SALE'] as const;
+export type PartnerHouseBusinessTypeCode = (typeof PARTNER_HOUSE_BUSINESS_TYPE_CODES)[number];
+
 /** Valores 0–12 como string (multipart / select). */
 export const PARTNER_HOUSE_ENTRADA_COUNT = Array.from({ length: 13 }, (_, i) =>
   String(i),
@@ -63,6 +66,13 @@ export class CreatePartnerHouseDto {
     message: 'Tipologia inválida.',
   })
   typology!: PartnerHouseTypologyCode;
+
+  @IsOptional()
+  @IsString({ message: 'Indica uma finalidade válida.' })
+  @IsIn(PARTNER_HOUSE_BUSINESS_TYPE_CODES as unknown as string[], {
+    message: 'Finalidade inválida.',
+  })
+  businessType?: PartnerHouseBusinessTypeCode;
 
   @IsDateString(
     {},

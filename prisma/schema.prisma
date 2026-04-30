@@ -76,6 +76,11 @@ enum PartnerHouseTypology {
   QUARTO_AP_COMPARTILHADO
 }
 
+enum PartnerHouseBusinessType {
+  RENT
+  SALE
+}
+
 enum PartnerReactionType {
   LIKE
   DISLIKE
@@ -326,6 +331,7 @@ model PartnerHouse {
   partner       Partner           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   title         String
   description   String
+  businessType  PartnerHouseBusinessType @default(RENT) @map("business_type")
   typology      PartnerHouseTypology @map("typology")
   city          String
   availableFrom DateTime          @map("available_from")
