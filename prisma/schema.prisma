@@ -168,6 +168,24 @@ model User {
   partnerComments    PartnerComment[]
 }
 
+/** Contacto WhatsApp sem conta na plataforma (lead criado só pelo fluxo de atendimento). */
+model Visitor {
+  id        String   @id @default(cuid())
+  whatsapp  String   @unique @map("whatsapp")
+  createdAt DateTime @default(now()) @map("created_at")
+  leads     Lead[]
+
+  @@map("visitors")
+}
+
+/** Dedupe de mensagens Evolution já processadas para criar lead (evita duplicados). */
+model ProcessedPartnerLeadMessage {
+  id        String   @id
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("processed_partner_lead_messages")
+}
+
 model ImmigrationChecklist {
   id        String   @id @default(cuid())
   userId    String   @unique @map("user_id")
@@ -278,6 +296,9 @@ model Partner {
   category             ProductCategory? @relation(fields: [categoryId], references: [id])
   /// Contador de ações "partilhar" (abrir o fluxo e registar partilha).
   shareCount           Int              @default(0) @map("share_count")
+  /** Média simples (minutos) entre pedido e primeiro clique «contactar lead» pelo parceiro. */
+  averageResponseMinutes Float?         @map("average_response_minutes")
+  leadResponseSampleCount Int           @default(0) @map("lead_response_sample_count")
   createdAt            DateTime         @default(now()) @map("created_at")
   updatedAt            DateTime         @updatedAt @map("updated_at")
 
@@ -441,16 +462,20 @@ model PartnerSale {
 }
 
 model Lead {
-  id        String   @id @default(cuid())
-  partnerId String   @map("partner_id")
-  partner   Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String    @id @default(cuid())
+  partnerId String    @map("partner_id")
+  partner   Partner   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  userId    String?   @map("user_id")
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  visitorId String?   @map("visitor_id")
+  visitor   Visitor?  @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+  interestComment String?   @map("interest_comment")
+  attendedAt      DateTime? @map("attended_at")
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([partnerId])
   @@index([userId])
-  @@unique([partnerId, userId], name: "lead_partner_user_unique")
+  @@index([visitorId])
 }
 
 model AffiliateProfile {

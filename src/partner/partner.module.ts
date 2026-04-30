@@ -7,6 +7,8 @@ import { StripeModule } from '../stripe/stripe.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { HouseImageStorageService } from './house-image-storage.service';
 import { PartnerHouseCleanupTask } from './partner-house-cleanup.task';
+import { PartnerLeadIntakeService } from './partner-lead-intake.service';
+import { PartnerLeadInternalController } from './partner-lead-internal.controller';
 
 @Module({
   imports: [
@@ -18,8 +20,13 @@ import { PartnerHouseCleanupTask } from './partner-house-cleanup.task';
       signOptions: { expiresIn: '7d' },
     }),
   ],
-  controllers: [PartnerController],
-  providers: [PartnerService, HouseImageStorageService, PartnerHouseCleanupTask],
+  controllers: [PartnerController, PartnerLeadInternalController],
+  providers: [
+    PartnerService,
+    PartnerLeadIntakeService,
+    HouseImageStorageService,
+    PartnerHouseCleanupTask,
+  ],
 })
 export class PartnerModule {}
 

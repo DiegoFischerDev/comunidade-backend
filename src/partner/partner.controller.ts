@@ -38,6 +38,7 @@ import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { memoryStorage } from 'multer';
 import { SetPartnerReactionDto } from './dto/set-partner-reaction.dto';
 import { CreatePartnerCommentDto } from './dto/create-partner-comment.dto';
+import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
 
 @Controller('partners')
 export class PartnerController {
@@ -68,6 +69,16 @@ export class PartnerController {
     @Body() dto: UpdatePartnerAdminDto,
   ) {
     return this.partnerService.updatePartnerAdmin(id, dto);
+  }
+
+  @Post('admin/:partnerId/leads/manual')
+  @Roles(Role.ADMIN)
+  @HttpCode(201)
+  async adminManualLead(
+    @Param('partnerId') partnerId: string,
+    @Body() dto: AdminManualLeadDto,
+  ) {
+    return this.partnerService.adminManualLead(partnerId, dto);
   }
 
   @Get('admin/categories')
@@ -152,7 +163,8 @@ export class PartnerController {
     return this.partnerService.getPublicHousePage(houseId);
   }
 
-  /** Utilizador autenticado: confirma se o anúncio ainda existe e está disponível antes do contacto. */
+  /** Dados mínimos do anúncio para contacto (público: fluxo WhatsApp admin sem login). */
+  @Public()
   @Get('houses/:houseId/contact')
   async getHouseListingForContact(@Param('houseId') houseId: string) {
     return this.partnerService.getHouseListingForContact(houseId);
@@ -167,7 +179,11 @@ export class PartnerController {
   @Get('me')
   @Roles(Role.PARTNER)
   async me(@CurrentUser() user: { id: string }) {
-    return this.partnerService.getCurrentPartner(user.id);
+    const partner = await this.partnerService.getCurrentPartner(user.id);
+    const extras = await this.partnerService.getPartnerLeadDashboardExtras(
+      partner.id,
+    );
+    return { ...partner, ...extras };
   }
 
   @Patch('me')
@@ -189,6 +205,16 @@ export class PartnerController {
   @Roles(Role.PARTNER)
   async listMyLeads(@CurrentUser() user: { id: string }) {
     return this.partnerService.listMyLeads(user.id);
+  }
+
+  @Post('me/leads/:leadId/contact')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  async openLeadWhatsApp(
+    @CurrentUser() user: { id: string },
+    @Param('leadId') leadId: string,
+  ) {
+    return this.partnerService.openLeadWhatsApp(leadId, user.id);
   }
 
   @Get('me/houses')

@@ -39,6 +39,8 @@ import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { HouseImageStorageService } from './house-image-storage.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
+import { PartnerLeadIntakeService } from './partner-lead-intake.service';
+import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
 
 const SALT_ROUNDS = 10;
 
@@ -66,6 +68,7 @@ export class PartnerService {
     private readonly wa: WhatsAppService,
     private readonly houseImages: HouseImageStorageService,
     private readonly jwtService: JwtService,
+    private readonly partnerLeadIntake: PartnerLeadIntakeService,
   ) {}
 
   private async deleteUploadFileIfLocal(url?: string | null) {
@@ -1079,20 +1082,96 @@ export class PartnerService {
       throw new NotFoundException('Parceiro não encontrado.');
     }
 
-    // Garante apenas um lead por (parceiro, usuário)
-    return this.prisma.lead.upsert({
-      where: {
-        lead_partner_user_unique: {
-          partnerId: partner.id,
-          userId,
-        },
-      },
-      update: {},
-      create: {
+    return this.prisma.lead.create({
+      data: {
         partnerId: partner.id,
         userId,
       },
     });
+  }
+
+  async getPartnerLeadDashboardExtras(partnerId: string) {
+    const [pendingLeadsCount, partnerRow] = await Promise.all([
+      this.prisma.lead.count({
+        where: { partnerId, attendedAt: null },
+      }),
+      this.prisma.partner.findUnique({
+        where: { id: partnerId },
+        select: { averageResponseMinutes: true },
+      }),
+    ]);
+
+    return {
+      pendingLeadsCount,
+      averageResponseMinutes: partnerRow?.averageResponseMinutes ?? null,
+    };
+  }
+
+  async openLeadWhatsApp(leadId: string, partnerAccountUserId: string) {
+    const partner = await this.getPartnerForUserOrThrow(partnerAccountUserId);
+
+    const lead = await this.prisma.lead.findFirst({
+      where: { id: leadId, partnerId: partner.id },
+      include: {
+        user: { select: { whatsapp: true } },
+        visitor: { select: { whatsapp: true } },
+      },
+    });
+
+    if (!lead) {
+      throw new NotFoundException('Lead não encontrado.');
+    }
+
+    const waRaw = lead.user?.whatsapp ?? lead.visitor?.whatsapp ?? '';
+    const digits = waRaw.replace(/\D/g, '');
+    if (!digits) {
+      throw new BadRequestException('Este contacto não tem WhatsApp registado.');
+    }
+
+    const now = new Date();
+
+    if (!lead.attendedAt) {
+      const minutes =
+        (now.getTime() - lead.createdAt.getTime()) / 60000;
+      await this.prisma.$transaction(async (tx) => {
+        await tx.lead.update({
+          where: { id: lead.id },
+          data: { attendedAt: now },
+        });
+        const p = await tx.partner.findUnique({
+          where: { id: partner.id },
+          select: {
+            averageResponseMinutes: true,
+            leadResponseSampleCount: true,
+          },
+        });
+        if (!p) return;
+        const count = p.leadResponseSampleCount;
+        const prevAvg = p.averageResponseMinutes;
+        const newCount = count + 1;
+        const newAvg =
+          count === 0
+            ? minutes
+            : ((prevAvg ?? 0) * count + minutes) / newCount;
+        await tx.partner.update({
+          where: { id: partner.id },
+          data: {
+            averageResponseMinutes: newAvg,
+            leadResponseSampleCount: newCount,
+          },
+        });
+      });
+    }
+
+    return { waMeUrl: `https://wa.me/${digits}` };
+  }
+
+  async adminManualLead(partnerId: string, dto: AdminManualLeadDto) {
+    return this.partnerLeadIntake.adminManualLead(
+      partnerId,
+      dto.whatsapp,
+      dto.interestComment,
+    );
   }
 
   async listMyLeads(userId: string) {
@@ -1101,9 +1180,10 @@ export class PartnerService {
     const leads = await this.prisma.lead.findMany({
       where: {
         partnerId: partner.id,
-        user: {
-          role: { notIn: [Role.PARTNER, Role.ADMIN] },
-        },
+        OR: [
+          { visitorId: { not: null } },
+          { user: { role: Role.USER } },
+        ],
       },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -1113,7 +1193,6 @@ export class PartnerService {
             name: true,
             email: true,
             role: true,
-            whatsapp: true,
             tier: true,
             immigrationChecklist: {
               select: {
@@ -1123,24 +1202,34 @@ export class PartnerService {
             },
           },
         },
+        visitor: { select: { id: true } },
       },
     });
 
     return leads.map((lead) => {
-      const answers = this.extractImmigrationPlanAnswers(lead.user.immigrationChecklist?.data);
+      const answers = lead.user
+        ? this.extractImmigrationPlanAnswers(
+            lead.user.immigrationChecklist?.data,
+          )
+        : null;
 
       return {
         id: lead.id,
         createdAt: lead.createdAt,
-        user: {
-          id: lead.user.id,
-          name: lead.user.name,
-          email: lead.user.email,
-          whatsapp: lead.user.whatsapp,
-          tier: lead.user.tier,
-        },
+        attendedAt: lead.attendedAt,
+        interestComment: lead.interestComment,
+        awaitingAttendance: lead.attendedAt == null,
+        contactType: lead.visitorId ? ('visitor' as const) : ('user' as const),
+        user: lead.user
+          ? {
+              id: lead.user.id,
+              name: lead.user.name,
+              email: lead.user.email,
+              tier: lead.user.tier,
+            }
+          : null,
         immigrationPlan:
-          answers && lead.user.immigrationChecklist?.updatedAt
+          lead.user && answers && lead.user.immigrationChecklist?.updatedAt
             ? {
                 updatedAt: lead.user.immigrationChecklist.updatedAt,
                 answers,
@@ -1892,10 +1981,11 @@ export class PartnerService {
   async createMySale(userId: string, dto: CreatePartnerSaleDto) {
     const partner = await this.getPartnerForUserOrThrow(userId);
 
-    // valida lead pertence ao parceiro
-    const lead = await this.prisma.lead.findUnique({
+    // valida lead pertence ao parceiro (utilizador registado)
+    const lead = await this.prisma.lead.findFirst({
       where: {
-        lead_partner_user_unique: { partnerId: partner.id, userId: dto.leadUserId },
+        partnerId: partner.id,
+        userId: dto.leadUserId,
       },
       select: { id: true },
     });

@@ -11,7 +11,7 @@ export class WhatsAppService {
     return process.env.EVOLUTION_API_KEY || '';
   }
 
-  private get instancesOrdered(): string[] {
+  private getAllowedInstances(): string[] {
     const primary = (process.env.EVOLUTION_INSTANCE || 'comunidade').trim();
     const secondary = (process.env.EVOLUTION_INSTANCE_SECONDARY || '').trim();
     const active = (process.env.EVOLUTION_ACTIVE_INSTANCE || '').trim();
@@ -22,6 +22,22 @@ export class WhatsAppService {
     if (!base.length) return ['comunidade'];
     if (!active || !base.includes(active)) return base;
     return [active, ...base.filter((v) => v !== active)];
+  }
+
+  private get instancesOrdered(): string[] {
+    return this.getAllowedInstances();
+  }
+
+  private resolveSendInstances(preferredInstance?: string): string[] {
+    const allowed = this.getAllowedInstances();
+    const failoverRaw = (process.env.EVOLUTION_FAILOVER_ENABLED || '1').trim().toLowerCase();
+    const failoverEnabled = !['0', 'false', 'off', 'no'].includes(failoverRaw);
+    const p = (preferredInstance || '').trim();
+    if (p && allowed.includes(p)) {
+      const ordered = [p, ...allowed.filter((v) => v !== p)];
+      return failoverEnabled ? ordered : ordered.slice(0, 1);
+    }
+    return failoverEnabled ? allowed : allowed.slice(0, 1);
   }
 
   private get failoverEnabled(): boolean {
@@ -55,7 +71,7 @@ export class WhatsAppService {
   async sendText(
     toDigits: string,
     text: string,
-    opts?: { requireDelivery?: boolean },
+    opts?: { requireDelivery?: boolean; preferredInstance?: string },
   ): Promise<void> {
     const requireDelivery = opts?.requireDelivery === true;
     const base = this.base;
@@ -73,8 +89,7 @@ export class WhatsAppService {
       return;
     }
 
-    const instances = this.instancesOrdered;
-    const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
+    const attempts = this.resolveSendInstances(opts?.preferredInstance);
     let lastError = '';
 
     const reqSignal = this.evolutionRequestSignal();
