@@ -266,7 +266,11 @@ export class PartnerService {
     return this.prisma.partner.update({
       where: { id },
       data: {
-        categoryId: dto.categoryId ?? partner.categoryId,
+        // `null` deve remover a categoria; só mantém valor atual quando campo não é enviado.
+        categoryId:
+          Object.prototype.hasOwnProperty.call(dto, 'categoryId')
+            ? dto.categoryId
+            : partner.categoryId,
       },
       include: {
         user: {
