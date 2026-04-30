@@ -11,7 +11,7 @@ const MEMBERSHIP_DURATION_YEARS = 1;
 @Injectable()
 export class StripeService {
   private stripe: Stripe | null = null;
-  private readonly membershipLotSize = 50;
+  private readonly membershipLotSize = 100;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -135,19 +135,19 @@ export class StripeService {
     return n;
   }
 
-  /** Incremento por lote (a cada 50 membros VIP): +20,00 € */
+  /** Incremento por lote (a cada 100 membros VIP): +5,00 € */
   private get membershipLotIncrementEurCents(): number {
     const raw = process.env.STRIPE_MEMBERSHIP_LOT_INCREMENT_EUR_CENTS;
-    const n = raw ? parseInt(raw, 10) : 2000;
-    if (!Number.isFinite(n) || n < 0) return 2000;
+    const n = raw ? parseInt(raw, 10) : 500;
+    if (!Number.isFinite(n) || n < 0) return 500;
     return n;
   }
 
-  /** Incremento por lote para Pix (BRL), padrão equivalente: +R$ 20,00 */
+  /** Incremento por lote para Pix (BRL), padrão equivalente: +R$ 5,00 */
   private get membershipLotIncrementPixCentavos(): number {
     const raw = process.env.STRIPE_MEMBERSHIP_LOT_INCREMENT_PIX_CENTAVOS;
-    const n = raw ? parseInt(raw, 10) : 2000;
-    if (!Number.isFinite(n) || n < 0) return 2000;
+    const n = raw ? parseInt(raw, 10) : 500;
+    if (!Number.isFinite(n) || n < 0) return 500;
     return n;
   }
 
