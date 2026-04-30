@@ -41,6 +41,7 @@ import { HouseImageStorageService } from './house-image-storage.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PartnerLeadIntakeService } from './partner-lead-intake.service';
 import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
+import { computePartnerAverageResponseMinutes } from './partner-response-average.util';
 
 const SALT_ROUNDS = 10;
 
@@ -1091,19 +1092,16 @@ export class PartnerService {
   }
 
   async getPartnerLeadDashboardExtras(partnerId: string) {
-    const [pendingLeadsCount, partnerRow] = await Promise.all([
+    const [pendingLeadsCount, avgStats] = await Promise.all([
       this.prisma.lead.count({
         where: { partnerId, attendedAt: null },
       }),
-      this.prisma.partner.findUnique({
-        where: { id: partnerId },
-        select: { averageResponseMinutes: true },
-      }),
+      computePartnerAverageResponseMinutes(partnerId, this.prisma),
     ]);
 
     return {
       pendingLeadsCount,
-      averageResponseMinutes: partnerRow?.averageResponseMinutes ?? null,
+      averageResponseMinutes: avgStats.averageMinutes,
     };
   }
 
@@ -1131,33 +1129,17 @@ export class PartnerService {
     const now = new Date();
 
     if (!lead.attendedAt) {
-      const minutes =
-        (now.getTime() - lead.createdAt.getTime()) / 60000;
       await this.prisma.$transaction(async (tx) => {
         await tx.lead.update({
           where: { id: lead.id },
           data: { attendedAt: now },
         });
-        const p = await tx.partner.findUnique({
-          where: { id: partner.id },
-          select: {
-            averageResponseMinutes: true,
-            leadResponseSampleCount: true,
-          },
-        });
-        if (!p) return;
-        const count = p.leadResponseSampleCount;
-        const prevAvg = p.averageResponseMinutes;
-        const newCount = count + 1;
-        const newAvg =
-          count === 0
-            ? minutes
-            : ((prevAvg ?? 0) * count + minutes) / newCount;
+        const avgStats = await computePartnerAverageResponseMinutes(partner.id, tx);
         await tx.partner.update({
           where: { id: partner.id },
           data: {
-            averageResponseMinutes: newAvg,
-            leadResponseSampleCount: newCount,
+            averageResponseMinutes: avgStats.averageMinutes,
+            leadResponseSampleCount: avgStats.sampleCount,
           },
         });
       });

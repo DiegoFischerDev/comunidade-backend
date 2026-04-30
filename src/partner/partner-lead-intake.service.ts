@@ -8,6 +8,7 @@ import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
+import { computePartnerAverageResponseMinutes } from './partner-response-average.util';
 
 function normalizeInboundTrigger(text: string): string {
   return text
@@ -143,13 +144,14 @@ export class PartnerLeadIntakeService {
   private async sendConfirmationToLead(
     digits: string,
     contactFirstName: string | null,
-    partner: { name: string; averageResponseMinutes: number | null },
+    partnerName: string,
+    averageResponseMinutes: number | null,
     evolutionInstance?: string,
   ): Promise<void> {
     const text = this.leadConfirmationText({
       contactFirstName,
-      partnerName: partner.name,
-      avgMinutes: partner.averageResponseMinutes,
+      partnerName,
+      avgMinutes: averageResponseMinutes,
     });
     await this.whatsApp.sendText(digits, text, {
       preferredInstance: evolutionInstance,
@@ -179,7 +181,6 @@ export class PartnerLeadIntakeService {
         id: true,
         name: true,
         whatsapp: true,
-        averageResponseMinutes: true,
       },
     });
     if (!partner) {
@@ -198,10 +199,12 @@ export class PartnerLeadIntakeService {
       },
     });
 
+    const avgStats = await computePartnerAverageResponseMinutes(partner.id, this.prisma);
     await this.sendConfirmationToLead(
       opts.normalizedWhatsappDigits,
       contact.displayName,
-      partner,
+      partner.name,
+      avgStats.averageMinutes,
       opts.evolutionInstance,
     );
     await this.sendPartnerNewLeadNotice(partner.whatsapp, opts.evolutionInstance);
@@ -249,7 +252,7 @@ export class PartnerLeadIntakeService {
 
     const partner = await this.prisma.partner.findFirst({
       where: { name: { equals: partnerName, mode: 'insensitive' } },
-      select: { id: true, name: true, whatsapp: true, averageResponseMinutes: true },
+      select: { id: true, name: true, whatsapp: true },
     });
 
     if (!partner) {
