@@ -85,7 +85,7 @@ export class PartnerLeadIntakeService {
     const greet = opts.contactFirstName
       ? `Olá ${opts.contactFirstName}, tudo bem?`
       : `Olá, tudo bem?`;
-    return `${greet} Registrámos o seu pedido de atendimento com ${opts.partnerName}, o tempo médio de resposta está em ${avg}. Se o nosso parceiro demorar muito mais do que isso, chama-me aqui que eu resolvo 😊`;
+    return `${greet} Registámos o seu pedido de atendimento com ${opts.partnerName}. O tempo médio de resposta em horário comercial (segunda a sexta, das 10h às 18h de Portugal) está em ${avg}. Se o nosso parceiro demorar muito mais do que isso, chama-me aqui que eu resolvo 😊`;
   }
 
   private partnerNewLeadText(): string {
