@@ -62,8 +62,9 @@ export class RafacallAdminService {
     return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(utc);
   }
 
-  async getSchedule(params?: { tz?: string }) {
-    const tz = params?.tz || 'Europe/Lisbon';
+  /** Agenda do admin: agrupamento por dia civil sempre em Lisboa (independente de query `tz`). */
+  async getSchedule(_params?: { tz?: string }) {
+    const tz = 'Europe/Lisbon';
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
     const items = await this.prisma.rafaCallBooking.findMany({

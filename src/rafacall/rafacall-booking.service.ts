@@ -6,7 +6,9 @@ import { getFrontendBaseUrl } from '../config/frontend-base-url';
 
 type DayAvailability = {
   date: string; // YYYY-MM-DD no tz do utilizador
-  slots: { startsAt: string; endsAt: string }[]; // ISO em UTC
+  slots: { startsAt: string; endsAt: string }[]; // ISO em UTC — livres para marcar
+  /** Mesma grelha de slots, mas ocupados pela equipa (visível no teu fuso). */
+  adminBlockedSlots: { startsAt: string; endsAt: string }[];
 };
 
 function parseYmd(value: string): { y: number; m: number; d: number } | null {
@@ -80,9 +82,10 @@ const DEFAULT_WORKING_HOURS: WorkingHoursConfig = {
   sun: [],
 };
 
+/** y/m/d = dia civil no calendário do utilizador (YYYY-MM-DD desmembrado), não UTC. */
 function weekdayKeyForDateInTz(timeZone: string, y: number, m: number, d: number): keyof WorkingHoursConfig {
-  const utcMidday = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  const wd = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short' }).format(utcMidday).toLowerCase();
+  const noonLocalUtc = tzLocalToUtc(timeZone, y, m, d, 12 * 60);
+  const wd = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short' }).format(noonLocalUtc).toLowerCase();
   if (wd.startsWith('mon')) return 'mon';
   if (wd.startsWith('tue')) return 'tue';
   if (wd.startsWith('wed')) return 'wed';
@@ -95,6 +98,26 @@ function weekdayKeyForDateInTz(timeZone: string, y: number, m: number, d: number
 function ymdInTz(timeZone: string, at: Date): string {
   // YYYY-MM-DD no timezone informado
   return new Intl.DateTimeFormat('en-CA', { timeZone }).format(at);
+}
+
+function formatYmd(y: number, m: number, d: number): string {
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+/** Avança um dia civil (Gregorian) para ranges YYYY-MM-DD sem ambiguidade de fuso. */
+function incrementYmd(ymd: string): string | null {
+  const p = parseYmd(ymd);
+  if (!p) return null;
+  const dt = new Date(Date.UTC(p.y, p.m - 1, p.d));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return formatYmd(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+}
+
+/** Rótulo curto para mensagens (ex.: America/Sao_Paulo → Sao Paulo). IANA completo vai na mesma linha. */
+function timezoneLabelPt(iana: string): string {
+  const tz = iana.trim();
+  if (!tz) return 'Lisboa';
+  return tz.split('/').pop()?.replace(/_/g, ' ') || tz;
 }
 
 @Injectable()
@@ -172,41 +195,33 @@ export class RafacallBookingService {
     });
 
     // Buffer aqui é interpretado como "gap após a chamada" (não antes+depois).
-    // Como os slots já são espaçados por (duração + buffer), não devemos "comer" slots adjacentes.
-    const isConflict = (s: Date, e: Date): boolean => {
+    const hitsBooking = (s: Date, e: Date): boolean => {
       const eGap = new Date(e.getTime() + buffer * 60000);
-      return (
-        busy.some((b) => {
-          const beGap = new Date(b.endsAt.getTime() + buffer * 60000);
-          return s < beGap && eGap > b.startsAt;
-        }) ||
-        blocks.some((b) => {
-          // Bloqueio admin é exato (sem buffer).
-          return s < b.endsAt && e > b.startsAt;
-        })
-      );
+      return busy.some((b) => {
+        const beGap = new Date(b.endsAt.getTime() + buffer * 60000);
+        return s < beGap && eGap > b.startsAt;
+      });
     };
+    const hitsAdminBlock = (s: Date, e: Date): boolean =>
+      blocks.some((b) => s < b.endsAt && e > b.startsAt);
 
     const days: DayAvailability[] = [];
-    const cursor = new Date(Date.UTC(fromYmd.y, fromYmd.m - 1, fromYmd.d, 12, 0, 0));
-    const end = new Date(Date.UTC(toYmd.y, toYmd.m - 1, toYmd.d, 12, 0, 0));
+    const firstYmd = formatYmd(fromYmd.y, fromYmd.m, fromYmd.d);
+    const lastYmd = formatYmd(toYmd.y, toYmd.m, toYmd.d);
 
-    for (let i = 0; i < 366; i++) {
-      if (cursor.getTime() > end.getTime()) break;
-      const y = Number(cursor.toISOString().slice(0, 4));
-      const m = Number(cursor.toISOString().slice(5, 7));
-      const d = Number(cursor.toISOString().slice(8, 10));
+    let dateYmd: string | null = firstYmd;
+    while (dateYmd && dateYmd <= lastYmd) {
+      const parts = parseYmd(dateYmd);
+      if (!parts) break;
+      const { y, m, d } = parts;
       const dayKey = weekdayKeyForDateInTz(tz, y, m, d);
       const ranges = this.workingHours[dayKey] ?? [];
       const slots: { startsAt: string; endsAt: string }[] = [];
+      const adminBlockedSlots: { startsAt: string; endsAt: string }[] = [];
 
-      const dateYmd = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(
-        tzLocalToUtc(tz, y, m, d, 12 * 60),
-      );
       // Trava: não permite agendar para o mesmo dia (apenas a partir do dia seguinte).
       if (dateYmd === todayYmd) {
-        days.push({ date: dateYmd, slots: [] });
-        cursor.setUTCDate(cursor.getUTCDate() + 1);
+        days.push({ date: dateYmd, slots: [], adminBlockedSlots: [] });
         continue;
       }
 
@@ -220,17 +235,37 @@ export class RafacallBookingService {
           const sUtc = tzLocalToUtc(tz, y, m, d, t);
           const eUtc = new Date(sUtc.getTime() + duration * 60000);
           if (eUtc.getTime() <= Date.now()) continue;
-          if (!isConflict(sUtc, eUtc)) {
-            slots.push({ startsAt: sUtc.toISOString(), endsAt: eUtc.toISOString() });
+          if (hitsBooking(sUtc, eUtc)) continue;
+          if (hitsAdminBlock(sUtc, eUtc)) {
+            adminBlockedSlots.push({
+              startsAt: sUtc.toISOString(),
+              endsAt: eUtc.toISOString(),
+            });
+            continue;
           }
+          slots.push({ startsAt: sUtc.toISOString(), endsAt: eUtc.toISOString() });
         }
       }
 
-      days.push({ date: dateYmd, slots });
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
+      days.push({ date: dateYmd, slots, adminBlockedSlots });
+      dateYmd = incrementYmd(dateYmd);
     }
 
     return { tz, days };
+  }
+
+  /** Sobreposição com bloqueios admin (mesma regra que getAvailability: intervalo exato, sem buffer). */
+  private async assertNotBlockedByAdmin(startsAt: Date, endsAt: Date) {
+    const hit = await this.prisma.rafaCallBlockedSlot.findFirst({
+      where: {
+        startsAt: { lt: endsAt },
+        endsAt: { gt: startsAt },
+      },
+      select: { id: true },
+    });
+    if (hit) {
+      throw new BadRequestException('Este horário está indisponível (bloqueado).');
+    }
   }
 
   private async sendBookingMessage(userId: string, kind: 'booked' | 'rescheduled' | 'cancelled', booking: { startsAt: Date; endsAt: Date; timezone: string }) {
@@ -264,10 +299,11 @@ export class RafacallBookingService {
       kind === 'cancelled'
         ? ''
         : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?\n\nSe precisar reagendar, acesse: ${reschedUrl}`;
+    const tzLine = `Fuso horário: ${timezoneLabelPt(booking.timezone)} (${booking.timezone})`;
     const when =
       kind === 'cancelled'
-        ? `\n\nEstava marcada para: ${startLocal} (até ${endLocal})\nHorário de Lisboa`
-        : `\n\nData e hora: ${startLocal} (até ${endLocal})\nHorário de Lisboa`;
+        ? `\n\nEstava marcada para: ${startLocal} (até ${endLocal})\n${tzLine}`
+        : `\n\nData e hora: ${startLocal} (até ${endLocal})\n${tzLine}`;
     await this.wa.sendText(user.whatsapp, `${base}${when}${followup}`);
   }
 
@@ -306,6 +342,8 @@ export class RafacallBookingService {
       return startsAt < bEndGap && newEndGap > b.startsAt;
     });
     if (hasConflict) throw new BadRequestException('Este horário já não está disponível.');
+
+    await this.assertNotBlockedByAdmin(startsAt, endsAt);
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -371,6 +409,8 @@ export class RafacallBookingService {
       return startsAt < bEndGap && newEndGap > b.startsAt;
     });
     if (hasConflict) throw new BadRequestException('Este horário já não está disponível.');
+
+    await this.assertNotBlockedByAdmin(startsAt, endsAt);
 
     // Estratégia: cancela o atual e cria novo ligado por rescheduledFromBookingId.
     const user = await this.prisma.user.findUnique({
