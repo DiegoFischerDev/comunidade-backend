@@ -222,32 +222,32 @@ export class RafacallBookingService {
       // Trava: não permite agendar para o mesmo dia (apenas a partir do dia seguinte).
       if (dateYmd === todayYmd) {
         days.push({ date: dateYmd, slots: [], adminBlockedSlots: [] });
-        continue;
-      }
-
-      for (const [startHm, endHm] of ranges) {
-        const startMin = hmToMinutes(startHm);
-        const endMin = hmToMinutes(endHm);
-        if (startMin == null || endMin == null || endMin <= startMin) continue;
-        // Espaça os horários em (duração + buffer) para evitar "back-to-back" no UI.
-        const step = duration + buffer;
-        for (let t = startMin; t + duration <= endMin; t += step) {
-          const sUtc = tzLocalToUtc(tz, y, m, d, t);
-          const eUtc = new Date(sUtc.getTime() + duration * 60000);
-          if (eUtc.getTime() <= Date.now()) continue;
-          if (hitsBooking(sUtc, eUtc)) continue;
-          if (hitsAdminBlock(sUtc, eUtc)) {
-            adminBlockedSlots.push({
-              startsAt: sUtc.toISOString(),
-              endsAt: eUtc.toISOString(),
-            });
-            continue;
+      } else {
+        for (const [startHm, endHm] of ranges) {
+          const startMin = hmToMinutes(startHm);
+          const endMin = hmToMinutes(endHm);
+          if (startMin == null || endMin == null || endMin <= startMin) continue;
+          // Espaça os horários em (duração + buffer) para evitar "back-to-back" no UI.
+          const step = duration + buffer;
+          for (let t = startMin; t + duration <= endMin; t += step) {
+            const sUtc = tzLocalToUtc(tz, y, m, d, t);
+            const eUtc = new Date(sUtc.getTime() + duration * 60000);
+            if (eUtc.getTime() <= Date.now()) continue;
+            if (hitsBooking(sUtc, eUtc)) continue;
+            if (hitsAdminBlock(sUtc, eUtc)) {
+              adminBlockedSlots.push({
+                startsAt: sUtc.toISOString(),
+                endsAt: eUtc.toISOString(),
+              });
+              continue;
+            }
+            slots.push({ startsAt: sUtc.toISOString(), endsAt: eUtc.toISOString() });
           }
-          slots.push({ startsAt: sUtc.toISOString(), endsAt: eUtc.toISOString() });
         }
+
+        days.push({ date: dateYmd, slots, adminBlockedSlots });
       }
 
-      days.push({ date: dateYmd, slots, adminBlockedSlots });
       dateYmd = incrementYmd(dateYmd);
     }
 
