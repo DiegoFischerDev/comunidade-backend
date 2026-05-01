@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -99,6 +100,12 @@ export class AffiliateController {
   @Roles(Role.ADMIN)
   async adminPaidCommissions(@Param('affiliateId') affiliateId: string) {
     return this.affiliateService.adminPaidCommissionsHistory(affiliateId);
+  }
+
+  @Delete('admin/:affiliateId')
+  @Roles(Role.ADMIN)
+  async adminDeleteAffiliate(@Param('affiliateId') affiliateId: string) {
+    return this.affiliateService.adminDeleteAffiliate(affiliateId);
   }
 
   @Post('admin/:affiliateId/pay')

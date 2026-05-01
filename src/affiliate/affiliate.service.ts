@@ -387,6 +387,18 @@ export class AffiliateService {
     });
   }
 
+  async adminDeleteAffiliate(affiliateId: string) {
+    const existing = await this.prisma.affiliateProfile.findUnique({
+      where: { id: affiliateId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Afiliado não encontrado.');
+    }
+    await this.prisma.affiliateProfile.delete({ where: { id: affiliateId } });
+    return { ok: true as const };
+  }
+
   async adminPayCommissions(params: {
     affiliateId: string;
     file: any;
