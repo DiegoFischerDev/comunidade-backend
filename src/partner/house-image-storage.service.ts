@@ -1,11 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   DeleteObjectCommand,
-  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomBytes } from 'crypto';
 import { readFile, writeFile, mkdir, unlink } from 'fs/promises';
 import { join } from 'path';
@@ -241,85 +239,5 @@ export class HouseImageStorageService {
     const fileName = `${Date.now()}-${randomBytes(8).toString('hex')}${extension}`;
     await writeFile(join(dir, fileName), body);
     return `/uploads/houses/${relativeDir}/${fileName}`;
-  }
-
-  /**
-   * URL assinada para o browser fazer PUT direto no R2 (sem passar o bytes pelo Nest/nginx).
-   * Requer CORS no bucket R2 para o origin do dashboard (PUT + Content-Type).
-   */
-  async createPartnerCatalogVideoPresignedPut(contentTypeRaw: string): Promise<{
-    uploadUrl: string;
-    objectKey: string;
-    publicUrl: string;
-    contentType: string;
-  }> {
-    const cfg = this.getR2Context();
-    if (!cfg) {
-      throw new Error('NO_R2');
-    }
-
-    const mime = (contentTypeRaw || '').split(';')[0]!.trim().toLowerCase();
-    if (!HOUSE_VIDEO_MIMES.has(mime)) {
-      throw new Error(
-        'Formato de vídeo não suportado. Usa MP4, MOV, WebM ou 3GP.',
-      );
-    }
-
-    const ext =
-      mime === 'video/quicktime'
-        ? '.mov'
-        : mime === 'video/webm'
-          ? '.webm'
-          : mime === 'video/3gpp'
-            ? '.3gp'
-            : '.mp4';
-
-    const objectKey = `partner-catalog-videos/${Date.now()}-${randomBytes(8).toString('hex')}${ext}`;
-    // Apenas Content-Type na assinatura: o browser só envia esse header no PUT.
-    const command = new PutObjectCommand({
-      Bucket: cfg.bucket,
-      Key: objectKey,
-      ContentType: mime,
-    });
-
-    const uploadUrl = await getSignedUrl(cfg.client, command, {
-      expiresIn: 3600,
-    });
-    const publicUrl = `${cfg.publicBase}/${objectKey}`;
-    return { uploadUrl, objectKey, publicUrl, contentType: mime };
-  }
-
-  /** Verifica que o objeto existe após o PUT do cliente (antes de gravar URL no Partner). */
-  async assertPartnerCatalogVideoObjectExists(objectKey: string): Promise<void> {
-    const cfg = this.getR2Context();
-    if (!cfg) {
-      throw new Error('NO_R2');
-    }
-    try {
-      await cfg.client.send(
-        new HeadObjectCommand({ Bucket: cfg.bucket, Key: objectKey }),
-      );
-    } catch (e: unknown) {
-      const meta =
-        e && typeof e === 'object' && '$metadata' in e
-          ? (e as { $metadata?: { httpStatusCode?: number } }).$metadata
-          : undefined;
-      const name =
-        e && typeof e === 'object' && 'name' in e
-          ? String((e as { name?: string }).name)
-          : '';
-      if (meta?.httpStatusCode === 404 || name === 'NotFound') {
-        throw new Error('OBJECT_NOT_FOUND');
-      }
-      throw e;
-    }
-  }
-
-  partnerCatalogPublicUrl(objectKey: string): string {
-    const cfg = this.getR2Context();
-    if (!cfg) {
-      throw new Error('NO_R2');
-    }
-    return `${cfg.publicBase}/${objectKey}`;
   }
 }
