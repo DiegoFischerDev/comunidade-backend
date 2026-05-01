@@ -149,6 +149,12 @@ export class RafacallBookingService {
     }
   }
 
+  /** Fuso onde os HH:mm de `RAFA_CALL_WORKING_HOURS_JSON` valem (ex.: Lisboa para a equipa). */
+  private get workingHoursTimezone(): string {
+    const z = process.env.RAFA_CALL_WORKING_HOURS_TIMEZONE?.trim();
+    return z || 'Europe/Lisbon';
+  }
+
   async getCurrentBooking(userId: string) {
     const now = new Date();
     return this.prisma.rafaCallBooking.findFirst({
@@ -171,10 +177,15 @@ export class RafacallBookingService {
 
     const duration = this.durationMinutes;
     const buffer = this.bufferMinutes;
+    const refTz = this.workingHoursTimezone;
 
     // Buscar bookings que podem conflitar na janela (com folga de buffer).
-    const minUtc = tzLocalToUtc(tz, fromYmd.y, fromYmd.m, fromYmd.d, 0);
-    const maxUtc = tzLocalToUtc(tz, toYmd.y, toYmd.m, toYmd.d, 24 * 60);
+    const MS_DAY = 86400000;
+    const userWindowStartUtc = tzLocalToUtc(tz, fromYmd.y, fromYmd.m, fromYmd.d, 0);
+    const userWindowEndUtc = tzLocalToUtc(tz, toYmd.y, toYmd.m, toYmd.d, 24 * 60);
+    // Folga: slots são gerados no refTz e podem mapear para dias vizinhos no tz do utilizador.
+    const minUtc = new Date(userWindowStartUtc.getTime() - 2 * MS_DAY);
+    const maxUtc = new Date(userWindowEndUtc.getTime() + 2 * MS_DAY);
     const busy = await this.prisma.rafaCallBooking.findMany({
       where: {
         ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
@@ -205,49 +216,81 @@ export class RafacallBookingService {
     const hitsAdminBlock = (s: Date, e: Date): boolean =>
       blocks.some((b) => s < b.endsAt && e > b.startsAt);
 
-    const days: DayAvailability[] = [];
     const firstYmd = formatYmd(fromYmd.y, fromYmd.m, fromYmd.d);
     const lastYmd = formatYmd(toYmd.y, toYmd.m, toYmd.d);
 
+    type Bucket = {
+      slots: { startsAt: string; endsAt: string }[];
+      adminBlockedSlots: { startsAt: string; endsAt: string }[];
+    };
+    const byUserDay = new Map<string, Bucket>();
+
+    const padStartRef = new Date(userWindowStartUtc.getTime() - 3 * MS_DAY);
+    const padEndRef = new Date(userWindowEndUtc.getTime() + 3 * MS_DAY);
+    let refYmd = ymdInTz(refTz, padStartRef);
+    const refEndYmd = ymdInTz(refTz, padEndRef);
+
+    while (refYmd <= refEndYmd) {
+      const refParts = parseYmd(refYmd);
+      if (!refParts) break;
+      const { y: ry, m: rm, d: rd } = refParts;
+      const dayKey = weekdayKeyForDateInTz(refTz, ry, rm, rd);
+      const ranges = this.workingHours[dayKey] ?? [];
+
+      for (const [startHm, endHm] of ranges) {
+        const startMin = hmToMinutes(startHm);
+        const endMin = hmToMinutes(endHm);
+        if (startMin == null || endMin == null || endMin <= startMin) continue;
+        const step = duration + buffer;
+        for (let t = startMin; t + duration <= endMin; t += step) {
+          const sUtc = tzLocalToUtc(refTz, ry, rm, rd, t);
+          const eUtc = new Date(sUtc.getTime() + duration * 60000);
+          const userDayYmd = ymdInTz(tz, sUtc);
+          if (userDayYmd < firstYmd || userDayYmd > lastYmd) continue;
+          if (userDayYmd === todayYmd) continue;
+          if (eUtc.getTime() <= Date.now()) continue;
+
+          let bucket = byUserDay.get(userDayYmd);
+          if (!bucket) {
+            bucket = { slots: [], adminBlockedSlots: [] };
+            byUserDay.set(userDayYmd, bucket);
+          }
+
+          if (hitsBooking(sUtc, eUtc)) continue;
+          if (hitsAdminBlock(sUtc, eUtc)) {
+            bucket.adminBlockedSlots.push({
+              startsAt: sUtc.toISOString(),
+              endsAt: eUtc.toISOString(),
+            });
+            continue;
+          }
+          bucket.slots.push({ startsAt: sUtc.toISOString(), endsAt: eUtc.toISOString() });
+        }
+      }
+
+      const nextRef = incrementYmd(refYmd);
+      if (!nextRef) break;
+      refYmd = nextRef;
+    }
+
+    const sortIso = (a: { startsAt: string }, b: { startsAt: string }) =>
+      a.startsAt.localeCompare(b.startsAt);
+
+    const days: DayAvailability[] = [];
     let dateYmd: string | null = firstYmd;
     while (dateYmd && dateYmd <= lastYmd) {
-      const parts = parseYmd(dateYmd);
-      if (!parts) break;
-      const { y, m, d } = parts;
-      const dayKey = weekdayKeyForDateInTz(tz, y, m, d);
-      const ranges = this.workingHours[dayKey] ?? [];
-      const slots: { startsAt: string; endsAt: string }[] = [];
-      const adminBlockedSlots: { startsAt: string; endsAt: string }[] = [];
-
-      // Trava: não permite agendar para o mesmo dia (apenas a partir do dia seguinte).
       if (dateYmd === todayYmd) {
         days.push({ date: dateYmd, slots: [], adminBlockedSlots: [] });
       } else {
-        for (const [startHm, endHm] of ranges) {
-          const startMin = hmToMinutes(startHm);
-          const endMin = hmToMinutes(endHm);
-          if (startMin == null || endMin == null || endMin <= startMin) continue;
-          // Espaça os horários em (duração + buffer) para evitar "back-to-back" no UI.
-          const step = duration + buffer;
-          for (let t = startMin; t + duration <= endMin; t += step) {
-            const sUtc = tzLocalToUtc(tz, y, m, d, t);
-            const eUtc = new Date(sUtc.getTime() + duration * 60000);
-            if (eUtc.getTime() <= Date.now()) continue;
-            if (hitsBooking(sUtc, eUtc)) continue;
-            if (hitsAdminBlock(sUtc, eUtc)) {
-              adminBlockedSlots.push({
-                startsAt: sUtc.toISOString(),
-                endsAt: eUtc.toISOString(),
-              });
-              continue;
-            }
-            slots.push({ startsAt: sUtc.toISOString(), endsAt: eUtc.toISOString() });
-          }
-        }
-
-        days.push({ date: dateYmd, slots, adminBlockedSlots });
+        const bucket = byUserDay.get(dateYmd) ?? { slots: [], adminBlockedSlots: [] };
+        bucket.slots.sort(sortIso);
+        bucket.adminBlockedSlots.sort(sortIso);
+        days.push({
+          date: dateYmd,
+          slots: bucket.slots,
+          adminBlockedSlots: bucket.adminBlockedSlots,
+        });
       }
-
       dateYmd = incrementYmd(dateYmd);
     }
 
