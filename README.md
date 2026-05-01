@@ -53,7 +53,7 @@ Copia `backend/.env.example` para `backend/.env` e preenche os valores.
 
 **R2 (opcional):** `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_BASE_URL` — sem isto, media fica em `uploads/houses/` no disco.
 
-### Afinamento (opcional, omissões no código)
+### Afinamento (opcional, omissões no código).
 
 Não precisas de definir nada disto no `.env` em condições normais.
 
