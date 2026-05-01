@@ -725,7 +725,20 @@ export class PartnerService {
     }
     let oldLogoToDelete: string | null = null;
     let oldBackgroundToDelete: string | null = null;
+    let oldCatalogVideoToDelete: string | null = null;
     const oldCatalogImages = partner.catalogImageUrls ?? [];
+
+    const nextCatalogVideoUrl =
+      dto.catalogVideoUrl !== undefined
+        ? dto.catalogVideoUrl.trim() || null
+        : partner.catalogVideoUrl;
+    if (
+      dto.catalogVideoUrl !== undefined &&
+      partner.catalogVideoUrl &&
+      partner.catalogVideoUrl !== nextCatalogVideoUrl
+    ) {
+      oldCatalogVideoToDelete = partner.catalogVideoUrl;
+    }
 
     if (dto.logoUrl && dto.logoUrl !== partner.logoUrl) {
       oldLogoToDelete = partner.logoUrl;
@@ -782,6 +795,7 @@ export class PartnerService {
           backgroundImageUrl:
             dto.backgroundImageUrl ?? partner.backgroundImageUrl,
           catalogImageUrls: newCatalogImages,
+          catalogVideoUrl: nextCatalogVideoUrl,
           instagram:
             dto.instagram !== undefined ? dto.instagram : partner.instagram,
           billingName:
@@ -818,6 +832,10 @@ export class PartnerService {
     );
     for (const url of toDelete) {
       await this.deleteUploadFileIfLocal(url);
+    }
+
+    if (oldCatalogVideoToDelete) {
+      await this.deleteUploadFileIfLocal(oldCatalogVideoToDelete);
     }
 
     return updated;

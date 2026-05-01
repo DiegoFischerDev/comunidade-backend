@@ -301,6 +301,8 @@ model Partner {
   rpmCommissionPercent Float?           @map("rpm_commission_percent")
   backgroundImageUrl   String?          @map("background_image_url")
   catalogImageUrls     String[]         @default([]) @map("catalog_image_urls")
+  /// Vídeo único exibido na página pública antes do carrossel de imagens (URL absoluta ou `/uploads/...`).
+  catalogVideoUrl      String?          @map("catalog_video_url")
   instagram            String?          @map("instagram")
   /// Dados de faturação (para emissão de fatura da comissão em Portugal)
   billingName          String?          @map("billing_name")

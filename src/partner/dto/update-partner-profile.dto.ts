@@ -42,6 +42,10 @@ export class UpdatePartnerProfileDto {
 
   @IsOptional()
   @IsString()
+  catalogVideoUrl?: string;
+
+  @IsOptional()
+  @IsString()
   @ValidateIf((_o, v) => v !== undefined && v !== null && v !== '')
   @Matches(/^@.+$/, { message: 'O Instagram deve começar com @ (ex: @utilizador)' })
   instagram?: string;
