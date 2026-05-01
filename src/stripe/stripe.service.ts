@@ -266,7 +266,11 @@ export class StripeService {
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: userId,
-      metadata: { userId, checkoutType: 'rafa_call_unlock' },
+      metadata: {
+        userId,
+        checkoutType: 'rafa_call_unlock',
+        rafacallFeeEurCents: String(this.rafaCallEurCents),
+      },
     });
     if (!session.url) {
       throw new BadRequestException('Não foi possível criar a sessão de pagamento.');
@@ -303,7 +307,11 @@ export class StripeService {
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: userId,
-      metadata: { userId, checkoutType: 'rafa_call_unlock' },
+      metadata: {
+        userId,
+        checkoutType: 'rafa_call_unlock',
+        rafacallFeeEurCents: String(this.rafaCallEurCents),
+      },
     });
     if (!session.url) {
       throw new BadRequestException('Não foi possível criar a sessão MB WAY.');
@@ -422,7 +430,11 @@ export class StripeService {
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: userId,
-      metadata: { userId, checkoutType: 'rafa_call_unlock' },
+      metadata: {
+        userId,
+        checkoutType: 'rafa_call_unlock',
+        rafacallFeeEurCents: String(this.rafaCallEurCents),
+      },
       payment_method_options: {
         pix: { expires_after_seconds: 30 * 60 },
       },
@@ -662,6 +674,7 @@ export class StripeService {
     const checkoutType = meta.checkoutType;
     return (
       meta.membershipEurCents != null ||
+      meta.rafacallFeeEurCents != null ||
       checkoutType === 'rafa_call_unlock' ||
       checkoutType === 'partner_sale_commission'
     );
@@ -741,6 +754,8 @@ export class StripeService {
         // Cast para evitar cache de tipos do Prisma em alguns ambientes de build/lint.
         data: { rafaCallSchedulingUnlocked: true, rafaCallUnlockOrigin: 'USER_PAID' } as any,
       });
+      await this.recordRafaCallUnlockPaymentFromCheckoutSession(userId, session);
+
       if (updated.count > 0) {
         const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
         const currency = ((sess.currency as string | undefined) ?? 'eur').toLowerCase();
@@ -991,6 +1006,27 @@ export class StripeService {
    * EUR/MB: usa o valor pago na sessão (amount_total). BRL: contabiliza o preço EUR em vigor
    * (mesma regra de negócio que o painel admin).
    */
+  /** EUR/MB: valor da sessão. BRL (Pix): EUR em metadata à data do pagamento (como na anuidade). */
+  private creditedEurFromRafaCheckoutSession(session: Stripe.Checkout.Session): number {
+    const cur =
+      ((session as any).currency as string | undefined)?.toLowerCase() ?? 'eur';
+    if (cur === 'brl') {
+      const fromMeta = Number.parseInt(
+        String((session as any).metadata?.rafacallFeeEurCents ?? ''),
+        10,
+      );
+      if (Number.isFinite(fromMeta) && fromMeta > 0) {
+        return Math.round(fromMeta) / 100;
+      }
+      return Math.round(this.rafaCallEurCents) / 100;
+    }
+    const total = (session as any).amount_total as number | null | undefined;
+    if (total != null && Number.isFinite(total) && total >= 0) {
+      return Math.round(total) / 100;
+    }
+    return Math.round(this.rafaCallEurCents) / 100;
+  }
+
   private creditedEurFromCheckoutSession(session: Stripe.Checkout.Session): number {
     const cur =
       ((session as any).currency as string | undefined)?.toLowerCase() ?? 'eur';
@@ -1023,6 +1059,29 @@ export class StripeService {
       return Math.round(paid) / 100;
     }
     return 0;
+  }
+
+  private async recordRafaCallUnlockPaymentFromCheckoutSession(
+    userId: string,
+    session: Stripe.Checkout.Session,
+  ): Promise<boolean> {
+    const sessionId = session.id;
+    if (!sessionId) return false;
+    const amountCreditedEur = this.creditedEurFromRafaCheckoutSession(session);
+    try {
+      await this.prisma.rafaCallUnlockPayment.create({
+        data: {
+          userId,
+          stripeCheckoutSessionId: sessionId,
+          amountCreditedEur,
+          stripeCurrency: (session as any).currency ?? null,
+        },
+      });
+      return true;
+    } catch (err: any) {
+      if (err?.code === 'P2002') return false;
+      throw err;
+    }
   }
 
   private async recordMembershipPaymentFromCheckoutSession(

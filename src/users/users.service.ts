@@ -110,13 +110,19 @@ Se está de acordo com os termos, escreva CONCORDO.`;
   /**
    * Métricas para o painel admin. Total de inscrições = soma de `MembershipPayment.amountCreditedEur`
    * (histórico à data de cada pagamento; mudar `STRIPE_AMOUNT_EUR_CENTS` no env não altera o passado).
-   * `membershipPriceEurUsed` é só o preço anual EUR atual (referência na UI).
+   * Total videochamadas = soma de `RafaCallUnlockPayment` (só checkout Stripe `rafa_call_unlock`; liberação manual não gera linha).
+   * `membershipPriceEurUsed` / `rafacallFeeEurUsed` são preços EUR atuais (referência na UI).
    */
   async getAdminStats() {
     const eurCentsRaw = process.env.STRIPE_AMOUNT_EUR_CENTS;
     const eurCents = eurCentsRaw ? parseInt(eurCentsRaw, 10) : 2300;
     const membershipPriceEurUsed =
       Number.isFinite(eurCents) && eurCents > 0 ? eurCents / 100 : 23;
+
+    const rafaCentsRaw = process.env.STRIPE_RAFA_CALL_EUR_CENTS;
+    const rafaCents = rafaCentsRaw ? parseInt(rafaCentsRaw, 10) : 2000;
+    const rafacallFeeEurUsed =
+      Number.isFinite(rafaCents) && rafaCents > 0 ? rafaCents / 100 : 20;
 
     const [
       totalUsers,
@@ -126,6 +132,8 @@ Se está de acordo com os termos, escreva CONCORDO.`;
       subscriptionsCount,
       paySum,
       membershipPaymentsCount,
+      rafaPaySum,
+      rafaUnlockPaymentsCount,
     ] = await Promise.all([
       this.prisma.user.count(),
       this.prisma.user.count({ where: { role: Role.PARTNER } }),
@@ -136,6 +144,10 @@ Se está de acordo com os termos, escreva CONCORDO.`;
         _sum: { amountCreditedEur: true },
       }),
       this.prisma.membershipPayment.count(),
+      this.prisma.rafaCallUnlockPayment.aggregate({
+        _sum: { amountCreditedEur: true },
+      }),
+      this.prisma.rafaCallUnlockPayment.count(),
     ]);
 
     const rawSum = paySum._sum.amountCreditedEur;
@@ -143,6 +155,10 @@ Se está de acordo com os termos, escreva CONCORDO.`;
       rawSum != null
         ? Math.round(Number(rawSum) * 100) / 100
         : 0;
+
+    const rawRafa = rafaPaySum._sum.amountCreditedEur;
+    const totalRafacallUnlockRevenueEur =
+      rawRafa != null ? Math.round(Number(rawRafa) * 100) / 100 : 0;
 
     return {
       totalUsers,
@@ -153,6 +169,9 @@ Se está de acordo com os termos, escreva CONCORDO.`;
       subscriptionsCount,
       membershipPaymentsCount,
       membershipPriceEurUsed,
+      totalRafacallUnlockRevenueEur,
+      rafaUnlockPaymentsCount,
+      rafacallFeeEurUsed,
     };
   }
 
