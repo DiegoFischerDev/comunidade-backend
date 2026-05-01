@@ -103,4 +103,9 @@ export class CreatePartnerHouseDto {
     message: 'Índice da foto principal inválido.',
   })
   coverImageIndex?: string;
+
+  /** Apenas admin: imóvel fica titulado por este parceiro (categoria relocation). Omissão = conta relocation do admin. */
+  @IsOptional()
+  @IsString()
+  partnerId?: string;
 }

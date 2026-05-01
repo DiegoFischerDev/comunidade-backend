@@ -1591,8 +1591,33 @@ export class PartnerService {
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
   ) {
-    const partner = await this.getOrCreateRelocationPartnerForAdmin(adminUserId);
-    return this.createHousePostForPartner(partner.id, dto, imageFiles, videoFile);
+    const requestedPartnerId = dto.partnerId?.trim();
+    let partnerId: string;
+
+    if (requestedPartnerId) {
+      const relocationCategory = await this.prisma.productCategory.findUnique({
+        where: { slug: RELOCATION_CATEGORY_SLUG },
+        select: { id: true },
+      });
+      if (!relocationCategory) {
+        throw new BadRequestException('Categoria relocation não encontrada.');
+      }
+      const assigned = await this.prisma.partner.findFirst({
+        where: { id: requestedPartnerId, categoryId: relocationCategory.id },
+        select: { id: true },
+      });
+      if (!assigned) {
+        throw new BadRequestException(
+          'Parceiro não encontrado ou não pertence à categoria Relocation.',
+        );
+      }
+      partnerId = assigned.id;
+    } else {
+      const partner = await this.getOrCreateRelocationPartnerForAdmin(adminUserId);
+      partnerId = partner.id;
+    }
+
+    return this.createHousePostForPartner(partnerId, dto, imageFiles, videoFile);
   }
 
   async getMyHouse(userId: string, houseId: string) {
