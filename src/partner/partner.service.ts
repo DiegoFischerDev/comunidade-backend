@@ -841,6 +841,94 @@ export class PartnerService {
     return updated;
   }
 
+  async presignMyCatalogVideoUpload(userId: string, contentType: string) {
+    await this.getPartnerForUserOrThrow(userId);
+    try {
+      return await this.houseImages.createPartnerCatalogVideoPresignedPut(
+        contentType,
+      );
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '';
+      if (msg === 'NO_R2') {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+            message:
+              'Upload direto não disponível (R2 não configurado neste servidor).',
+            code: 'DIRECT_UPLOAD_UNAVAILABLE',
+          },
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
+      }
+      if (msg.includes('suportado')) {
+        throw new BadRequestException(msg);
+      }
+      this.logger.warn(`presign catalog video: ${e}`);
+      throw new InternalServerErrorException(
+        'Não foi possível preparar o upload do vídeo.',
+      );
+    }
+  }
+
+  async confirmMyCatalogVideoUpload(userId: string, objectKey: string) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { userId },
+    });
+    if (!partner) {
+      throw new NotFoundException('Parceiro não encontrado para este usuário.');
+    }
+
+    if (
+      !/^partner-catalog-videos\/[0-9]+-[a-f0-9]+\.(mp4|mov|webm|3gp)$/.test(
+        objectKey,
+      )
+    ) {
+      throw new BadRequestException('Chave do ficheiro inválida.');
+    }
+
+    try {
+      await this.houseImages.assertPartnerCatalogVideoObjectExists(objectKey);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '';
+      if (msg === 'OBJECT_NOT_FOUND') {
+        throw new BadRequestException(
+          'O vídeo não foi encontrado no armazenamento. Volta a enviar.',
+        );
+      }
+      if (msg === 'NO_R2') {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+            message: 'Armazenamento R2 não configurado.',
+            code: 'DIRECT_UPLOAD_UNAVAILABLE',
+          },
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
+      }
+      this.logger.warn(`confirm catalog video head: ${e}`);
+      throw new InternalServerErrorException(
+        'Não foi possível validar o vídeo.',
+      );
+    }
+
+    const publicUrl = this.houseImages.partnerCatalogPublicUrl(objectKey);
+    const oldUrl = partner.catalogVideoUrl;
+
+    const updated = await this.prisma.partner.update({
+      where: { id: partner.id },
+      data: { catalogVideoUrl: publicUrl },
+      include: {
+        category: { select: { id: true, slug: true, name: true } },
+      },
+    });
+
+    if (oldUrl && oldUrl !== publicUrl) {
+      await this.houseImages.deleteStoredUrl(oldUrl);
+    }
+
+    return updated;
+  }
+
   async uploadMyCatalogVideo(
     userId: string,
     videoFile: Express.Multer.File | undefined,

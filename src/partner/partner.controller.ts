@@ -36,6 +36,8 @@ import {
 import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
+import { PresignPartnerCatalogVideoDto } from './dto/presign-partner-catalog-video.dto';
+import { ConfirmPartnerCatalogVideoDto } from './dto/confirm-partner-catalog-video.dto';
 import { memoryStorage } from 'multer';
 import { SetPartnerReactionDto } from './dto/set-partner-reaction.dto';
 import { CreatePartnerCommentDto } from './dto/create-partner-comment.dto';
@@ -194,6 +196,33 @@ export class PartnerController {
     @Body() dto: UpdatePartnerProfileDto,
   ) {
     return this.partnerService.updateCurrentPartner(user.id, dto);
+  }
+
+  /** URL assinada: o browser faz PUT direto no R2 (evita 413 no proxy da API). */
+  @Post('me/catalog-video/presign')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  async presignMyCatalogVideo(
+    @CurrentUser() user: { id: string },
+    @Body() dto: PresignPartnerCatalogVideoDto,
+  ) {
+    return this.partnerService.presignMyCatalogVideoUpload(
+      user.id,
+      dto.contentType,
+    );
+  }
+
+  @Post('me/catalog-video/confirm')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  async confirmMyCatalogVideo(
+    @CurrentUser() user: { id: string },
+    @Body() dto: ConfirmPartnerCatalogVideoDto,
+  ) {
+    return this.partnerService.confirmMyCatalogVideoUpload(
+      user.id,
+      dto.objectKey,
+    );
   }
 
   /** Vídeo de perfil: mesmo pipeline dos imóveis (evita 413 em proxies com limite baixo em `/uploads`). */
