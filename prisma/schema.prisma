@@ -387,6 +387,8 @@ model PartnerHouse {
   coverImageUrl String?           @map("cover_image_url")
   /// Vídeo opcional na página pública (não enviado ao grupo WhatsApp)
   videoUrl      String?           @map("video_url")
+  /// Destaque manual pelo admin. Imóveis em destaque aparecem primeiro em /relocation/imoveis.
+  featured      Boolean           @default(false) @map("featured")
   status        PartnerHouseStatus @default(AVAILABLE)
   whatsappSentAt DateTime?        @map("whatsapp_sent_at")
   whatsappError  String?          @map("whatsapp_error")

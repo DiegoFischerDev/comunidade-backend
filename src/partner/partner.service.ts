@@ -1875,6 +1875,7 @@ export class PartnerService {
         videoUrl: true,
         partnerId: true,
         status: true,
+        featured: true,
         partner: {
           select: {
             id: true,
@@ -1887,6 +1888,7 @@ export class PartnerService {
       } as any,
     });
     rows.sort((a, b) => {
+      if (a.featured !== b.featured) return a.featured ? -1 : 1;
       const byStatus =
         relocationHouseStatusRank(a.status) - relocationHouseStatusRank(b.status);
       if (byStatus !== 0) return byStatus;
@@ -1916,7 +1918,8 @@ export class PartnerService {
 
   async adminListAllHouses() {
     return this.prisma.partnerHouse.findMany({
-      orderBy: [{ createdAt: 'desc' }],
+      // Cast para evitar cache desatualizado de tipos no IDE após novas migrations.
+      orderBy: [{ featured: 'desc' }, { createdAt: 'desc' }] as any,
       include: {
         partner: {
           select: {
@@ -1940,6 +1943,21 @@ export class PartnerService {
     await this.removeHouseMediaFiles(house);
     await this.prisma.partnerHouse.delete({ where: { id: houseId } });
     return { ok: true as const };
+  }
+
+  async adminSetHouseFeatured(houseId: string, featured: boolean) {
+    const exists = await this.prisma.partnerHouse.findUnique({
+      where: { id: houseId },
+      select: { id: true },
+    });
+    if (!exists) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    return this.prisma.partnerHouse.update({
+      where: { id: houseId },
+      data: { featured } as any,
+      select: { id: true, featured: true } as any,
+    });
   }
 
   /** Anúncios indisponíveis com data de disponibilidade há pelo menos 2 meses — remove registo e médias. */

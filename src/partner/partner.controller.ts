@@ -389,6 +389,15 @@ export class PartnerController {
     return this.partnerService.adminDeleteHouse(houseId);
   }
 
+  @Patch('admin/houses/:houseId/featured')
+  @Roles(Role.ADMIN)
+  async adminSetHouseFeatured(
+    @Param('houseId') houseId: string,
+    @Body() body: { featured: boolean },
+  ) {
+    return this.partnerService.adminSetHouseFeatured(houseId, Boolean(body?.featured));
+  }
+
   @Post('me/sales/:id/pay-commission')
   @Roles(Role.PARTNER)
   async startSaleCommissionCheckout(
