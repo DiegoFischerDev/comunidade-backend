@@ -10,6 +10,7 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
@@ -32,7 +33,7 @@ import {
   CreatePartnerSaleDto,
   StartPartnerSaleCommissionCheckoutDto,
 } from './dto/create-partner-sale.dto';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { memoryStorage } from 'multer';
@@ -193,6 +194,25 @@ export class PartnerController {
     @Body() dto: UpdatePartnerProfileDto,
   ) {
     return this.partnerService.updateCurrentPartner(user.id, dto);
+  }
+
+  /** Vídeo de perfil: mesmo pipeline dos imóveis (evita 413 em proxies com limite baixo em `/uploads`). */
+  @Post('me/catalog-video')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('video', {
+      limits: {
+        fileSize: 80 * 1024 * 1024,
+      },
+      storage: memoryStorage(),
+    }),
+  )
+  async uploadMyCatalogVideo(
+    @CurrentUser() user: { id: string },
+    @UploadedFile() video: Express.Multer.File | undefined,
+  ) {
+    return this.partnerService.uploadMyCatalogVideo(user.id, video);
   }
 
   @Get('me/services')

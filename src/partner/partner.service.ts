@@ -835,7 +835,46 @@ export class PartnerService {
     }
 
     if (oldCatalogVideoToDelete) {
-      await this.deleteUploadFileIfLocal(oldCatalogVideoToDelete);
+      await this.houseImages.deleteStoredUrl(oldCatalogVideoToDelete);
+    }
+
+    return updated;
+  }
+
+  async uploadMyCatalogVideo(
+    userId: string,
+    videoFile: Express.Multer.File | undefined,
+  ) {
+    if (!videoFile?.size) {
+      throw new BadRequestException(
+        'Envia um ficheiro de vídeo no campo «video».',
+      );
+    }
+
+    const partner = await this.prisma.partner.findUnique({
+      where: { userId },
+    });
+    if (!partner) {
+      throw new NotFoundException('Parceiro não encontrado para este usuário.');
+    }
+
+    const oldUrl = partner.catalogVideoUrl;
+
+    const { publicUrl } = await this.houseImages.storeHouseVideo(videoFile);
+    if (videoFile.path) {
+      await unlink(videoFile.path).catch(() => undefined);
+    }
+
+    const updated = await this.prisma.partner.update({
+      where: { id: partner.id },
+      data: { catalogVideoUrl: publicUrl },
+      include: {
+        category: { select: { id: true, slug: true, name: true } },
+      },
+    });
+
+    if (oldUrl && oldUrl !== publicUrl) {
+      await this.houseImages.deleteStoredUrl(oldUrl);
     }
 
     return updated;

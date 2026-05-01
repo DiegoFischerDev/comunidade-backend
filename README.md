@@ -59,7 +59,7 @@ Não precisas de definir nada disto no `.env` em condições normais.
 
 - **Transcodificação de vídeo** (`HOUSE_VIDEO_*`): omissões em `src/partner/house-video-transcode.ts` (ex. CRF 28, largura máx. 1280). Define só se quiseres desativar (`HOUSE_VIDEO_TRANSCODE_ENABLED=0`) ou afinar qualidade.
 - **Evolution / timeouts / base64** (`EVOLUTION_REQUEST_TIMEOUT_MS`, `EVOLUTION_VIDEO_MAX_BASE64_FALLBACK_BYTES`, `MEDIA_PUBLIC_URL_READY_MAX_WAIT_MS`, etc.): omissões em `whatsapp.service.ts` e `partner.service.ts`.
-- **Nginx à frente da Evolution:** `client_max_body_size` e `proxy_read_timeout` altos o suficiente para vídeos.
+- **Nginx / proxy à frente da API:** para vídeos de imóveis e de perfil do parceiro, usa pelo menos `client_max_body_size 80m` no `server` da API (os exemplos em `deploy/nginx*.conf` já usam 80m).
 
 ## Compile and run the project
 
