@@ -37,6 +37,7 @@ import { join } from 'path';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
+import { expandRelocationCityFilter } from './relocation-cities';
 import { HouseImageStorageService } from './house-image-storage.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PartnerLeadIntakeService } from './partner-lead-intake.service';
@@ -1910,7 +1911,13 @@ export class PartnerService {
       where: {
         partner: { categoryId: cat.id },
         ...(partnerId ? { partnerId } : {}),
-        ...(city ? { city } : {}),
+        ...(city
+          ? {
+              city: {
+                in: expandRelocationCityFilter(city),
+              },
+            }
+          : {}),
         ...(typology ? { typology } : {}),
         ...(businessType ? { businessType } : {}),
       },

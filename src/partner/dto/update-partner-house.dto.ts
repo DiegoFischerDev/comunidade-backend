@@ -5,6 +5,7 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import {
   PARTNER_HOUSE_BUSINESS_TYPE_CODES,
@@ -12,6 +13,7 @@ import {
   PARTNER_HOUSE_FURNISHED_VALUES,
   PARTNER_HOUSE_TYPOLOGY_CODES,
 } from './create-partner-house.dto';
+import { PARTNER_HOUSE_RELOCATION_CITIES } from '../relocation-cities';
 
 /** Multipart PATCH — todos os campos opcionais. */
 export class UpdatePartnerHouseDto {
@@ -28,9 +30,12 @@ export class UpdatePartnerHouseDto {
   description?: string;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== undefined && v !== null)
   @IsString({ message: 'Indica a cidade.' })
   @MinLength(1, { message: 'Indica a cidade.' })
-  @MaxLength(120, { message: 'O nome da cidade é demasiado longo.' })
+  @IsIn([...PARTNER_HOUSE_RELOCATION_CITIES] as unknown as string[], {
+    message: 'Cidade inválida. Escolhe uma cidade da lista.',
+  })
   city?: string;
 
   @IsOptional()
