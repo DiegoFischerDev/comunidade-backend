@@ -551,15 +551,3 @@ model SupportTicket {
   @@map("support_tickets")
 }
 
-/** Destaques do canal YouTube no dashboard (três cards fixos, posições 1–3). */
-model YoutubeHighlightCard {
-  id           String   @id @default(cuid())
-  position     Int      @unique
-  title        String
-  videoUrl     String   @map("video_url")
-  thumbnailUrl String   @map("thumbnail_url")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-
-  @@map("youtube_highlight_cards")
-}

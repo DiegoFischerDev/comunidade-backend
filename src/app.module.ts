@@ -16,7 +16,6 @@ import { RafacallModule } from './rafacall/rafacall.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { SupportModule } from './support/support.module';
 import { ChecklistModule } from './checklist/checklist.module';
-import { YoutubeHighlightModule } from './youtube-highlight/youtube-highlight.module';
 
 @Module({
   imports: [
@@ -32,7 +31,6 @@ import { YoutubeHighlightModule } from './youtube-highlight/youtube-highlight.mo
     WhatsAppModule,
     SupportModule,
     ChecklistModule,
-    YoutubeHighlightModule,
   ],
   controllers: [AppController],
   providers: [
