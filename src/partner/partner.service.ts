@@ -21,6 +21,7 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import {
+  PartnerHouse,
   PartnerHouseStatus,
   PartnerHouseTypology,
   PartnerReactionType,
@@ -37,6 +38,7 @@ import { join } from 'path';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
+import { AdminUpdatePartnerHouseDto } from './dto/admin-update-partner-house.dto';
 import { expandRelocationCityFilter } from './relocation-cities';
 import { HouseImageStorageService } from './house-image-storage.service';
 import { PartnerLeadIntakeService } from './partner-lead-intake.service';
@@ -1308,6 +1310,7 @@ export class PartnerService {
   }
 
   private formatHousePostText(params: {
+    houseId: number;
     title: string;
     description: string;
     businessType: HouseBusinessType;
@@ -1332,6 +1335,8 @@ export class PartnerService {
     const mobilado = params.furnished ? 'Sim' : 'Não';
     const lines = [
       `🏠 *${params.title.trim()}*`,
+      ``,
+      `*Id:* ${params.houseId}`,
       ``,
       `*Casa para ${params.businessType === 'SALE' ? 'venda' : 'arrendamento'}*`,
       `📍 *Cidade:* ${cityLabel}`,
@@ -1446,6 +1451,7 @@ export class PartnerService {
       where: { id: houseId },
       select: {
         id: true,
+        houseId: true,
         status: true,
         title: true,
         businessType: true,
@@ -1644,7 +1650,59 @@ export class PartnerService {
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
+    return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile);
+  }
 
+  /** Admin: carregar qualquer anúncio para edição. */
+  async adminGetHouse(houseId: string) {
+    const house = await this.prisma.partnerHouse.findUnique({
+      where: { id: houseId },
+      include: {
+        partner: {
+          select: {
+            id: true,
+            name: true,
+            category: { select: { slug: true, name: true } },
+          },
+        },
+      },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    return house;
+  }
+
+  async adminUpdateHouse(
+    houseId: string,
+    dto: AdminUpdatePartnerHouseDto,
+    imageFiles: Express.Multer.File[],
+    videoFile: Express.Multer.File | null,
+  ) {
+    const house = await this.prisma.partnerHouse.findUnique({
+      where: { id: houseId },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    const statusOpt =
+      dto.status != null &&
+      (['AVAILABLE', 'RESERVED', 'UNAVAILABLE'] as const).includes(dto.status)
+        ? (dto.status as PartnerHouseStatus)
+        : undefined;
+    return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile, {
+      status: statusOpt,
+    });
+  }
+
+  private async applyHouseListingUpdate(
+    house: PartnerHouse,
+    houseId: string,
+    dto: UpdatePartnerHouseDto,
+    imageFiles: Express.Multer.File[],
+    videoFile: Express.Multer.File | null,
+    opts?: { status?: PartnerHouseStatus },
+  ) {
     const images = (imageFiles ?? []).filter((f) => !!f);
     if (images.length > 6) {
       throw new BadRequestException('Podes enviar no máximo 6 imagens de uma vez.');
@@ -1783,6 +1841,7 @@ export class PartnerService {
         ...(dto.relocationFeeEur != null && {
           relocationFeeEur: dto.relocationFeeEur.trim(),
         }),
+        ...(opts?.status != null && { status: opts.status }),
         caucoesCount,
         rendasEntradaCount,
         furnished,
@@ -1849,6 +1908,7 @@ export class PartnerService {
       },
       select: {
         id: true,
+        houseId: true,
         title: true,
         description: true,
         businessType: true,
@@ -2017,6 +2077,7 @@ export class PartnerService {
     }
 
     const text = this.formatHousePostText({
+      houseId: house.houseId,
       title: house.title,
       description: house.description,
       businessType: house.businessType as HouseBusinessType,

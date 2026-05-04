@@ -393,6 +393,8 @@ model PartnerComment {
 
 model PartnerHouse {
   id            String            @id @default(cuid())
+  /// Número sequencial para controlo e referência (listagens, WhatsApp: «Id: …»).
+  houseId       Int               @unique @default(autoincrement()) @map("house_id")
   partnerId     String            @map("partner_id")
   partner       Partner           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   title         String

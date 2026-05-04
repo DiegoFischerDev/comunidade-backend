@@ -36,6 +36,7 @@ import {
 import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
+import { AdminUpdatePartnerHouseDto } from './dto/admin-update-partner-house.dto';
 import { memoryStorage } from 'multer';
 import { SetPartnerReactionDto } from './dto/set-partner-reaction.dto';
 import { CreatePartnerCommentDto } from './dto/create-partner-comment.dto';
@@ -371,6 +372,43 @@ export class PartnerController {
   @Roles(Role.ADMIN)
   async adminListAllHouses() {
     return this.partnerService.adminListAllHouses();
+  }
+
+  @Get('admin/houses/:houseId')
+  @Roles(Role.ADMIN)
+  async adminGetHouse(@Param('houseId') houseId: string) {
+    return this.partnerService.adminGetHouse(houseId);
+  }
+
+  @Patch('admin/houses/:houseId')
+  @Roles(Role.ADMIN)
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: 6 },
+        { name: 'video', maxCount: 1 },
+      ],
+      {
+        limits: {
+          files: 7,
+          fileSize: 80 * 1024 * 1024,
+        },
+        storage: memoryStorage(),
+      },
+    ),
+  )
+  async adminUpdateHouse(
+    @Param('houseId') houseId: string,
+    @Body() dto: AdminUpdatePartnerHouseDto,
+    @UploadedFiles()
+    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
+  ) {
+    return this.partnerService.adminUpdateHouse(
+      houseId,
+      dto,
+      files?.images ?? [],
+      files?.video?.[0] ?? null,
+    );
   }
 
   @Get('admin/house-whatsapp-groups')
