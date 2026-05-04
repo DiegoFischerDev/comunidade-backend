@@ -414,7 +414,7 @@ model PartnerHouse {
   imageUrls     String[]          @default([]) @map("image_urls")
   /// Foto principal (preview OG / cartões); deve existir em imageUrls. Opcional — usa-se a 1.ª imagem.
   coverImageUrl String?           @map("cover_image_url")
-  /// Vídeo opcional na página pública (não enviado ao grupo WhatsApp)
+  /// Vídeo opcional na página pública; envio aos grupos WhatsApp é manual (admin).
   videoUrl      String?           @map("video_url")
   /// Destaque manual pelo admin. Imóveis em destaque aparecem primeiro em /relocation/imoveis.
   featured      Boolean           @default(false) @map("featured")
@@ -427,6 +427,20 @@ model PartnerHouse {
   @@index([partnerId, status])
   @@index([availableFrom])
   @@map("partner_houses")
+}
+
+/// Grupos WhatsApp para envio manual de anúncios relocation (admin).
+model HouseRelocationWhatsappGroup {
+  id        String   @id @default(cuid())
+  name      String
+  groupJid  String   @unique @map("group_jid")
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([active, sortOrder])
+  @@map("house_relocation_whatsapp_groups")
 }
 
 model ProductCategory {

@@ -43,8 +43,18 @@ import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PartnerLeadIntakeService } from './partner-lead-intake.service';
 import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
 import { computePartnerAverageResponseMinutes } from './partner-response-average.util';
+import {
+  toAbsoluteMediaUrl,
+  videoMimeFromStoredUrl,
+} from '../common/public-media-url';
+import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-relocation-whatsapp-group.dto';
+import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
 
 const SALT_ROUNDS = 10;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 const RELOCATION_CATEGORY_SLUG = 'relocation';
 
@@ -1291,14 +1301,6 @@ export class PartnerService {
     });
   }
 
-  private get housesGroupJid(): string {
-    return (
-      process.env.EVOLUTION_HOUSES_RELOCATION_GROUP_JID ||
-      process.env.EVOLUTION_HOUSES_GROUP_JID ||
-      ''
-    ).trim();
-  }
-
   private get frontendBaseUrl(): string {
     return getFrontendBaseUrl();
   }
@@ -1486,12 +1488,6 @@ export class PartnerService {
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
   ) {
-    if (!this.housesGroupJid) {
-      throw new BadRequestException(
-        'EVOLUTION_HOUSES_RELOCATION_GROUP_JID não configurado no backend.',
-      );
-    }
-
     const images = (imageFiles ?? []).filter((f) => !!f);
     const hasVideo = !!videoFile;
     if (images.length > 6) {
@@ -1579,56 +1575,6 @@ export class PartnerService {
         videoUrl,
       } as any,
     });
-
-    try {
-      // Grupo WhatsApp: só texto com link (uma vez na criação). Fotos e vídeo ficam na página pública.
-      const text = this.formatHousePostText({
-        houseId: created.id,
-        partnerId,
-        title: dto.title,
-        description: dto.description,
-        businessType: dto.businessType ?? 'RENT',
-        city: dto.city.trim(),
-        typology: dto.typology,
-        availableFrom,
-        priceEur: dto.priceEur,
-        caucoesCount,
-        rendasEntradaCount,
-        relocationFeeEur: dto.relocationFeeEur,
-        furnished,
-      });
-      await this.wa.sendText(this.housesGroupJid, text, { requireDelivery: true });
-
-      await this.prisma.partnerHouse.update({
-        where: { id: created.id },
-        data: {
-          whatsappSentAt: new Date(),
-          whatsappError: null,
-        },
-      });
-    } catch (err: unknown) {
-      if (err instanceof BadRequestException) {
-        throw err;
-      }
-      const message =
-        err && typeof err === 'object' && 'message' in err
-          ? String((err as { message?: string }).message)
-          : 'Falha ao enviar no WhatsApp.';
-      await this.prisma.partnerHouse.update({
-        where: { id: created.id },
-        data: { whatsappError: message },
-      });
-      this.logger.error(
-        `Falha ao enviar post de imóvel ${created.id} para o WhatsApp: ${message}`,
-        err instanceof Error ? err.stack : undefined,
-      );
-      const safeDetail =
-        message.length > 1500 ? `${message.slice(0, 1500)}…` : message;
-      throw new HttpException(
-        `Não foi possível enviar o post no WhatsApp. Detalhes: ${safeDetail}`,
-        HttpStatus.SERVICE_UNAVAILABLE,
-      );
-    }
 
     return created;
   }
@@ -1978,6 +1924,187 @@ export class PartnerService {
       };
     }
     return row;
+  }
+
+  async adminListHouseRelocationWhatsappGroups() {
+    return this.prisma.houseRelocationWhatsappGroup.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+  }
+
+  async adminCreateHouseRelocationWhatsappGroup(dto: CreateHouseRelocationWhatsappGroupDto) {
+    const name = dto.name.trim();
+    const groupJid = dto.groupJid.trim();
+    const agg = await this.prisma.houseRelocationWhatsappGroup.aggregate({
+      _max: { sortOrder: true },
+    });
+    const sortOrder = (agg._max.sortOrder ?? -1) + 1;
+    try {
+      return await this.prisma.houseRelocationWhatsappGroup.create({
+        data: { name, groupJid, active: true, sortOrder },
+      });
+    } catch (e: unknown) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new ConflictException('Já existe um grupo com este JID.');
+      }
+      throw e;
+    }
+  }
+
+  async adminUpdateHouseRelocationWhatsappGroup(
+    id: string,
+    dto: UpdateHouseRelocationWhatsappGroupDto,
+  ) {
+    const exists = await this.prisma.houseRelocationWhatsappGroup.findUnique({
+      where: { id },
+    });
+    if (!exists) {
+      throw new NotFoundException('Grupo não encontrado.');
+    }
+    const data: { name?: string; active?: boolean } = {};
+    if (dto.name !== undefined) data.name = dto.name.trim();
+    if (dto.active !== undefined) data.active = dto.active;
+    if (Object.keys(data).length === 0) {
+      return exists;
+    }
+    return this.prisma.houseRelocationWhatsappGroup.update({
+      where: { id },
+      data,
+    });
+  }
+
+  async adminDeleteHouseRelocationWhatsappGroup(id: string) {
+    const exists = await this.prisma.houseRelocationWhatsappGroup.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!exists) {
+      throw new NotFoundException('Grupo não encontrado.');
+    }
+    await this.prisma.houseRelocationWhatsappGroup.delete({ where: { id } });
+    return { ok: true as const };
+  }
+
+  /**
+   * Envia o anúncio aos grupos ativos: imagens (ordem), vídeo, texto (formato existente).
+   */
+  async adminSendHouseToRelocationWhatsappGroups(houseId: string) {
+    const relocationCategory = await this.prisma.productCategory.findUnique({
+      where: { slug: RELOCATION_CATEGORY_SLUG },
+      select: { id: true },
+    });
+    if (!relocationCategory) {
+      throw new BadRequestException('Categoria relocation não encontrada.');
+    }
+
+    const house = await this.prisma.partnerHouse.findFirst({
+      where: {
+        id: houseId,
+        partner: { categoryId: relocationCategory.id },
+      },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel relocation não encontrado.');
+    }
+
+    const groups = await this.prisma.houseRelocationWhatsappGroup.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+    if (!groups.length) {
+      throw new BadRequestException(
+        'Não há grupos ativos. Adiciona pelo menos um grupo e ativa-o.',
+      );
+    }
+
+    const text = this.formatHousePostText({
+      houseId: house.id,
+      partnerId: house.partnerId,
+      title: house.title,
+      description: house.description,
+      businessType: house.businessType as HouseBusinessType,
+      city: house.city,
+      typology: house.typology,
+      availableFrom: house.availableFrom,
+      priceEur: house.priceEur,
+      caucoesCount: house.caucoesCount,
+      rendasEntradaCount: house.rendasEntradaCount,
+      relocationFeeEur: house.relocationFeeEur,
+      furnished: house.furnished,
+    });
+
+    const failures: string[] = [];
+    let successCount = 0;
+
+    for (const g of groups) {
+      const to = g.groupJid.trim();
+      try {
+        let idx = 0;
+        for (const url of house.imageUrls) {
+          idx += 1;
+          const abs = toAbsoluteMediaUrl(url);
+          await this.wa.sendMedia({
+            to,
+            caption: '',
+            mediaUrl: abs,
+            mimeType: 'image/webp',
+            fileName: `imovel-${idx}.webp`,
+            mediaType: 'image',
+            requireDelivery: true,
+          });
+          await sleep(650);
+        }
+        if (house.videoUrl) {
+          const abs = toAbsoluteMediaUrl(house.videoUrl);
+          const { mime, fileName } = videoMimeFromStoredUrl(abs);
+          await this.wa.sendMedia({
+            to,
+            caption: '',
+            mediaUrl: abs,
+            mimeType: mime,
+            fileName,
+            mediaType: 'video',
+            requireDelivery: true,
+          });
+          await sleep(650);
+        }
+        await this.wa.sendText(to, text, { requireDelivery: true });
+        successCount += 1;
+      } catch (err: unknown) {
+        const msg =
+          err instanceof Error ? err.message : 'Erro desconhecido ao enviar.';
+        failures.push(`${g.name}: ${msg}`);
+        this.logger.warn(
+          `Envio imóvel ${houseId} para grupo ${g.name} (${to}): ${msg}`,
+        );
+      }
+    }
+
+    const summaryError =
+      failures.length > 0 ? failures.join(' | ').slice(0, 4000) : null;
+    await this.prisma.partnerHouse.update({
+      where: { id: houseId },
+      data: {
+        whatsappSentAt: successCount > 0 ? new Date() : house.whatsappSentAt,
+        whatsappError: failures.length ? summaryError : null,
+      },
+    });
+
+    if (successCount === 0) {
+      throw new HttpException(
+        failures.join(' | ') || 'Falha ao enviar para todos os grupos.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
+    return {
+      ok: true as const,
+      sentToGroups: successCount,
+      failed: failures,
+    };
   }
 
   async adminListAllHouses() {

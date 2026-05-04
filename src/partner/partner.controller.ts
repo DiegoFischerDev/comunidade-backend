@@ -40,6 +40,8 @@ import { memoryStorage } from 'multer';
 import { SetPartnerReactionDto } from './dto/set-partner-reaction.dto';
 import { CreatePartnerCommentDto } from './dto/create-partner-comment.dto';
 import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
+import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-relocation-whatsapp-group.dto';
+import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
 
 @Controller('partners')
 export class PartnerController {
@@ -371,6 +373,36 @@ export class PartnerController {
     return this.partnerService.adminListAllHouses();
   }
 
+  @Get('admin/house-whatsapp-groups')
+  @Roles(Role.ADMIN)
+  async adminListHouseRelocationWhatsappGroups() {
+    return this.partnerService.adminListHouseRelocationWhatsappGroups();
+  }
+
+  @Post('admin/house-whatsapp-groups')
+  @Roles(Role.ADMIN)
+  async adminCreateHouseRelocationWhatsappGroup(
+    @Body() dto: CreateHouseRelocationWhatsappGroupDto,
+  ) {
+    return this.partnerService.adminCreateHouseRelocationWhatsappGroup(dto);
+  }
+
+  @Patch('admin/house-whatsapp-groups/:id')
+  @Roles(Role.ADMIN)
+  async adminUpdateHouseRelocationWhatsappGroup(
+    @Param('id') id: string,
+    @Body() dto: UpdateHouseRelocationWhatsappGroupDto,
+  ) {
+    return this.partnerService.adminUpdateHouseRelocationWhatsappGroup(id, dto);
+  }
+
+  @Delete('admin/house-whatsapp-groups/:id')
+  @Roles(Role.ADMIN)
+  @HttpCode(200)
+  async adminDeleteHouseRelocationWhatsappGroup(@Param('id') id: string) {
+    return this.partnerService.adminDeleteHouseRelocationWhatsappGroup(id);
+  }
+
   @Post('admin/houses')
   @Roles(Role.ADMIN)
   @UseInterceptors(
@@ -416,6 +448,13 @@ export class PartnerController {
     @Body() body: { featured: boolean },
   ) {
     return this.partnerService.adminSetHouseFeatured(houseId, Boolean(body?.featured));
+  }
+
+  @Post('admin/houses/:houseId/send-whatsapp-groups')
+  @Roles(Role.ADMIN)
+  @HttpCode(200)
+  async adminSendHouseToWhatsappGroups(@Param('houseId') houseId: string) {
+    return this.partnerService.adminSendHouseToRelocationWhatsappGroups(houseId);
   }
 
   @Post('me/sales/:id/pay-commission')

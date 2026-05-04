@@ -26,6 +26,7 @@ services:
       PORT: 3001
       NODE_ENV: production
       DATABASE_URL: postgresql://comunidade:${POSTGRES_PASSWORD}@postgres:5432/comunidade?schema=public
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL}
       # Rafa Call (valores do .env; omissões abaixo se a chave não existir)
       STRIPE_RAFA_CALL_EUR_CENTS: ${STRIPE_RAFA_CALL_EUR_CENTS:-2000}
       STRIPE_RAFA_CALL_PIX_BRL: ${STRIPE_RAFA_CALL_PIX_BRL:-2000}

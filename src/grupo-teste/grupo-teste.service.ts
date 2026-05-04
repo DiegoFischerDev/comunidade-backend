@@ -7,27 +7,15 @@ import {
 import { unlink } from 'fs/promises';
 import { GrupoTesteMessageStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  toAbsoluteMediaUrl,
+  videoMimeFromStoredUrl,
+} from '../common/public-media-url';
 import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-function publicApiBase(): string {
-  return (process.env.PUBLIC_API_BASE_URL || 'http://localhost:3001').replace(
-    /\/$/,
-    '',
-  );
-}
-
-/** Evolution precisa de URL http(s) acessível a partir do servidor da API. */
-export function toAbsoluteMediaUrl(stored: string): string {
-  const u = stored.trim();
-  if (!u) return '';
-  if (u.startsWith('https://') || u.startsWith('http://')) return u;
-  const base = publicApiBase();
-  return u.startsWith('/') ? `${base}${u}` : `${base}/${u}`;
 }
 
 function normalizeGroupJid(raw: string): string {
@@ -39,20 +27,6 @@ function normalizeGroupJid(raw: string): string {
   throw new BadRequestException(
     'JID do grupo inválido. Usa o formato completo (ex.: 120363…@g.us).',
   );
-}
-
-function videoMimeFromUrl(url: string): { mime: string; fileName: string } {
-  const lower = url.split('?')[0]!.toLowerCase();
-  if (lower.endsWith('.mov')) {
-    return { mime: 'video/quicktime', fileName: 'video.mov' };
-  }
-  if (lower.endsWith('.webm')) {
-    return { mime: 'video/webm', fileName: 'video.webm' };
-  }
-  if (lower.endsWith('.3gp')) {
-    return { mime: 'video/3gpp', fileName: 'video.3gp' };
-  }
-  return { mime: 'video/mp4', fileName: 'video.mp4' };
 }
 
 @Injectable()
@@ -193,7 +167,7 @@ export class GrupoTesteService {
 
       if (row.videoUrl) {
         const abs = toAbsoluteMediaUrl(row.videoUrl);
-        const { mime, fileName } = videoMimeFromUrl(abs);
+        const { mime, fileName } = videoMimeFromStoredUrl(abs);
         await this.wa.sendMedia({
           to: groupJid,
           caption: '',

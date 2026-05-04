@@ -47,7 +47,7 @@ Copia `backend/.env.example` para `backend/.env` e preenche os valores.
 | `COMMUNITY_INTERNAL_SECRET` | Igual ao **wa-verify-receiver** (confirmação de registo WhatsApp). |
 | `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE` (+ secundária / ativa / failover, opcional) | Evolution API. |
 | `EVOLUTION_VIDEO_REQUEST_TIMEOUT_MS` | (Opcional) Timeout ms para `sendMedia` de **vídeo** (omissão 600000). Texto/imagem: `EVOLUTION_REQUEST_TIMEOUT_MS` (omissão 180000). |
-| `EVOLUTION_HOUSES_RELOCATION_GROUP_JID` | JID do grupo de anúncios de imóveis (`EVOLUTION_HOUSES_GROUP_JID` é alias no código). |
+| `EVOLUTION_HOUSES_RELOCATION_GROUP_JID` | (Opcional / legado) JID único; o envio de anúncios relocation para WhatsApp passa a ser **manual** pelo admin (`/dashboard/admin/houses` → grupos configuráveis + «Enviar nos grupos»). |
 | `WHATSAPP_REGISTRATION_NUMBER` (+ secundário, opcional) | Números nos links `wa.me` (sem `+`). |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_AMOUNT_EUR_CENTS`, `STRIPE_PIX_AMOUNT_BRL` | Stripe. |
 | `STRIPE_RAFA_CALL_EUR_CENTS`, `STRIPE_RAFA_CALL_PIX_BRL`, `RAFA_CALL_*` | Rafa Call (preços e horários em JSON). |
