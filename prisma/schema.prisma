@@ -434,12 +434,14 @@ model HouseRelocationWhatsappGroup {
   id        String   @id @default(cuid())
   name      String
   groupJid  String   @unique @map("group_jid")
+  /// Só recebe envios de imóveis com a mesma finalidade (RENT = arrendamento, SALE = venda).
+  businessType PartnerHouseBusinessType @default(RENT) @map("business_type")
   active    Boolean  @default(true)
   sortOrder Int      @default(0) @map("sort_order")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@index([active, sortOrder])
+  @@index([active, businessType, sortOrder])
   @@map("house_relocation_whatsapp_groups")
 }
 

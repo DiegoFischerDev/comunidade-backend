@@ -39,7 +39,6 @@ import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { expandRelocationCityFilter } from './relocation-cities';
 import { HouseImageStorageService } from './house-image-storage.service';
-import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PartnerLeadIntakeService } from './partner-lead-intake.service';
 import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
 import { computePartnerAverageResponseMinutes } from './partner-response-average.util';
@@ -1301,15 +1300,6 @@ export class PartnerService {
     });
   }
 
-  private get frontendBaseUrl(): string {
-    return getFrontendBaseUrl();
-  }
-
-  /** Página pública do anúncio (detalhes + parceiro); pré-visualização WhatsApp usa OG desta URL, não a imagem genérica da comunidade. */
-  private buildHousePublicPageLink(houseId: string): string {
-    return `${this.frontendBaseUrl}/dashboard/casas/${houseId}`;
-  }
-
   /** Texto curto: «2 cauções · 1 renda» (alinhado à página pública). */
   private formatHouseEntradaShortLine(caucoes: number, rendas: number): string {
     const c = caucoes === 1 ? '1 caução' : `${caucoes} cauções`;
@@ -1318,8 +1308,6 @@ export class PartnerService {
   }
 
   private formatHousePostText(params: {
-    houseId: string;
-    partnerId: string;
     title: string;
     description: string;
     businessType: HouseBusinessType;
@@ -1336,7 +1324,6 @@ export class PartnerService {
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
     const cityLabel = this.formatHouseCityLabel(params.city);
     const businessTypeLabel = this.formatHouseBusinessTypeLabel(params.businessType);
-    const housePageUrl = this.buildHousePublicPageLink(params.houseId);
     const entrada = this.formatHouseEntradaShortLine(
       params.caucoesCount,
       params.rendasEntradaCount,
@@ -1356,14 +1343,7 @@ export class PartnerService {
       `*Taxa relocation:* ${fee} €`,
       `*Entrada:* ${entrada}`,
     ];
-    lines.push(
-      ``,
-      `📝 *Descrição:*`,
-      params.description.trim(),
-      ``,
-      `🔗 *Página do anúncio (Comunidade Rafa Portugal):*`,
-      housePageUrl,
-    );
+    lines.push(``, `📝 *Descrição:*`, params.description.trim());
     return lines.join('\n');
   }
 
@@ -1941,7 +1921,13 @@ export class PartnerService {
     const sortOrder = (agg._max.sortOrder ?? -1) + 1;
     try {
       return await this.prisma.houseRelocationWhatsappGroup.create({
-        data: { name, groupJid, active: true, sortOrder },
+        data: {
+          name,
+          groupJid,
+          businessType: dto.businessType,
+          active: true,
+          sortOrder,
+        },
       });
     } catch (e: unknown) {
       if (
@@ -1964,9 +1950,14 @@ export class PartnerService {
     if (!exists) {
       throw new NotFoundException('Grupo não encontrado.');
     }
-    const data: { name?: string; active?: boolean } = {};
+    const data: {
+      name?: string;
+      active?: boolean;
+      businessType?: 'RENT' | 'SALE';
+    } = {};
     if (dto.name !== undefined) data.name = dto.name.trim();
     if (dto.active !== undefined) data.active = dto.active;
+    if (dto.businessType !== undefined) data.businessType = dto.businessType;
     if (Object.keys(data).length === 0) {
       return exists;
     }
@@ -2011,18 +2002,21 @@ export class PartnerService {
     }
 
     const groups = await this.prisma.houseRelocationWhatsappGroup.findMany({
-      where: { active: true },
+      where: {
+        active: true,
+        businessType: house.businessType,
+      },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
     if (!groups.length) {
+      const purposeLabel =
+        house.businessType === 'SALE' ? 'venda' : 'arrendamento';
       throw new BadRequestException(
-        'Não há grupos ativos. Adiciona pelo menos um grupo e ativa-o.',
+        `Não há grupos ativos para a finalidade «${purposeLabel}». Adiciona e ativa um grupo com essa finalidade.`,
       );
     }
 
     const text = this.formatHousePostText({
-      houseId: house.id,
-      partnerId: house.partnerId,
       title: house.title,
       description: house.description,
       businessType: house.businessType as HouseBusinessType,

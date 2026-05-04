@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsIn, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class CreateHouseRelocationWhatsappGroupDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
@@ -16,4 +16,7 @@ export class CreateHouseRelocationWhatsappGroupDto {
     message: 'O código do grupo deve ser um JID WhatsApp (ex.: 120363…@g.us).',
   })
   groupJid!: string;
+
+  @IsIn(['RENT', 'SALE'])
+  businessType!: 'RENT' | 'SALE';
 }
