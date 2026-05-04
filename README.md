@@ -46,6 +46,7 @@ Copia `backend/.env.example` para `backend/.env` e preenche os valores.
 | `PUBLIC_API_BASE_URL` | URL pública desta API (links a `/uploads/...` em imóveis; alinhar com `NEXT_PUBLIC_API_URL`). |
 | `COMMUNITY_INTERNAL_SECRET` | Igual ao **wa-verify-receiver** (confirmação de registo WhatsApp). |
 | `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE` (+ secundária / ativa / failover, opcional) | Evolution API. |
+| `EVOLUTION_VIDEO_REQUEST_TIMEOUT_MS` | (Opcional) Timeout ms para `sendMedia` de **vídeo** (omissão 600000). Texto/imagem: `EVOLUTION_REQUEST_TIMEOUT_MS` (omissão 180000). |
 | `EVOLUTION_HOUSES_RELOCATION_GROUP_JID` | JID do grupo de anúncios de imóveis (`EVOLUTION_HOUSES_GROUP_JID` é alias no código). |
 | `WHATSAPP_REGISTRATION_NUMBER` (+ secundário, opcional) | Números nos links `wa.me` (sem `+`). |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_AMOUNT_EUR_CENTS`, `STRIPE_PIX_AMOUNT_BRL` | Stripe. |
@@ -60,7 +61,7 @@ Não precisas de definir nada disto no `.env` em condições normais.
 
 - **Transcodificação de vídeo** (`HOUSE_VIDEO_*`): omissões em `src/partner/house-video-transcode.ts` (ex. CRF 28, largura máx. 1280). Define só se quiseres desativar (`HOUSE_VIDEO_TRANSCODE_ENABLED=0`) ou afinar qualidade.
 - **Evolution / timeouts / base64** (`EVOLUTION_REQUEST_TIMEOUT_MS`, `EVOLUTION_VIDEO_MAX_BASE64_FALLBACK_BYTES`, `MEDIA_PUBLIC_URL_READY_MAX_WAIT_MS`, etc.): omissões em `whatsapp.service.ts` e `partner.service.ts`.
-- **Nginx / proxy à frente da API:** para vídeos de imóveis e de perfil do parceiro, usa pelo menos `client_max_body_size 80m` no `server` da API (os exemplos em `deploy/nginx*.conf` já usam 80m).
+- **Nginx / proxy à frente da API:** `deploy/nginx*.conf` usam `client_max_body_size 120m` e `proxy_read_timeout` / `proxy_send_timeout` 600s no upstream da API (multipart + vídeos longos / Grupo teste → Evolution).
 
 ## Compile and run the project
 

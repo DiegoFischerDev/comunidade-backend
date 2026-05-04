@@ -27,6 +27,7 @@ import { PartnerLeadInternalController } from './partner-lead-internal.controlle
     HouseImageStorageService,
     PartnerHouseCleanupTask,
   ],
+  exports: [HouseImageStorageService],
 })
 export class PartnerModule {}
 

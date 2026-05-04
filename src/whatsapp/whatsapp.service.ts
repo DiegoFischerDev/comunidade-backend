@@ -45,13 +45,23 @@ export class WhatsAppService {
     return !['0', 'false', 'off', 'no'].includes(raw);
   }
 
-  /** Timeout do fetch (backend → Evolution). Vídeos grandes podem demorar a processar no servidor da API. */
-  private evolutionRequestSignal(): AbortSignal | undefined {
-    const raw = process.env.EVOLUTION_REQUEST_TIMEOUT_MS?.trim();
-    const ms =
-      raw && /^\d+$/.test(raw)
-        ? parseInt(raw, 10)
-        : 180000;
+  /**
+   * Timeout do fetch (backend → Evolution).
+   * Texto/imagem: `EVOLUTION_REQUEST_TIMEOUT_MS` (omissão 180s).
+   * Vídeo: `EVOLUTION_VIDEO_REQUEST_TIMEOUT_MS` (omissão 600s) — vídeos longos (~3 min) e proxy lento.
+   */
+  private evolutionRequestSignal(kind: 'default' | 'video' = 'default'): AbortSignal | undefined {
+    const rawDefault = process.env.EVOLUTION_REQUEST_TIMEOUT_MS?.trim();
+    const rawVideo = process.env.EVOLUTION_VIDEO_REQUEST_TIMEOUT_MS?.trim();
+    const defaultMs =
+      kind === 'video'
+        ? rawVideo && /^\d+$/.test(rawVideo)
+          ? parseInt(rawVideo, 10)
+          : 600000
+        : rawDefault && /^\d+$/.test(rawDefault)
+          ? parseInt(rawDefault, 10)
+          : 180000;
+    const ms = defaultMs;
     if (!ms || ms <= 0) return undefined;
     try {
       return AbortSignal.timeout(ms);
@@ -171,7 +181,8 @@ export class WhatsAppService {
       return;
     }
 
-    const mediaSignal = this.evolutionRequestSignal();
+    const mediaKind = params.mediaType === 'video' ? 'video' : 'default';
+    const mediaSignal = this.evolutionRequestSignal(mediaKind);
     for (let i = 0; i < attempts.length; i++) {
       const instance = attempts[i];
       try {

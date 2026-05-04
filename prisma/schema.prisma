@@ -61,6 +61,13 @@ enum SupportTicketStatus {
   DONE
 }
 
+enum GrupoTesteMessageStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+}
+
 enum PartnerHouseStatus {
   AVAILABLE
   RESERVED
@@ -167,6 +174,26 @@ model User {
   immigrationChecklist ImmigrationChecklist?
   partnerReactions   PartnerReaction[]
   partnerComments    PartnerComment[]
+  grupoTesteMessages GrupoTesteMessage[]
+}
+
+/** Mensagens guardadas pelo admin para testar envio Evolution → grupo WhatsApp. */
+model GrupoTesteMessage {
+  id              String                   @id @default(cuid())
+  description     String                   @db.Text
+  imageUrls       String[]                 @map("image_urls")
+  videoUrl        String?                  @map("video_url")
+  /** JID opcional guardado no registo (o envio usa o JID indicado no pedido «Enviar»). */
+  targetGroupJid  String?                  @map("target_group_jid") @db.VarChar(160)
+  status          GrupoTesteMessageStatus  @default(PENDING)
+  sentAt          DateTime?                @map("sent_at")
+  whatsappError   String?                  @map("whatsapp_error") @db.Text
+  createdById     String                   @map("created_by_id")
+  createdBy       User                     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt       DateTime                 @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("grupo_teste_messages")
 }
 
 /** Contacto WhatsApp sem conta na plataforma (lead criado só pelo fluxo de atendimento). */
