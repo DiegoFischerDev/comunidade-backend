@@ -1,5 +1,6 @@
 /**
  * Principais cidades de Portugal — valores canónicos em `partner_house.city`.
+ * O admin pode gravar texto livre fora desta lista (`normalizeRelocationCityForAdminStorage`).
  * Manter alinhado com `frontend/src/lib/relocation-portugal-cities.ts`.
  */
 export const PARTNER_HOUSE_RELOCATION_CITIES = [
@@ -111,6 +112,21 @@ export function normalizeRelocationCityForStorage(
   if (fromLegacy) return fromLegacy;
   if (RELOCATION_CITIES_SET.has(t)) return t as (typeof PARTNER_HOUSE_RELOCATION_CITIES)[number];
   return 'Lisboa';
+}
+
+/**
+ * Criação de anúncio pelo admin: aceita cidades fora da lista fixa (texto livre),
+ * mantendo legados e nomes canónicos alinhados com a lista.
+ */
+export function normalizeRelocationCityForAdminStorage(
+  raw: string | undefined | null,
+): string {
+  const t = (raw ?? '').trim();
+  if (!t) return 'Lisboa';
+  const fromLegacy = LEGACY_TO_CANONICAL[t];
+  if (fromLegacy) return fromLegacy;
+  if (RELOCATION_CITIES_SET.has(t)) return t;
+  return t;
 }
 
 const CANONICAL_TO_LEGACY: Partial<Record<string, string>> = {};

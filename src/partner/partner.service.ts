@@ -42,7 +42,7 @@ import { AdminUpdatePartnerHouseDto } from './dto/admin-update-partner-house.dto
 import { AdminCreatePartnerHouseDto } from './dto/admin-create-partner-house.dto';
 import {
   expandRelocationCityFilter,
-  normalizeRelocationCityForStorage,
+  normalizeRelocationCityForAdminStorage,
 } from './relocation-cities';
 import { HouseImageStorageService } from './house-image-storage.service';
 import { PartnerLeadIntakeService } from './partner-lead-intake.service';
@@ -1547,7 +1547,7 @@ export class PartnerService {
       description: (dto.description ?? '').trim() || '—',
       businessType: (dto.businessType === 'SALE' ? 'SALE' : 'RENT') as HouseBusinessType,
       typology,
-      city: normalizeRelocationCityForStorage(dto.city),
+      city: normalizeRelocationCityForAdminStorage(dto.city),
       availableFrom,
       priceEur: (dto.priceEur ?? '').trim() || '—',
       relocationFeeEur: (dto.relocationFeeEur ?? '').trim() || '0',
