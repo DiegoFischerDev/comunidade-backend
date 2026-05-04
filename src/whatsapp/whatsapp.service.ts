@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { isBase64, isURL } from 'class-validator';
 
 @Injectable()
 export class WhatsAppService {
@@ -68,6 +69,84 @@ export class WhatsAppService {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Evolution 2.3.x (`sendMessage.controller.ts`) só aceita `media` se `isURL(media)` ou `isBase64(media)`.
+   * O `isURL` do class-validator rejeita, entre outros, `http://localhost/...` e `http://servico-docker:porta/...`.
+   * Nesses casos obtemos o ficheiro no backend e enviamos base64 (imagens/documentos; vídeos grandes exigem URL público válido).
+   */
+  private maxBytesForUrlFetchBase64Fallback(): number {
+    const raw = process.env.EVOLUTION_SEND_MEDIA_URL_FETCH_MAX_BYTES?.trim();
+    if (raw && /^\d+$/.test(raw)) {
+      return parseInt(raw, 10);
+    }
+    return 12 * 1024 * 1024;
+  }
+
+  private async evolutionMediaField(params: {
+    mediaUrl?: string;
+    base64?: string;
+    mediaType?: 'image' | 'video' | 'document';
+  }): Promise<string> {
+    const urlTrim = params.mediaUrl?.trim();
+    let mediaPayload =
+      urlTrim && (urlTrim.startsWith('https://') || urlTrim.startsWith('http://'))
+        ? urlTrim
+        : (params.base64 ?? '').trim();
+    if (!mediaPayload.length) {
+      return '';
+    }
+    if (isBase64(mediaPayload)) {
+      return mediaPayload;
+    }
+    const isHttp =
+      mediaPayload.startsWith('https://') || mediaPayload.startsWith('http://');
+    if (!isHttp) {
+      return mediaPayload;
+    }
+    if (isURL(mediaPayload)) {
+      return mediaPayload;
+    }
+
+    const isVideo = params.mediaType === 'video';
+    if (isVideo) {
+      throw new Error(
+        'sendMedia (vídeo): a URL não passa na validação isURL da Evolution (ex.: localhost ou hostname só interno). ' +
+          'Define PUBLIC_API_BASE_URL com o HTTPS público da API, acessível em GET pela Evolution.',
+      );
+    }
+
+    const maxBytes = this.maxBytesForUrlFetchBase64Fallback();
+    const fetchSignal = this.evolutionRequestSignal('default');
+    const res = await fetch(mediaPayload, {
+      redirect: 'follow',
+      ...(fetchSignal ? { signal: fetchSignal } : {}),
+    });
+    if (!res.ok) {
+      throw new Error(
+        `sendMedia: falha ao obter a mídia (${res.status}) em ${mediaPayload.slice(0, 160)}`,
+      );
+    }
+    const lenHeader = res.headers.get('content-length');
+    if (lenHeader && /^\d+$/.test(lenHeader)) {
+      const n = parseInt(lenHeader, 10);
+      if (n > maxBytes) {
+        throw new Error(
+          `sendMedia: ficheiro demasiado grande (${n} bytes, máx. ${maxBytes}). Ajusta EVOLUTION_SEND_MEDIA_URL_FETCH_MAX_BYTES ou usa URL pública.`,
+        );
+      }
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > maxBytes) {
+      throw new Error(
+        `sendMedia: ficheiro demasiado grande (${buf.length} bytes, máx. ${maxBytes}).`,
+      );
+    }
+    this.logger.warn(
+      `sendMedia: URL não aceite por isURL na Evolution; a enviar como base64 (${buf.length} bytes).`,
+    );
+    return buf.toString('base64');
   }
 
   private normalizeRecipient(value: string): string {
@@ -169,11 +248,19 @@ export class WhatsAppService {
     const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
     let lastError = '';
 
-    const urlTrim = params.mediaUrl?.trim();
-    const mediaPayload =
-      urlTrim && (urlTrim.startsWith('https://') || urlTrim.startsWith('http://'))
-        ? urlTrim
-        : (params.base64 ?? '');
+    let mediaPayload: string;
+    try {
+      mediaPayload = await this.evolutionMediaField({
+        mediaUrl: params.mediaUrl,
+        base64: params.base64,
+        mediaType: params.mediaType,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'sendMedia: erro ao preparar mídia.';
+      this.logger.warn(msg);
+      if (requireDelivery) throw new Error(msg);
+      return;
+    }
     if (!mediaPayload?.length) {
       const msg = 'sendMedia: falta mediaUrl ou base64.';
       this.logger.warn(msg);
