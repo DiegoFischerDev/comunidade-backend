@@ -39,7 +39,11 @@ import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { AdminUpdatePartnerHouseDto } from './dto/admin-update-partner-house.dto';
-import { expandRelocationCityFilter } from './relocation-cities';
+import { AdminCreatePartnerHouseDto } from './dto/admin-create-partner-house.dto';
+import {
+  expandRelocationCityFilter,
+  normalizeRelocationCityForStorage,
+} from './relocation-cities';
 import { HouseImageStorageService } from './house-image-storage.service';
 import { PartnerLeadIntakeService } from './partner-lead-intake.service';
 import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
@@ -1468,24 +1472,110 @@ export class PartnerService {
     return row;
   }
 
+  private partnerHouseCreatePayloadFromStrictDto(
+    dto: CreatePartnerHouseDto,
+  ): {
+    title: string;
+    description: string;
+    businessType: HouseBusinessType;
+    typology: PartnerHouseTypology;
+    city: string;
+    availableFrom: Date;
+    priceEur: string;
+    relocationFeeEur: string;
+    caucoesCount: number;
+    rendasEntradaCount: number;
+    furnished: boolean;
+    coverImageIndex?: string;
+  } {
+    const availableFrom = new Date(dto.availableFrom);
+    if (Number.isNaN(availableFrom.getTime())) {
+      throw new BadRequestException('Data "Disponível em" inválida.');
+    }
+    return {
+      title: dto.title.trim(),
+      description: dto.description.trim(),
+      businessType: (dto.businessType ?? 'RENT') as HouseBusinessType,
+      typology: dto.typology,
+      city: dto.city.trim(),
+      availableFrom,
+      priceEur: dto.priceEur.trim(),
+      relocationFeeEur: dto.relocationFeeEur.trim(),
+      caucoesCount: Math.min(12, Math.max(0, parseInt(dto.caucoesCount, 10))),
+      rendasEntradaCount: Math.min(12, Math.max(0, parseInt(dto.rendasEntradaCount, 10))),
+      furnished: dto.furnished === 'true',
+      coverImageIndex: dto.coverImageIndex,
+    };
+  }
+
+  private partnerHouseCreatePayloadFromAdminDto(dto: AdminCreatePartnerHouseDto): {
+    title: string;
+    description: string;
+    businessType: HouseBusinessType;
+    typology: PartnerHouseTypology;
+    city: string;
+    availableFrom: Date;
+    priceEur: string;
+    relocationFeeEur: string;
+    caucoesCount: number;
+    rendasEntradaCount: number;
+    furnished: boolean;
+    coverImageIndex?: string;
+  } {
+    const rawDate = dto.availableFrom?.trim();
+    let availableFrom = rawDate ? new Date(rawDate) : new Date();
+    if (Number.isNaN(availableFrom.getTime())) {
+      availableFrom = new Date();
+    }
+
+    const typRaw = dto.typology?.trim();
+    const typology =
+      typRaw &&
+      (Object.values(PartnerHouseTypology) as string[]).includes(typRaw)
+        ? (typRaw as PartnerHouseTypology)
+        : PartnerHouseTypology.T2;
+
+    const parseEntrada = (s: string | undefined, fallback: number) => {
+      if (s == null || String(s).trim() === '') return fallback;
+      const n = parseInt(String(s), 10);
+      if (Number.isNaN(n)) return fallback;
+      return Math.min(12, Math.max(0, n));
+    };
+
+    return {
+      title: (dto.title ?? '').trim() || 'Sem título',
+      description: (dto.description ?? '').trim() || '—',
+      businessType: (dto.businessType === 'SALE' ? 'SALE' : 'RENT') as HouseBusinessType,
+      typology,
+      city: normalizeRelocationCityForStorage(dto.city),
+      availableFrom,
+      priceEur: (dto.priceEur ?? '').trim() || '—',
+      relocationFeeEur: (dto.relocationFeeEur ?? '').trim() || '0',
+      caucoesCount: parseEntrada(dto.caucoesCount, 0),
+      rendasEntradaCount: parseEntrada(dto.rendasEntradaCount, 0),
+      furnished: dto.furnished === 'true',
+      coverImageIndex: dto.coverImageIndex,
+    };
+  }
+
   private async createHousePostForPartner(
     partnerId: string,
-    dto: CreatePartnerHouseDto,
+    dto: CreatePartnerHouseDto | AdminCreatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
+    options: { strict: boolean },
   ) {
+    const payload = options.strict
+      ? this.partnerHouseCreatePayloadFromStrictDto(dto as CreatePartnerHouseDto)
+      : this.partnerHouseCreatePayloadFromAdminDto(dto as AdminCreatePartnerHouseDto);
+
     const images = (imageFiles ?? []).filter((f) => !!f);
     const hasVideo = !!videoFile;
     if (images.length > 6) {
       throw new BadRequestException('Podes enviar no máximo 6 imagens.');
     }
-    if (images.length === 0 && !hasVideo) {
+    if (options.strict && images.length === 0 && !hasVideo) {
       throw new BadRequestException('Envia pelo menos 1 imagem ou 1 vídeo.');
-    }
-
-    const availableFrom = new Date(dto.availableFrom);
-    if (Number.isNaN(availableFrom.getTime())) {
-      throw new BadRequestException('Data "Disponível em" inválida.');
     }
 
     let imageUrls: string[] = [];
@@ -1509,7 +1599,7 @@ export class PartnerService {
 
     let coverImageUrl: string | null = null;
     if (imageUrls.length > 0) {
-      const raw = dto.coverImageIndex?.trim();
+      const raw = payload.coverImageIndex?.trim();
       const idx =
         raw != null && raw !== ''
           ? Math.min(
@@ -1536,25 +1626,20 @@ export class PartnerService {
       }
     }
 
-    const caucoesCount = Math.min(12, Math.max(0, parseInt(dto.caucoesCount, 10)));
-    const rendasEntradaCount = Math.min(12, Math.max(0, parseInt(dto.rendasEntradaCount, 10)));
-
-    const furnished = dto.furnished === 'true';
-
     const created = await this.prisma.partnerHouse.create({
       data: {
         partnerId,
-        title: dto.title.trim(),
-        description: dto.description.trim(),
-        businessType: dto.businessType ?? 'RENT',
-        typology: dto.typology,
-        city: dto.city.trim(),
-        availableFrom,
-        priceEur: dto.priceEur.trim(),
-        relocationFeeEur: dto.relocationFeeEur.trim(),
-        caucoesCount,
-        rendasEntradaCount,
-        furnished,
+        title: payload.title,
+        description: payload.description,
+        businessType: payload.businessType,
+        typology: payload.typology,
+        city: payload.city,
+        availableFrom: payload.availableFrom,
+        priceEur: payload.priceEur,
+        relocationFeeEur: payload.relocationFeeEur,
+        caucoesCount: payload.caucoesCount,
+        rendasEntradaCount: payload.rendasEntradaCount,
+        furnished: payload.furnished,
         status: 'AVAILABLE',
         imageUrls,
         coverImageUrl,
@@ -1572,12 +1657,14 @@ export class PartnerService {
     videoFile: Express.Multer.File | null,
   ) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
-    return this.createHousePostForPartner(partner.id, dto, imageFiles, videoFile);
+    return this.createHousePostForPartner(partner.id, dto, imageFiles, videoFile, {
+      strict: true,
+    });
   }
 
   async adminCreateHousePost(
     adminUserId: string,
-    dto: CreatePartnerHouseDto,
+    dto: AdminCreatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
   ) {
@@ -1607,7 +1694,9 @@ export class PartnerService {
       partnerId = partner.id;
     }
 
-    return this.createHousePostForPartner(partnerId, dto, imageFiles, videoFile);
+    return this.createHousePostForPartner(partnerId, dto, imageFiles, videoFile, {
+      strict: false,
+    });
   }
 
   async getMyHouse(userId: string, houseId: string) {

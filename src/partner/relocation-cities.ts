@@ -97,6 +97,22 @@ const LEGACY_TO_CANONICAL: Record<string, (typeof PARTNER_HOUSE_RELOCATION_CITIE
   VISEU: 'Viseu',
 };
 
+const RELOCATION_CITIES_SET = new Set<string>(
+  PARTNER_HOUSE_RELOCATION_CITIES as unknown as string[],
+);
+
+/** Valor canónico para gravar em `partner_house.city` (rascunhos admin / omissões). */
+export function normalizeRelocationCityForStorage(
+  raw: string | undefined | null,
+): (typeof PARTNER_HOUSE_RELOCATION_CITIES)[number] {
+  const t = (raw ?? '').trim();
+  if (!t) return 'Lisboa';
+  const fromLegacy = LEGACY_TO_CANONICAL[t];
+  if (fromLegacy) return fromLegacy;
+  if (RELOCATION_CITIES_SET.has(t)) return t as (typeof PARTNER_HOUSE_RELOCATION_CITIES)[number];
+  return 'Lisboa';
+}
+
 const CANONICAL_TO_LEGACY: Partial<Record<string, string>> = {};
 for (const [legacy, canon] of Object.entries(LEGACY_TO_CANONICAL)) {
   CANONICAL_TO_LEGACY[canon] = legacy;

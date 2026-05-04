@@ -35,6 +35,7 @@ import {
 } from './dto/create-partner-sale.dto';
 import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
+import { AdminCreatePartnerHouseDto } from './dto/admin-create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { AdminUpdatePartnerHouseDto } from './dto/admin-update-partner-house.dto';
 import { memoryStorage } from 'multer';
@@ -460,7 +461,7 @@ export class PartnerController {
   )
   async adminCreateHousePost(
     @CurrentUser() user: { id: string },
-    @Body() dto: CreatePartnerHouseDto,
+    @Body() dto: AdminCreatePartnerHouseDto,
     @UploadedFiles()
     files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
   ) {
