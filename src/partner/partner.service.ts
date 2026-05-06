@@ -1308,6 +1308,7 @@ export class PartnerService {
 
   /** Texto curto: «2 cauções · 1 renda» (alinhado à página pública). */
   private formatHouseEntradaShortLine(caucoes: number, rendas: number): string {
+    if (caucoes <= 0 && rendas <= 0) return '';
     const c = caucoes === 1 ? '1 caução' : `${caucoes} cauções`;
     const r = rendas === 1 ? '1 renda' : `${rendas} rendas`;
     return `${c} · ${r}`;
@@ -1358,7 +1359,7 @@ export class PartnerService {
       `🛋️ *Mobilado:* ${mobilado}`,
       `📅 *Disponível em:* ${datePt}`,
       `*Taxa relocation:* ${fee} €`,
-      `*Entrada:* ${entrada}`,
+      ...(entrada ? [`*Entrada:* ${entrada}`] : []),
     ];
     lines.push(
       ``,

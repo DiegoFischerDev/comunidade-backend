@@ -299,7 +299,7 @@ export class PartnerController {
       {
         limits: {
           files: 7,
-          fileSize: 80 * 1024 * 1024,
+          fileSize: 500 * 1024 * 1024,
         },
         storage: memoryStorage(),
       },
@@ -455,7 +455,7 @@ export class PartnerController {
       {
         limits: {
           files: 7,
-          fileSize: 48 * 1024 * 1024,
+          fileSize: 500 * 1024 * 1024,
         },
         storage: memoryStorage(),
       },
