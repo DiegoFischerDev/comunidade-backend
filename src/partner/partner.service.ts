@@ -1343,7 +1343,7 @@ export class PartnerService {
     const priceValue = `${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`;
     const rafaPhone = '351936958429';
     const rafaText = `Oi Rafa, tenho interesse no imovel ${params.houseId}, ${params.title.trim()}`;
-    const rafaWaLink = `https://wa.me/${rafaPhone}?text=${encodeURIComponent(rafaText)}`;
+    const rafaWaLink = `wa.me/${rafaPhone}?text=${encodeURIComponent(rafaText)}`;
     const lines = [
       `👆 *${params.title.trim()}*`,
       ``,
