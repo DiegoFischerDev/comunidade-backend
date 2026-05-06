@@ -145,12 +145,20 @@ export class PartnerController {
     @Query('city') city?: string,
     @Query('typology') typology?: string,
     @Query('businessType') businessType?: string,
+    @Query('minPriceEur') minPriceEur?: string,
+    @Query('maxPriceEur') maxPriceEur?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
   ) {
     return this.partnerService.listPublicRelocationHouses({
       partnerId: partnerId || undefined,
       city: city || undefined,
       typology: typology || undefined,
       businessType: businessType || undefined,
+      minPriceEur: minPriceEur || undefined,
+      maxPriceEur: maxPriceEur || undefined,
+      page: page || undefined,
+      pageSize: pageSize || undefined,
     });
   }
 

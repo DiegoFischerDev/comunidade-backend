@@ -2003,7 +2003,19 @@ export class PartnerService {
     city?: string;
     typology?: string;
     businessType?: string;
+    minPriceEur?: string;
+    maxPriceEur?: string;
+    page?: string;
+    pageSize?: string;
   }) {
+    const parseEurLikeToInt = (raw: unknown): number | null => {
+      if (typeof raw !== 'string') return null;
+      const digits = raw.replace(/[^\d]/g, '');
+      if (!digits) return null;
+      const n = Number(digits);
+      return Number.isFinite(n) ? n : null;
+    };
+
     const cat = await this.prisma.productCategory.findUnique({
       where: { slug: RELOCATION_CATEGORY_SLUG },
       select: { id: true },
@@ -2026,6 +2038,19 @@ export class PartnerService {
       (['RENT', 'SALE'] as string[]).includes(rawBusinessType)
         ? (rawBusinessType as HouseBusinessType)
         : undefined;
+
+    const minPrice = parseEurLikeToInt(filters?.minPriceEur);
+    const maxPrice = parseEurLikeToInt(filters?.maxPriceEur);
+
+    const page =
+      typeof filters?.page === 'string' && /^\d+$/.test(filters.page)
+        ? Math.max(1, Number(filters.page))
+        : 1;
+    const requestedPageSize =
+      typeof filters?.pageSize === 'string' && /^\d+$/.test(filters.pageSize)
+        ? Math.max(1, Number(filters.pageSize))
+        : 10;
+    const pageSize = Math.min(10, requestedPageSize);
 
     const rows = (await this.prisma.partnerHouse.findMany({
       where: {
@@ -2072,7 +2097,18 @@ export class PartnerService {
         },
       } as any,
     })) as any[];
-    rows.sort((a, b) => {
+
+    const filteredByPrice =
+      minPrice == null && maxPrice == null
+        ? rows
+        : rows.filter((r) => {
+            const p = parseEurLikeToInt(r.priceEur);
+            if (p == null) return false;
+            if (minPrice != null && p < minPrice) return false;
+            if (maxPrice != null && p > maxPrice) return false;
+            return true;
+          });
+    filteredByPrice.sort((a, b) => {
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
       const byStatus =
         relocationHouseStatusRank(a.status) - relocationHouseStatusRank(b.status);
@@ -2082,7 +2118,11 @@ export class PartnerService {
         new Date(a.availableFrom as any).getTime()
       );
     });
-    return rows;
+
+    const total = filteredByPrice.length;
+    const start = (page - 1) * pageSize;
+    const items = filteredByPrice.slice(start, start + pageSize);
+    return { items, total, page, pageSize };
   }
 
   /** Dados públicos da categoria Relocation (hero do dashboard: imagem de capa). */
