@@ -57,7 +57,7 @@ Copia `backend/.env.example` para `backend/.env` e preenche os valores.
 
 ### Afinamento (opcional, omissões no código).
 
-Não precisas de definir nada disto no `.env` em condições normais.
+Não precisas de definir nada disto no `.env` em condições normais
 
 - **Transcodificação de vídeo** (`HOUSE_VIDEO_*`): omissões em `src/partner/house-video-transcode.ts` (ex. CRF 28, largura máx. 1280). Define só se quiseres desativar (`HOUSE_VIDEO_TRANSCODE_ENABLED=0`) ou afinar qualidade.
 - **Evolution / timeouts / base64** (`EVOLUTION_REQUEST_TIMEOUT_MS`, `EVOLUTION_VIDEO_MAX_BASE64_FALLBACK_BYTES`, `MEDIA_PUBLIC_URL_READY_MAX_WAIT_MS`, etc.): omissões em `whatsapp.service.ts` e `partner.service.ts`.
