@@ -1595,6 +1595,7 @@ export class PartnerService {
 
     let imageUrls: string[] = [];
     let videoUrl: string | null = null;
+    let videoPosterUrl: string | null = null;
 
     for (const file of images) {
       try {
@@ -1629,6 +1630,14 @@ export class PartnerService {
       try {
         const v = await this.houseImages.storeHouseVideo(videoFile);
         videoUrl = v.publicUrl;
+        try {
+          const p = await this.houseImages.storeHouseVideoPoster(videoFile);
+          videoPosterUrl = p.publicUrl;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          this.logger.warn(`Falha ao gerar poster do vídeo (create): ${msg}`);
+          videoPosterUrl = null;
+        }
         if (videoFile.path) {
           await unlink(videoFile.path).catch(() => undefined);
         }
@@ -1659,6 +1668,7 @@ export class PartnerService {
         imageUrls,
         coverImageUrl,
         videoUrl,
+        videoPosterUrl,
       } as any,
     });
 
@@ -1730,12 +1740,17 @@ export class PartnerService {
     const partner = await this.getRelocationPartnerOrThrow(userId);
     const house = await this.prisma.partnerHouse.findFirst({
       where: { id: houseId, partnerId: partner.id },
-      select: { id: true, imageUrls: true, videoUrl: true },
+      select: { id: true, imageUrls: true, videoUrl: true, videoPosterUrl: true } as any,
     });
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
-    await this.removeHouseMediaFiles(house);
+    await this.removeHouseMediaFiles({
+      imageUrls: Array.isArray((house as any).imageUrls) ? (house as any).imageUrls : [],
+      videoUrl: typeof (house as any).videoUrl === 'string' ? (house as any).videoUrl : null,
+      videoPosterUrl:
+        typeof (house as any).videoPosterUrl === 'string' ? (house as any).videoPosterUrl : null,
+    });
     await this.prisma.partnerHouse.delete({ where: { id: houseId } });
     return { ok: true as const };
   }
@@ -1895,19 +1910,36 @@ export class PartnerService {
     }
 
     let videoUrl = house.videoUrl;
+    let videoPosterUrl = (house as any).videoPosterUrl as string | null | undefined;
+    if (videoPosterUrl === undefined) videoPosterUrl = null;
     if (dto.removeVideo?.toLowerCase() === 'true') {
       if (videoUrl) {
         await this.houseImages.deleteStoredUrl(videoUrl);
       }
+      if (videoPosterUrl) {
+        await this.houseImages.deleteStoredUrl(videoPosterUrl);
+      }
       videoUrl = null;
+      videoPosterUrl = null;
     }
     if (videoFile) {
       if (videoUrl) {
         await this.houseImages.deleteStoredUrl(videoUrl);
       }
+      if (videoPosterUrl) {
+        await this.houseImages.deleteStoredUrl(videoPosterUrl);
+      }
       try {
         const v = await this.houseImages.storeHouseVideo(videoFile);
         videoUrl = v.publicUrl;
+        try {
+          const p = await this.houseImages.storeHouseVideoPoster(videoFile);
+          videoPosterUrl = p.publicUrl;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          this.logger.warn(`Falha ao gerar poster do vídeo (update): ${msg}`);
+          videoPosterUrl = null;
+        }
         if (videoFile.path) {
           await unlink(videoFile.path).catch(() => undefined);
         }
@@ -1983,6 +2015,7 @@ export class PartnerService {
         imageUrls,
         coverImageUrl,
         videoUrl,
+        videoPosterUrl,
       },
     });
   }
@@ -1990,11 +2023,13 @@ export class PartnerService {
   private async removeHouseMediaFiles(house: {
     imageUrls: string[];
     videoUrl: string | null;
+    videoPosterUrl?: string | null;
   }) {
     for (const u of house.imageUrls ?? []) {
       await this.houseImages.deleteStoredUrl(u);
     }
     await this.houseImages.deleteStoredUrl(house.videoUrl);
+    await this.houseImages.deleteStoredUrl(house.videoPosterUrl ?? null);
   }
 
   /** Listagem pública: relocation — disponíveis primeiro; depois por data de disponibilidade mais futura. */
@@ -2083,6 +2118,7 @@ export class PartnerService {
         imageUrls: true,
         coverImageUrl: true,
         videoUrl: true,
+        videoPosterUrl: true,
         partnerId: true,
         status: true,
         featured: true,
@@ -2368,12 +2404,17 @@ export class PartnerService {
   async adminDeleteHouse(houseId: string) {
     const house = await this.prisma.partnerHouse.findUnique({
       where: { id: houseId },
-      select: { id: true, imageUrls: true, videoUrl: true },
+      select: { id: true, imageUrls: true, videoUrl: true, videoPosterUrl: true } as any,
     });
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
-    await this.removeHouseMediaFiles(house);
+    await this.removeHouseMediaFiles({
+      imageUrls: Array.isArray((house as any).imageUrls) ? (house as any).imageUrls : [],
+      videoUrl: typeof (house as any).videoUrl === 'string' ? (house as any).videoUrl : null,
+      videoPosterUrl:
+        typeof (house as any).videoPosterUrl === 'string' ? (house as any).videoPosterUrl : null,
+    });
     await this.prisma.partnerHouse.delete({ where: { id: houseId } });
     return { ok: true as const };
   }
@@ -2402,11 +2443,16 @@ export class PartnerService {
         status: 'UNAVAILABLE',
         availableFrom: { lte: threshold },
       },
-      select: { id: true, imageUrls: true, videoUrl: true },
+      select: { id: true, imageUrls: true, videoUrl: true, videoPosterUrl: true } as any,
     });
     for (const h of stale) {
-      await this.removeHouseMediaFiles(h);
-      await this.prisma.partnerHouse.delete({ where: { id: h.id } });
+      await this.removeHouseMediaFiles({
+        imageUrls: Array.isArray((h as any).imageUrls) ? (h as any).imageUrls : [],
+        videoUrl: typeof (h as any).videoUrl === 'string' ? (h as any).videoUrl : null,
+        videoPosterUrl:
+          typeof (h as any).videoPosterUrl === 'string' ? (h as any).videoPosterUrl : null,
+      });
+      await this.prisma.partnerHouse.delete({ where: { id: String((h as any).id) } });
     }
     return { deleted: stale.length };
   }

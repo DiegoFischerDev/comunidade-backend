@@ -19,6 +19,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3001
 
+# Necessário para gerar thumbnails (poster) de vídeos (iOS/mobile).
+RUN apk add --no-cache ffmpeg
+
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/dist ./dist
