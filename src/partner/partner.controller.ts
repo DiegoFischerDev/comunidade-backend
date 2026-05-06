@@ -399,12 +399,14 @@ export class PartnerController {
     ),
   )
   async adminUpdateHouse(
+    @CurrentUser() user: { id: string },
     @Param('houseId') houseId: string,
     @Body() dto: AdminUpdatePartnerHouseDto,
     @UploadedFiles()
     files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
   ) {
     return this.partnerService.adminUpdateHouse(
+      user.id,
       houseId,
       dto,
       files?.images ?? [],

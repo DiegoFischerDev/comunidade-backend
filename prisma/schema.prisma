@@ -426,9 +426,22 @@ model PartnerHouse {
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
+  whatsappSends PartnerHouseWhatsappSend[]
+
   @@index([partnerId, status])
   @@index([availableFrom])
   @@map("partner_houses")
+}
+
+/// Histórico de envios do anúncio para grupos WhatsApp (admin).
+model PartnerHouseWhatsappSend {
+  id        String      @id @default(cuid())
+  houseId   String      @map("house_id")
+  house     PartnerHouse @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  sentAt    DateTime    @default(now()) @map("sent_at")
+
+  @@index([houseId, sentAt])
+  @@map("partner_house_whatsapp_sends")
 }
 
 /// Grupos WhatsApp para envio manual de anúncios relocation (admin).

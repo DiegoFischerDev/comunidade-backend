@@ -1,4 +1,4 @@
-import { IsIn, IsOptional } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { UpdatePartnerHouseDto } from './update-partner-house.dto';
 
 const ADMIN_HOUSE_STATUS = ['AVAILABLE', 'RESERVED', 'UNAVAILABLE'] as const;
@@ -10,4 +10,10 @@ export class AdminUpdatePartnerHouseDto extends UpdatePartnerHouseDto {
     message: 'Estado inválido.',
   })
   status?: (typeof ADMIN_HOUSE_STATUS)[number];
+
+  /** Reatribuir o anúncio para outro parceiro relocation (opcional). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  partnerId?: string;
 }

@@ -1337,8 +1337,12 @@ export class PartnerService {
     );
     const fee = params.relocationFeeEur.trim();
     const mobilado = params.furnished ? 'Sim' : 'Não';
+    const priceLabel = params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
+    const priceValue = `${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`;
     const lines = [
-      `🏠 *${params.title.trim()}*`,
+      `👆 *${params.title.trim()}*`,
+      ``,
+      `💶 *${priceLabel}:* ${priceValue}`,
       ``,
       `*Id:* ${params.houseId}`,
       ``,
@@ -1348,7 +1352,6 @@ export class PartnerService {
       `🏷️ *Finalidade:* ${businessTypeLabel}`,
       `🛋️ *Mobilado:* ${mobilado}`,
       `📅 *Disponível em:* ${datePt}`,
-      `💶 *${params.businessType === 'SALE' ? 'Preço de venda' : 'Renda'}:* ${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`,
       `*Taxa relocation:* ${fee} €`,
       `*Entrada:* ${entrada}`,
     ];
@@ -1763,6 +1766,7 @@ export class PartnerService {
   }
 
   async adminUpdateHouse(
+    adminUserId: string,
     houseId: string,
     dto: AdminUpdatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
@@ -1779,8 +1783,37 @@ export class PartnerService {
       (['AVAILABLE', 'RESERVED', 'UNAVAILABLE'] as const).includes(dto.status)
         ? (dto.status as PartnerHouseStatus)
         : undefined;
+
+    let partnerIdOpt: string | undefined = undefined;
+    if (dto.partnerId !== undefined) {
+      const requestedPartnerId = (dto.partnerId ?? '').trim();
+      if (requestedPartnerId) {
+        const relocationCategory = await this.prisma.productCategory.findUnique({
+          where: { slug: RELOCATION_CATEGORY_SLUG },
+          select: { id: true },
+        });
+        if (!relocationCategory) {
+          throw new BadRequestException('Categoria relocation não encontrada.');
+        }
+        const assigned = await this.prisma.partner.findFirst({
+          where: { id: requestedPartnerId, categoryId: relocationCategory.id },
+          select: { id: true },
+        });
+        if (!assigned) {
+          throw new BadRequestException(
+            'Parceiro não encontrado ou não pertence à categoria Relocation.',
+          );
+        }
+        partnerIdOpt = assigned.id;
+      } else {
+        const partner = await this.getOrCreateRelocationPartnerForAdmin(adminUserId);
+        partnerIdOpt = partner.id;
+      }
+    }
+
     return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile, {
       status: statusOpt,
+      partnerId: partnerIdOpt,
     });
   }
 
@@ -1790,7 +1823,7 @@ export class PartnerService {
     dto: UpdatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
-    opts?: { status?: PartnerHouseStatus },
+    opts?: { status?: PartnerHouseStatus; partnerId?: string },
   ) {
     const images = (imageFiles ?? []).filter((f) => !!f);
     if (images.length > 6) {
@@ -1918,6 +1951,7 @@ export class PartnerService {
     return this.prisma.partnerHouse.update({
       where: { id: houseId },
       data: {
+        ...(opts?.partnerId != null && { partnerId: opts.partnerId }),
         ...(dto.title != null && { title: dto.title.trim() }),
         ...(dto.description != null && { description: dto.description.trim() }),
         ...(dto.city != null && { city: dto.city.trim() }),
@@ -1981,7 +2015,7 @@ export class PartnerService {
         ? (rawBusinessType as HouseBusinessType)
         : undefined;
 
-    const rows = await this.prisma.partnerHouse.findMany({
+    const rows = (await this.prisma.partnerHouse.findMany({
       where: {
         partner: { categoryId: cat.id },
         ...(partnerId ? { partnerId } : {}),
@@ -2025,7 +2059,7 @@ export class PartnerService {
           },
         },
       } as any,
-    });
+    })) as any[];
     rows.sort((a, b) => {
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
       const byStatus =
@@ -2229,13 +2263,20 @@ export class PartnerService {
 
     const summaryError =
       failures.length > 0 ? failures.join(' | ').slice(0, 4000) : null;
+    const sentAt = successCount > 0 ? new Date() : null;
     await this.prisma.partnerHouse.update({
       where: { id: houseId },
       data: {
-        whatsappSentAt: successCount > 0 ? new Date() : house.whatsappSentAt,
+        whatsappSentAt: sentAt ?? house.whatsappSentAt,
         whatsappError: failures.length ? summaryError : null,
       },
     });
+
+    if (sentAt) {
+      await (this.prisma as any).partnerHouseWhatsappSend.create({
+        data: { houseId, sentAt },
+      });
+    }
 
     if (successCount === 0) {
       throw new HttpException(
@@ -2263,7 +2304,11 @@ export class PartnerService {
             category: { select: { slug: true, name: true } },
           },
         },
-      },
+        whatsappSends: {
+          select: { sentAt: true },
+          orderBy: { sentAt: 'desc' },
+        },
+      } as any,
     });
   }
 
