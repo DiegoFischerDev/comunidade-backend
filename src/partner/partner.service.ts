@@ -1326,6 +1326,7 @@ export class PartnerService {
     rendasEntradaCount: number;
     relocationFeeEur: string;
     furnished: boolean;
+    featured: boolean;
   }): string {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
@@ -1339,9 +1340,13 @@ export class PartnerService {
     const mobilado = params.furnished ? 'Sim' : 'Não';
     const priceLabel = params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
     const priceValue = `${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`;
+    const rafaPhone = '351936958429';
+    const rafaText = `Oi Rafa, tenho interesse no imovel ${params.houseId}, ${params.title.trim()}`;
+    const rafaWaLink = `https://wa.me/${rafaPhone}?text=${encodeURIComponent(rafaText)}`;
     const lines = [
       `👆 *${params.title.trim()}*`,
       ``,
+      ...(params.featured ? ['⭐ *Esse imóvel está em Destaque!*', ``] : []),
       `💶 *${priceLabel}:* ${priceValue}`,
       ``,
       `*Id:* ${params.houseId}`,
@@ -1355,7 +1360,13 @@ export class PartnerService {
       `*Taxa relocation:* ${fee} €`,
       `*Entrada:* ${entrada}`,
     ];
-    lines.push(``, `📝 *Descrição:*`, params.description.trim());
+    lines.push(
+      ``,
+      `📝 *Descrição:*`,
+      params.description.trim(),
+      ``,
+      `📲 *Falar com a Rafa:* ${rafaWaLink}`,
+    );
     return lines.join('\n');
   }
 
@@ -2212,6 +2223,7 @@ export class PartnerService {
       rendasEntradaCount: house.rendasEntradaCount,
       relocationFeeEur: house.relocationFeeEur,
       furnished: house.furnished,
+      featured: Boolean((house as any).featured),
     });
 
     const failures: string[] = [];
