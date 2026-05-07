@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
 
 /**
  * Payload vindo do receiver da Evolution (whatsapp-evolution-verify).
@@ -26,5 +26,13 @@ export class CategoryFlowIntakeDto {
   @IsOptional()
   @IsString()
   messageId?: string;
+
+  /**
+   * true quando a mensagem veio da própria instância (fromMe no Baileys/Evolution).
+   * Usado para decidir como extrair o nome do lead.
+   */
+  @IsOptional()
+  @IsBoolean()
+  fromMe?: boolean;
 }
 

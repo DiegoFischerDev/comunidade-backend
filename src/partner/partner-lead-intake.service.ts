@@ -20,6 +20,17 @@ function normalizeInboundTrigger(text: string): string {
     .toLowerCase();
 }
 
+function firstWordNameFromMessage(raw: string): string | null {
+  const t = String(raw || '').trim();
+  if (!t) return null;
+  const first = t.split(/\s+/)[0] ?? '';
+  const cleaned = first.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '').trim();
+  if (!cleaned) return null;
+  // Evita nomes obviamente inválidos (muito curtos)
+  if (cleaned.length < 2) return null;
+  return cleaned;
+}
+
 export function isPartnerLeadTrigger(text: string): boolean {
   return normalizeInboundTrigger(text).startsWith('ola, gostaria');
 }
@@ -328,6 +339,7 @@ export class PartnerLeadIntakeService {
     contactName?: string;
     evolutionInstance?: string;
     messageId?: string;
+    fromMe?: boolean;
   }): Promise<{ ok: boolean; skipped?: string }> {
     const normalizedFrom = this.normalizeWaDigits(dto.whatsapp);
     if (!normalizedFrom) return { ok: true, skipped: 'no-phone' };
@@ -346,11 +358,21 @@ export class PartnerLeadIntakeService {
     }
 
     // 2) Cria lead + notifica user (mensagem padrão) + lista para o parceiro
+    // Regras de nome:
+    // - fromMe=false (mensagem do utilizador): usa o contactName (pushName) do WhatsApp.
+    // - fromMe=true (mensagem enviada pela nossa instância no formato "JOSE ..."): usa 1ª palavra como nome.
+    const parsedName = dto.fromMe ? firstWordNameFromMessage(raw) : null;
+    const contactName = dto.fromMe
+      ? parsedName || undefined
+      : dto.contactName?.trim()
+        ? dto.contactName.trim()
+        : undefined;
+    const interestComment = raw || 'Mais sobre o serviço de relocation';
     await this.createLeadAndNotify({
       normalizedWhatsappDigits: normalizedFrom,
       partnerId: picked.partnerId,
-      interestComment: 'Mais sobre o serviço de relocation',
-      contactName: dto.contactName,
+      interestComment,
+      contactName,
       evolutionInstance: dto.evolutionInstance,
       notifyPartnerNewLeadNotice: false,
     });
