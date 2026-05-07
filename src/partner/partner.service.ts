@@ -1281,6 +1281,7 @@ export class PartnerService {
           select: {
             id: true,
             name: true,
+            whatsapp: true,
             email: true,
             role: true,
             tier: true,
@@ -1292,7 +1293,7 @@ export class PartnerService {
             },
           },
         },
-        visitor: { select: { id: true } },
+        visitor: { select: { id: true, whatsapp: true } },
       },
     });
 
@@ -1315,10 +1316,12 @@ export class PartnerService {
           ? {
               id: lead.user.id,
               name: lead.user.name,
+              whatsapp: lead.user.whatsapp,
               email: lead.user.email,
               tier: lead.user.tier,
             }
           : null,
+        visitorWhatsapp: lead.visitor?.whatsapp ?? null,
         immigrationPlan:
           lead.user && answers && lead.user.immigrationChecklist?.updatedAt
             ? {

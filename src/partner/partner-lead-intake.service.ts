@@ -31,6 +31,13 @@ function firstWordNameFromMessage(raw: string): string | null {
   return cleaned;
 }
 
+function formatLeadInterestForPartnerList(raw: unknown): string {
+  const t = typeof raw === 'string' ? raw.trim() : '';
+  if (!t) return '—';
+  const oneLine = t.replace(/\s+/g, ' ').trim();
+  return oneLine;
+}
+
 export function isPartnerLeadTrigger(text: string): boolean {
   return normalizeInboundTrigger(text).startsWith('ola, gostaria');
 }
@@ -398,7 +405,8 @@ export class PartnerLeadIntakeService {
           (typeof l.user?.name === 'string' && l.user.name.trim()) ||
           'Cliente WhatsApp';
         const url = this.leadRedirectUrl(String(l.id));
-        lines.push(`- ${leadName} — ${url}`);
+        const interest = formatLeadInterestForPartnerList(l.interestComment);
+        lines.push(`- ${leadName} — ${interest} — ${url}`);
       }
       await this.whatsApp.sendText(partnerDigits, lines.join('\n'), {
         preferredInstance: dto.evolutionInstance,
@@ -487,7 +495,8 @@ export class PartnerLeadIntakeService {
           (typeof l.user?.name === 'string' && l.user.name.trim()) ||
           'Cliente WhatsApp';
         const url = this.leadRedirectUrl(String(l.id));
-        lines.push(`- ${leadName} — ${url}`);
+        const interest = formatLeadInterestForPartnerList(l.interestComment);
+        lines.push(`- ${leadName} — ${interest} — ${url}`);
       }
       await this.whatsApp.sendText(partnerDigits, lines.join('\n'), {
         preferredInstance: dto.evolutionInstance,
