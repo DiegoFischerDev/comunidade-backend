@@ -6,7 +6,6 @@ import {
   Param,
   Post,
   Query,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { Public } from '../auth/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
@@ -26,27 +25,26 @@ export class PartnerPublicLeadController {
     @Param('leadId') leadId: string,
     @Query('token') token?: string,
   ): Promise<{ waMeUrl: string }> {
+    // Link público (sem login). Token é opcional para manter compatibilidade
+    // com links antigos — quando vier, validamos; quando não vier, ignoramos.
     const rawToken = String(token || '').trim();
-    if (!rawToken) throw new UnauthorizedException();
-
-    let payload: any;
-    try {
-      payload = this.jwtService.verify(rawToken);
-    } catch {
-      throw new UnauthorizedException();
+    if (rawToken) {
+      let payload: any;
+      try {
+        payload = this.jwtService.verify(rawToken);
+      } catch {
+        payload = null;
+      }
+      if (!payload || payload.typ !== 'lead-redirect') {
+        throw new BadRequestException('Token inválido.');
+      }
+      if (String(payload.leadId || '') !== leadId) {
+        throw new BadRequestException('Token inválido.');
+      }
     }
-    if (!payload || payload.typ !== 'lead-redirect') {
-      throw new UnauthorizedException();
-    }
-    if (String(payload.leadId || '') !== leadId) {
-      throw new UnauthorizedException();
-    }
-
-    const partnerId = String(payload.partnerId || '');
-    if (!partnerId) throw new UnauthorizedException();
 
     const lead = await this.prisma.lead.findFirst({
-      where: { id: leadId, partnerId },
+      where: { id: leadId },
       include: {
         user: { select: { whatsapp: true } },
         visitor: { select: { whatsapp: true } },
@@ -66,9 +64,9 @@ export class PartnerPublicLeadController {
           where: { id: lead.id },
           data: { attendedAt: now },
         });
-        const avgStats = await computePartnerAverageResponseMinutes(partnerId, tx);
+        const avgStats = await computePartnerAverageResponseMinutes(lead.partnerId, tx);
         await tx.partner.update({
-          where: { id: partnerId },
+          where: { id: lead.partnerId },
           data: {
             averageResponseMinutes: avgStats.averageMinutes,
             leadResponseSampleCount: avgStats.sampleCount,

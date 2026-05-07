@@ -101,9 +101,14 @@ export class PartnerLeadIntakeService {
     );
   }
 
-  private leadRedirectUrl(leadId: string, token: string): string {
-    const base = getFrontendBaseUrl();
-    return `${base}/lead-redirect?leadId=${encodeURIComponent(leadId)}&token=${encodeURIComponent(token)}`;
+  private stripHttpProtocol(url: string): string {
+    return url.replace(/^https?:\/\//i, '');
+  }
+
+  private leadRedirectUrl(leadId: string): string {
+    // Link aberto (sem token) e sem protocolo para evitar preview e encurtar.
+    const base = this.stripHttpProtocol(getFrontendBaseUrl()).replace(/\/+$/, '');
+    return `${base}/lead-redirect?leadId=${encodeURIComponent(leadId)}`;
   }
 
   private displayFirstName(fullName: string | null | undefined): string | null {
@@ -193,6 +198,7 @@ export class PartnerLeadIntakeService {
     interestComment: string;
     contactName?: string;
     evolutionInstance?: string;
+    notifyPartnerNewLeadNotice?: boolean;
   }): Promise<{ leadId: string }> {
     const partner = await this.prisma.partner.findUnique({
       where: { id: opts.partnerId },
@@ -227,7 +233,9 @@ export class PartnerLeadIntakeService {
       avgStats.averageMinutes,
       opts.evolutionInstance,
     );
-    await this.sendPartnerNewLeadNotice(partner.whatsapp, opts.evolutionInstance);
+    if (opts.notifyPartnerNewLeadNotice !== false) {
+      await this.sendPartnerNewLeadNotice(partner.whatsapp, opts.evolutionInstance);
+    }
 
     return { leadId: lead.id };
   }
@@ -287,14 +295,6 @@ export class PartnerLeadIntakeService {
     return { partnerId: best.id, partnerName: best.name, partnerWhatsapp: best.whatsapp };
   }
 
-  private signLeadRedirectToken(payload: { leadId: string; partnerId: string }): string {
-    // Usa o mesmo JWT secret do módulo (já configurado) e expiração curta.
-    return this.jwtService.sign(
-      { ...payload, typ: 'lead-redirect' },
-      { expiresIn: '30d' },
-    );
-  }
-
   /**
    * Novo flow: "mais sobre o serviço de relocation".
    * - Responde com texto informativo.
@@ -337,6 +337,7 @@ export class PartnerLeadIntakeService {
       interestComment: 'Mais sobre o serviço de relocation',
       contactName: dto.contactName,
       evolutionInstance: dto.evolutionInstance,
+      notifyPartnerNewLeadNotice: false,
     });
 
     // 4) Envia lista de leads pendentes ao parceiro (inclui o lead recém criado)
@@ -353,14 +354,13 @@ export class PartnerLeadIntakeService {
     const partnerDigits = this.normalizeWaDigits(picked.partnerWhatsapp);
     if (partnerDigits) {
       const lines: string[] = [];
-      lines.push('Lista de leads aguardando atendimento:');
+      lines.push('Olá, temos esses leads aguardando atendimento 🙂:');
       for (const l of pending) {
         const leadName =
           (typeof l.contactName === 'string' && l.contactName.trim()) ||
           (typeof l.user?.name === 'string' && l.user.name.trim()) ||
           'Cliente WhatsApp';
-        const token = this.signLeadRedirectToken({ leadId: String(l.id), partnerId: picked.partnerId });
-        const url = this.leadRedirectUrl(String(l.id), token);
+        const url = this.leadRedirectUrl(String(l.id));
         lines.push(`- ${leadName} — ${url}`);
       }
       await this.whatsApp.sendText(partnerDigits, lines.join('\n'), {
