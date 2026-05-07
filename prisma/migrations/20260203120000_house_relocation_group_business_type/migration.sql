@@ -1,5 +1,5 @@
 -- AlterTable
-ALTER TABLE "house_relocation_whatsapp_groups" ADD COLUMN "business_type" "PartnerHouseBusinessType" NOT NULL DEFAULT 'RENT';
+ALTER TABLE "house_relocation_whatsapp_groups" ADD COLUMN "business_type" TEXT NOT NULL DEFAULT 'RENT';
 
 -- DropIndex (replaced by composite index including business_type)
 DROP INDEX IF EXISTS "house_relocation_whatsapp_groups_active_sort_order_idx";
