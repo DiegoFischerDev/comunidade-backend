@@ -9,6 +9,7 @@ import {
 import { Public } from '../auth/public.decorator';
 import { PartnerLeadIntakeDto } from './dto/partner-lead-intake.dto';
 import { PartnerLeadIntakeService } from './partner-lead-intake.service';
+import { CategoryFlowIntakeDto } from './dto/category-flow-intake.dto';
 
 @Controller('internal/whatsapp')
 export class PartnerLeadInternalController {
@@ -26,5 +27,19 @@ export class PartnerLeadInternalController {
       throw new UnauthorizedException();
     }
     return this.partnerLeadIntake.processInbound(dto);
+  }
+
+  @Public()
+  @Post('category-flow/relocation-service-info')
+  @HttpCode(200)
+  async relocationServiceInfo(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() dto: CategoryFlowIntakeDto,
+  ) {
+    const expected = process.env.COMMUNITY_INTERNAL_SECRET;
+    if (!expected || secret !== expected) {
+      throw new UnauthorizedException();
+    }
+    return this.partnerLeadIntake.processRelocationServiceInfoInbound(dto);
   }
 }

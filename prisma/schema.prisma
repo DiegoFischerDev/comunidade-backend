@@ -344,6 +344,10 @@ model Partner {
   averageResponseMinutes Float?         @map("average_response_minutes")
   /** Nº de amostras usadas na média acima (1–10). */
   leadResponseSampleCount Int           @default(0) @map("lead_response_sample_count")
+  /// Prioridade do parceiro dentro da categoria (admin). Maior = mais prioritário.
+  priority             Int              @default(0) @map("priority")
+  /// Limite de leads pendentes (attendedAt == null). 0 = sem limite.
+  maxPendingLeads      Int              @default(0) @map("max_pending_leads")
   createdAt            DateTime         @default(now()) @map("created_at")
   updatedAt            DateTime         @updatedAt @map("updated_at")
 
@@ -549,6 +553,8 @@ model Lead {
   user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   visitorId String?   @map("visitor_id")
   visitor   Visitor?  @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+  /// Nome exibido do contacto (vindo do WhatsApp/Evolution; fallback para user.name quando existir).
+  contactName    String?   @map("contact_name")
   interestComment String?   @map("interest_comment")
   attendedAt      DateTime? @map("attended_at")
   createdAt DateTime @default(now()) @map("created_at")

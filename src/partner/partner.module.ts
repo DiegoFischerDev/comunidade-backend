@@ -9,6 +9,7 @@ import { HouseImageStorageService } from './house-image-storage.service';
 import { PartnerHouseCleanupTask } from './partner-house-cleanup.task';
 import { PartnerLeadIntakeService } from './partner-lead-intake.service';
 import { PartnerLeadInternalController } from './partner-lead-internal.controller';
+import { PartnerPublicLeadController } from './partner-public-lead.controller';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { PartnerLeadInternalController } from './partner-lead-internal.controlle
       signOptions: { expiresIn: '7d' },
     }),
   ],
-  controllers: [PartnerController, PartnerLeadInternalController],
+  controllers: [PartnerController, PartnerLeadInternalController, PartnerPublicLeadController],
   providers: [
     PartnerService,
     PartnerLeadIntakeService,

@@ -13,6 +13,11 @@ export class PartnerLeadIntakeDto {
   @IsString()
   evolutionInstance?: string;
 
+  /** Nome do contacto vindo do WhatsApp/Evolution (pushName/notifyName). */
+  @IsOptional()
+  @IsString()
+  contactName?: string;
+
   @IsOptional()
   @IsString()
   messageId?: string;

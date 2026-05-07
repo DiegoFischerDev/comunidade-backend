@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { computePartnerAverageResponseMinutes } from './partner-response-average.util';
+import { JwtService } from '@nestjs/jwt';
 
 function normalizeInboundTrigger(text: string): string {
   return text
@@ -70,6 +71,7 @@ export class PartnerLeadIntakeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsApp: WhatsAppService,
+    private readonly jwtService: JwtService,
   ) {}
 
   private leadsPageUrl(): string {
@@ -92,10 +94,26 @@ export class PartnerLeadIntakeService {
     return `Recebeu um novo pedido de atendimento em ${this.leadsPageUrl()}`;
   }
 
+  private relocationServiceInfoText(): string {
+    return (
+      'O serviço de relocation é focado em preparar toda a sua chegada antes mesmo do embarque — desde a busca e validação do imóvel, negociação com senhorios, análise de contratos, até as ligações de serviços essenciais como água, luz, gás e internet.\n\n' +
+      'O objetivo é simples: te ajudar a evitar erros, golpes e gastos desnecessários, garantindo que você chegue em Portugal direto ao seu novo lar, com tranquilidade, segurança e planejamento.'
+    );
+  }
+
+  private leadRedirectUrl(leadId: string, token: string): string {
+    const base = getFrontendBaseUrl();
+    return `${base}/lead-redirect?leadId=${encodeURIComponent(leadId)}&token=${encodeURIComponent(token)}`;
+  }
+
   private displayFirstName(fullName: string | null | undefined): string | null {
     const n = fullName?.trim();
     if (!n) return null;
     return n.split(/\s+/)[0] ?? n;
+  }
+
+  private displayFirstNameFromContactName(contactName: string | null | undefined): string | null {
+    return this.displayFirstName(contactName);
   }
 
   /** Número só com dígitos (consistente com registo/auth). */
@@ -173,6 +191,7 @@ export class PartnerLeadIntakeService {
     normalizedWhatsappDigits: string;
     partnerId: string;
     interestComment: string;
+    contactName?: string;
     evolutionInstance?: string;
   }): Promise<{ leadId: string }> {
     const partner = await this.prisma.partner.findUnique({
@@ -192,17 +211,18 @@ export class PartnerLeadIntakeService {
     const lead = await this.prisma.lead.create({
       data: {
         partnerId: partner.id,
+        contactName: opts.contactName?.trim() ? opts.contactName.trim() : null,
         interestComment: opts.interestComment,
         ...(contact.userId
           ? { userId: contact.userId }
           : { visitorId: contact.visitorId! }),
-      },
+      } as any,
     });
 
     const avgStats = await computePartnerAverageResponseMinutes(partner.id, this.prisma);
     await this.sendConfirmationToLead(
       opts.normalizedWhatsappDigits,
-      contact.displayName,
+      contact.displayName ?? this.displayFirstNameFromContactName(opts.contactName),
       partner.name,
       avgStats.averageMinutes,
       opts.evolutionInstance,
@@ -212,9 +232,149 @@ export class PartnerLeadIntakeService {
     return { leadId: lead.id };
   }
 
+  private async pickPartnerForCategoryByPriorityAndCapacity(categorySlug: string): Promise<{
+    partnerId: string;
+    partnerName: string;
+    partnerWhatsapp: string;
+  } | null> {
+    const partners = (await this.prisma.partner.findMany({
+      where: { category: { slug: categorySlug } },
+      select: {
+        id: true,
+        name: true,
+        whatsapp: true,
+        priority: true,
+        maxPendingLeads: true,
+        createdAt: true,
+      } as any,
+      orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }] as any,
+    })) as any[];
+    if (!partners.length) return null;
+
+    const ids = partners.map((p) => p.id);
+    const grouped = await this.prisma.lead.groupBy({
+      by: ['partnerId'],
+      where: { partnerId: { in: ids }, attendedAt: null },
+      _count: { _all: true },
+    } as any);
+    const pendingById = new Map<string, number>();
+    for (const g of grouped as any[]) {
+      pendingById.set(String(g.partnerId), Number(g._count?._all ?? 0));
+    }
+
+    const pendingCount = (pid: string) => pendingById.get(pid) ?? 0;
+    const capacityOk = (p: any) => {
+      const max = typeof p.maxPendingLeads === 'number' ? p.maxPendingLeads : 0;
+      if (max <= 0) return true; // 0 = sem limite
+      return pendingCount(p.id) < max;
+    };
+
+    const firstEligible = partners.find(capacityOk);
+    if (firstEligible) {
+      return { partnerId: firstEligible.id, partnerName: firstEligible.name, partnerWhatsapp: firstEligible.whatsapp };
+    }
+
+    // Todos cheios: escolhe o que tem menos pendentes; empate por prioridade (já ordenado)
+    let best = partners[0]!;
+    let bestPending = pendingCount(best.id);
+    for (const p of partners.slice(1)) {
+      const pc = pendingCount(p.id);
+      if (pc < bestPending) {
+        best = p;
+        bestPending = pc;
+      }
+    }
+    return { partnerId: best.id, partnerName: best.name, partnerWhatsapp: best.whatsapp };
+  }
+
+  private signLeadRedirectToken(payload: { leadId: string; partnerId: string }): string {
+    // Usa o mesmo JWT secret do módulo (já configurado) e expiração curta.
+    return this.jwtService.sign(
+      { ...payload, typ: 'lead-redirect' },
+      { expiresIn: '30d' },
+    );
+  }
+
+  /**
+   * Novo flow: "mais sobre o serviço de relocation".
+   * - Responde com texto informativo.
+   * - Cria lead e atribui parceiro pela regra de prioridade + max pendentes.
+   * - Notifica o utilizador com a mensagem padrão.
+   * - Notifica o parceiro com lista + links de atendimento (sem login).
+   */
+  async processRelocationServiceInfoInbound(dto: {
+    whatsapp: string;
+    message: string;
+    contactName?: string;
+    evolutionInstance?: string;
+    messageId?: string;
+  }): Promise<{ ok: boolean; skipped?: string }> {
+    const normalizedFrom = this.normalizeWaDigits(dto.whatsapp);
+    if (!normalizedFrom) return { ok: true, skipped: 'no-phone' };
+
+    const raw = String(dto.message || '').trim();
+    const normalized = normalizeInboundTrigger(raw);
+    if (!normalized.includes('mais sobre o servico de relocation')) {
+      return { ok: true, skipped: 'not-trigger' };
+    }
+
+    // 1) Sempre responde com o texto informativo
+    await this.whatsApp.sendText(normalizedFrom, this.relocationServiceInfoText(), {
+      preferredInstance: dto.evolutionInstance,
+    });
+
+    // 2) Escolhe parceiro
+    const picked = await this.pickPartnerForCategoryByPriorityAndCapacity('relocation');
+    if (!picked) {
+      // Sem parceiros: não cria lead (evita erro); já respondeu com info.
+      return { ok: true, skipped: 'no-partners' };
+    }
+
+    // 3) Cria lead + notifica user + aviso básico ao parceiro (reuso do fluxo existente)
+    const created = await this.createLeadAndNotify({
+      normalizedWhatsappDigits: normalizedFrom,
+      partnerId: picked.partnerId,
+      interestComment: 'Mais sobre o serviço de relocation',
+      contactName: dto.contactName,
+      evolutionInstance: dto.evolutionInstance,
+    });
+
+    // 4) Envia lista de leads pendentes ao parceiro (inclui o lead recém criado)
+    const pending = (await this.prisma.lead.findMany({
+      where: { partnerId: picked.partnerId, attendedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      include: {
+        user: { select: { name: true, whatsapp: true } },
+        visitor: { select: { whatsapp: true } },
+      },
+    })) as any[];
+
+    const partnerDigits = this.normalizeWaDigits(picked.partnerWhatsapp);
+    if (partnerDigits) {
+      const lines: string[] = [];
+      lines.push('Lista de leads aguardando atendimento:');
+      for (const l of pending) {
+        const leadName =
+          (typeof l.contactName === 'string' && l.contactName.trim()) ||
+          (typeof l.user?.name === 'string' && l.user.name.trim()) ||
+          'Cliente WhatsApp';
+        const token = this.signLeadRedirectToken({ leadId: String(l.id), partnerId: picked.partnerId });
+        const url = this.leadRedirectUrl(String(l.id), token);
+        lines.push(`- ${leadName} — ${url}`);
+      }
+      await this.whatsApp.sendText(partnerDigits, lines.join('\n'), {
+        preferredInstance: dto.evolutionInstance,
+      });
+    }
+
+    return { ok: true };
+  }
+
   async processInbound(dto: {
     whatsapp: string;
     message: string;
+    contactName?: string;
     evolutionInstance?: string;
     messageId?: string;
   }): Promise<{ ok: boolean; skipped?: string }> {
@@ -267,6 +427,7 @@ export class PartnerLeadIntakeService {
         normalizedWhatsappDigits: normalizedFrom,
         partnerId: partner.id,
         interestComment,
+        contactName: dto.contactName,
         evolutionInstance: dto.evolutionInstance,
       });
     } catch (err: unknown) {

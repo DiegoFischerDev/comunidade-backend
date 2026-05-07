@@ -191,7 +191,7 @@ export class PartnerService {
 
   listPartners() {
     return this.prisma.partner.findMany({
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }] as any,
       include: {
         user: {
           select: {
@@ -291,7 +291,16 @@ export class PartnerService {
           Object.prototype.hasOwnProperty.call(dto, 'categoryId')
             ? dto.categoryId
             : partner.categoryId,
-      },
+        priority:
+          Object.prototype.hasOwnProperty.call(dto, 'priority') && typeof dto.priority === 'number'
+            ? dto.priority
+            : (partner as any).priority ?? 0,
+        maxPendingLeads:
+          Object.prototype.hasOwnProperty.call(dto, 'maxPendingLeads') &&
+          typeof dto.maxPendingLeads === 'number'
+            ? dto.maxPendingLeads
+            : (partner as any).maxPendingLeads ?? 0,
+      } as any,
       include: {
         user: {
           select: {
