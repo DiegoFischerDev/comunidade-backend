@@ -53,7 +53,7 @@ export function extractInterestComment(raw: string, partnerName: string): string
 
 function extractHouseIdFromHouseInterestMessage(raw: string): number | null {
   const n = normalizeInboundTrigger(raw);
-  const m = /^tenho interesse no imovel\s+(\d+)\b/.exec(n);
+  const m = /\btenho interesse no imovel\s+(\d+)\b/.exec(n);
   if (!m) return null;
   const id = Number(m[1]);
   if (!Number.isFinite(id) || id <= 0) return null;
@@ -437,7 +437,40 @@ export class PartnerLeadIntakeService {
       interestComment: `Interesse no imóvel ${house.houseId}${house.title ? ` — ${String(house.title).trim()}` : ''}`,
       contactName: dto.contactName,
       evolutionInstance: dto.evolutionInstance,
+      notifyPartnerNewLeadNotice: false,
     });
+
+    // Envia lista de leads pendentes ao parceiro (inclui o lead recém criado)
+    const pending = (await this.prisma.lead.findMany({
+      where: { partnerId: String(house.partnerId), attendedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      include: {
+        user: { select: { name: true, whatsapp: true } },
+        visitor: { select: { whatsapp: true } },
+      },
+    })) as any[];
+
+    const partner = await this.prisma.partner.findUnique({
+      where: { id: String(house.partnerId) },
+      select: { whatsapp: true },
+    });
+    const partnerDigits = this.normalizeWaDigits(String(partner?.whatsapp || ''));
+    if (partnerDigits) {
+      const lines: string[] = [];
+      lines.push('Olá, temos esses leads aguardando atendimento 🙂:');
+      for (const l of pending) {
+        const leadName =
+          (typeof l.contactName === 'string' && l.contactName.trim()) ||
+          (typeof l.user?.name === 'string' && l.user.name.trim()) ||
+          'Cliente WhatsApp';
+        const url = this.leadRedirectUrl(String(l.id));
+        lines.push(`- ${leadName} — ${url}`);
+      }
+      await this.whatsApp.sendText(partnerDigits, lines.join('\n'), {
+        preferredInstance: dto.evolutionInstance,
+      });
+    }
 
     return { ok: true };
   }
