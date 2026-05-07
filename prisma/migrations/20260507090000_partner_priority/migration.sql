@@ -1,4 +1,4 @@
 -- Partner priority within category (admin-managed)
-ALTER TABLE "partners"
+ALTER TABLE "Partner"
 ADD COLUMN "priority" INTEGER NOT NULL DEFAULT 0;
 
