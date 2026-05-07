@@ -1,7 +1,24 @@
 -- Número sequencial único por anúncio (controlo / WhatsApp).
-CREATE SEQUENCE "partner_houses_house_id_seq";
+CREATE SEQUENCE IF NOT EXISTS "partner_houses_house_id_seq";
 
-ALTER TABLE "partner_houses" ADD COLUMN "house_id" INTEGER;
+DO $$
+BEGIN
+  IF to_regclass('public.partner_houses') IS NULL THEN
+    -- A tabela é criada numa migration posterior; num DB novo, ela já virá com house_id.
+    RETURN;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'partner_houses'
+      AND column_name = 'house_id'
+  ) THEN
+    RETURN;
+  END IF;
+
+  ALTER TABLE "partner_houses" ADD COLUMN "house_id" INTEGER;
 
 UPDATE "partner_houses" AS ph
 SET "house_id" = s.rn
@@ -23,3 +40,4 @@ ALTER TABLE "partner_houses"
 ALTER SEQUENCE "partner_houses_house_id_seq" OWNED BY "partner_houses"."house_id";
 
 CREATE UNIQUE INDEX "partner_houses_house_id_key" ON "partner_houses"("house_id");
+END $$;
