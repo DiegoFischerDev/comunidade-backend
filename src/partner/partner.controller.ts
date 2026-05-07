@@ -86,6 +86,18 @@ export class PartnerController {
     return this.partnerService.adminManualLead(partnerId, dto);
   }
 
+  @Get('admin/leads')
+  @Roles(Role.ADMIN)
+  async adminListAllLeads(@Query('partnerId') partnerId?: string) {
+    return this.partnerService.adminListAllLeads({ partnerId });
+  }
+
+  @Delete('admin/leads/:leadId')
+  @Roles(Role.ADMIN)
+  async adminDeleteLead(@Param('leadId') leadId: string) {
+    return this.partnerService.adminDeleteLead(leadId);
+  }
+
   @Get('admin/categories')
   @Roles(Role.ADMIN)
   async listCategories() {

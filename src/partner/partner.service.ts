@@ -1264,6 +1264,60 @@ export class PartnerService {
     );
   }
 
+  async adminListAllLeads(params?: { partnerId?: string }) {
+    const partnerId = String(params?.partnerId || '').trim();
+    const leads = await this.prisma.lead.findMany({
+      where: {
+        ...(partnerId ? { partnerId } : {}),
+      } as any,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        partner: { select: { id: true, name: true, category: { select: { slug: true, name: true } } } },
+        user: { select: { id: true, name: true, whatsapp: true, email: true, role: true, tier: true } },
+        visitor: { select: { id: true, whatsapp: true } },
+      } as any,
+      take: 500,
+    });
+
+    return (leads as any[]).map((lead) => ({
+      id: lead.id,
+      createdAt: lead.createdAt,
+      attendedAt: lead.attendedAt,
+      interestComment: lead.interestComment,
+      contactName: lead.contactName ?? null,
+      partner: lead.partner
+        ? {
+            id: lead.partner.id,
+            name: lead.partner.name,
+            category: lead.partner.category ?? null,
+          }
+        : null,
+      user: lead.user
+        ? {
+            id: lead.user.id,
+            name: lead.user.name,
+            whatsapp: lead.user.whatsapp,
+            email: lead.user.email,
+            tier: lead.user.tier,
+            role: lead.user.role,
+          }
+        : null,
+      visitorWhatsapp: lead.visitor?.whatsapp ?? null,
+    }));
+  }
+
+  async adminDeleteLead(leadId: string) {
+    const id = String(leadId || '').trim();
+    if (!id) throw new BadRequestException('Lead inválido.');
+    const exists = await this.prisma.lead.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!exists) throw new NotFoundException('Lead não encontrado.');
+    await this.prisma.lead.delete({ where: { id } });
+    return { ok: true };
+  }
+
   async listMyLeads(userId: string) {
     const partner = await this.getPartnerForUserOrThrow(userId);
 

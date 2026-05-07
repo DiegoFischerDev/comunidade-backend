@@ -353,7 +353,10 @@ export class PartnerLeadIntakeService {
 
     const raw = String(dto.message || '').trim();
     const normalized = normalizeInboundTrigger(raw);
-    if (!normalized.includes('mais sobre o servico de relocation')) {
+    const isTrigger =
+      normalized.includes('mais sobre o servico de relocation') ||
+      normalized.startsWith('atendimento relocation');
+    if (!isTrigger) {
       return { ok: true, skipped: 'not-trigger' };
     }
 
@@ -433,7 +436,10 @@ export class PartnerLeadIntakeService {
 
     const raw = String(dto.message || '').trim();
     const normalized = normalizeInboundTrigger(raw);
-    if (!normalized.includes('mais sobre o servico de internet')) {
+    const isTrigger =
+      normalized.includes('mais sobre o servico de internet') ||
+      normalized.startsWith('atendimento internet');
+    if (!isTrigger) {
       return { ok: true, skipped: 'not-trigger' };
     }
 
