@@ -417,6 +417,80 @@ export class PartnerLeadIntakeService {
   }
 
   /**
+   * Flow: "mais sobre o serviço de internet".
+   * Mesma lógica do relocation: escolhe parceiro por prioridade/capacidade e envia lista ao parceiro.
+   */
+  async processInternetServiceInfoInbound(dto: {
+    whatsapp: string;
+    message: string;
+    contactName?: string;
+    evolutionInstance?: string;
+    messageId?: string;
+    fromMe?: boolean;
+  }): Promise<{ ok: boolean; skipped?: string }> {
+    const normalizedFrom = this.normalizeWaDigits(dto.whatsapp);
+    if (!normalizedFrom) return { ok: true, skipped: 'no-phone' };
+
+    const raw = String(dto.message || '').trim();
+    const normalized = normalizeInboundTrigger(raw);
+    if (!normalized.includes('mais sobre o servico de internet')) {
+      return { ok: true, skipped: 'not-trigger' };
+    }
+
+    const picked = await this.pickPartnerForCategoryByPriorityAndCapacity('internet');
+    if (!picked) {
+      return { ok: true, skipped: 'no-partners' };
+    }
+
+    const parsedName = dto.fromMe ? firstWordNameFromMessage(raw) : null;
+    const contactName = dto.fromMe
+      ? parsedName || undefined
+      : dto.contactName?.trim()
+        ? dto.contactName.trim()
+        : undefined;
+
+    const interestComment = raw || 'Mais sobre o serviço de internet';
+    await this.createLeadAndNotify({
+      normalizedWhatsappDigits: normalizedFrom,
+      partnerId: picked.partnerId,
+      interestComment,
+      contactName,
+      evolutionInstance: dto.evolutionInstance,
+      notifyPartnerNewLeadNotice: false,
+    });
+
+    const pending = (await this.prisma.lead.findMany({
+      where: { partnerId: picked.partnerId, attendedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      include: {
+        user: { select: { name: true, whatsapp: true } },
+        visitor: { select: { whatsapp: true } },
+      },
+    })) as any[];
+
+    const partnerDigits = this.normalizeWaDigits(picked.partnerWhatsapp);
+    if (partnerDigits) {
+      const lines: string[] = [];
+      lines.push('Olá, temos esses leads aguardando atendimento 🙂:');
+      for (const l of pending) {
+        const leadName =
+          (typeof l.contactName === 'string' && l.contactName.trim()) ||
+          (typeof l.user?.name === 'string' && l.user.name.trim()) ||
+          'Cliente WhatsApp';
+        const interest = formatLeadInterestForPartnerList(l.interestComment);
+        const url = this.leadRedirectUrl(String(l.id));
+        lines.push(`- ${leadName} — ${interest} — ${url}`);
+      }
+      await this.whatsApp.sendText(partnerDigits, lines.join('\n'), {
+        preferredInstance: dto.evolutionInstance,
+      });
+    }
+
+    return { ok: true };
+  }
+
+  /**
    * Flow: "tenho interesse no imovel ID"
    * - Atribui o lead ao parceiro que publicou o imóvel (por houseId),
    *   ignorando maxPendingLeads/capacidade.
