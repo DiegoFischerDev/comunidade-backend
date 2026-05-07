@@ -51,6 +51,15 @@ export function extractInterestComment(raw: string, partnerName: string): string
   return `Pedido de atendimento com ${partnerName}`;
 }
 
+function extractHouseIdFromHouseInterestMessage(raw: string): number | null {
+  const n = normalizeInboundTrigger(raw);
+  const m = /^tenho interesse no imovel\s+(\d+)\b/.exec(n);
+  if (!m) return null;
+  const id = Number(m[1]);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  return Math.trunc(id);
+}
+
 export function formatAvgMinutesForMessage(minutes: number | null): string {
   if (minutes == null || !Number.isFinite(minutes) || minutes <= 0) {
     return 'breve (ainda sem histórico)';
@@ -373,6 +382,62 @@ export class PartnerLeadIntakeService {
         preferredInstance: dto.evolutionInstance,
       });
     }
+
+    return { ok: true };
+  }
+
+  /**
+   * Flow: "tenho interesse no imovel ID"
+   * - Atribui o lead ao parceiro que publicou o imóvel (por houseId),
+   *   ignorando maxPendingLeads/capacidade.
+   */
+  async processHouseInterestInbound(dto: {
+    whatsapp: string;
+    message: string;
+    contactName?: string;
+    evolutionInstance?: string;
+    messageId?: string;
+  }): Promise<{ ok: boolean; skipped?: string }> {
+    const normalizedFrom = this.normalizeWaDigits(dto.whatsapp);
+    if (!normalizedFrom) return { ok: true, skipped: 'no-phone' };
+
+    const raw = String(dto.message || '').trim();
+    const houseId = extractHouseIdFromHouseInterestMessage(raw);
+    if (!houseId) return { ok: true, skipped: 'not-trigger' };
+
+    if (dto.messageId) {
+      try {
+        await this.prisma.processedPartnerLeadMessage.create({
+          data: { id: dto.messageId },
+        });
+      } catch (e: unknown) {
+        const code = (e as { code?: string })?.code;
+        if (code === 'P2002') {
+          return { ok: true, skipped: 'duplicate-msg' };
+        }
+        throw e;
+      }
+    }
+
+    const house = await this.prisma.partnerHouse.findUnique({
+      where: { houseId },
+      select: {
+        houseId: true,
+        title: true,
+        partnerId: true,
+      } as any,
+    });
+    if (!house) {
+      return { ok: true, skipped: 'unknown-house' };
+    }
+
+    await this.createLeadAndNotify({
+      normalizedWhatsappDigits: normalizedFrom,
+      partnerId: String(house.partnerId),
+      interestComment: `Interesse no imóvel ${house.houseId}${house.title ? ` — ${String(house.title).trim()}` : ''}`,
+      contactName: dto.contactName,
+      evolutionInstance: dto.evolutionInstance,
+    });
 
     return { ok: true };
   }

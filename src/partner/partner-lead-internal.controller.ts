@@ -42,4 +42,18 @@ export class PartnerLeadInternalController {
     }
     return this.partnerLeadIntake.processRelocationServiceInfoInbound(dto);
   }
+
+  @Public()
+  @Post('category-flow/house-interest')
+  @HttpCode(200)
+  async houseInterest(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() dto: CategoryFlowIntakeDto,
+  ) {
+    const expected = process.env.COMMUNITY_INTERNAL_SECRET;
+    if (!expected || secret !== expected) {
+      throw new UnauthorizedException();
+    }
+    return this.partnerLeadIntake.processHouseInterestInbound(dto);
+  }
 }
