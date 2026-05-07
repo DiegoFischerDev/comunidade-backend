@@ -267,7 +267,13 @@ export class PartnerLeadIntakeService {
     const ids = partners.map((p) => p.id);
     const grouped = await this.prisma.lead.groupBy({
       by: ['partnerId'],
-      where: { partnerId: { in: ids }, attendedAt: null },
+      // "Pendentes" = exatamente os que aparecem como "Aguardam atendimento" no dashboard:
+      // leads com attendedAt = null e contacto (visitor ou user role USER).
+      where: {
+        partnerId: { in: ids },
+        attendedAt: null,
+        OR: [{ visitorId: { not: null } }, { user: { role: Role.USER } }],
+      } as any,
       _count: { _all: true },
     } as any);
     const pendingById = new Map<string, number>();
