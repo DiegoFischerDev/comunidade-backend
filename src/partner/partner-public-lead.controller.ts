@@ -11,12 +11,15 @@ import { Public } from '../auth/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { computePartnerAverageResponseMinutes } from './partner-response-average.util';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { Role } from '@prisma/client';
 
 @Controller('partners/public')
 export class PartnerPublicLeadController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly wa: WhatsAppService,
   ) {}
 
   @Public()
@@ -48,7 +51,7 @@ export class PartnerPublicLeadController {
       include: {
         user: { select: { whatsapp: true } },
         visitor: { select: { whatsapp: true } },
-        partner: { select: { id: true, name: true } },
+        partner: { select: { id: true, name: true, whatsapp: true } },
       },
     });
     if (!lead) throw new NotFoundException('Lead não encontrado.');
@@ -58,6 +61,7 @@ export class PartnerPublicLeadController {
     if (!digits) throw new BadRequestException('Este contacto não tem WhatsApp registado.');
 
     const now = new Date();
+    let didMarkAttended = false;
     if (!lead.attendedAt) {
       await this.prisma.$transaction(async (tx) => {
         await tx.lead.update({
@@ -73,6 +77,23 @@ export class PartnerPublicLeadController {
           },
         });
       });
+      didMarkAttended = true;
+    }
+
+    if (didMarkAttended) {
+      const pending = await this.prisma.lead.count({
+        where: {
+          partnerId: lead.partnerId,
+          attendedAt: null,
+          OR: [{ visitorId: { not: null } }, { user: { role: Role.USER } }],
+        } as any,
+      });
+      if (pending === 0) {
+        await this.wa.sendText(
+          lead.partner?.whatsapp ?? '',
+          'Todos os leads foram atendidos ✅',
+        );
+      }
     }
 
     const partnerName = lead.partner?.name?.trim() || 'parceiro da Rafa';

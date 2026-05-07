@@ -1176,7 +1176,14 @@ export class PartnerService {
   async getPartnerLeadDashboardExtras(partnerId: string) {
     const [pendingLeadsCount, avgStats] = await Promise.all([
       this.prisma.lead.count({
-        where: { partnerId, attendedAt: null },
+        // Tem que refletir a mesma lógica da lista "Aguardam atendimento":
+        // só conta leads pendentes (attendedAt = null) e só de contactos válidos
+        // (visitor ou user role USER). Assim não conta leads de parceiros/admin.
+        where: {
+          partnerId,
+          attendedAt: null,
+          OR: [{ visitorId: { not: null } }, { user: { role: Role.USER } }],
+        } as any,
       }),
       computePartnerAverageResponseMinutes(partnerId, this.prisma),
     ]);
@@ -1209,6 +1216,7 @@ export class PartnerService {
     }
 
     const now = new Date();
+    let didMarkAttended = false;
 
     if (!lead.attendedAt) {
       await this.prisma.$transaction(async (tx) => {
@@ -1225,6 +1233,24 @@ export class PartnerService {
           },
         });
       });
+      didMarkAttended = true;
+    }
+
+    if (didMarkAttended) {
+      const pending = await this.prisma.lead.count({
+        // Alinha com a lista "Aguardam atendimento" e com o badge do menu.
+        where: {
+          partnerId: partner.id,
+          attendedAt: null,
+          OR: [{ visitorId: { not: null } }, { user: { role: Role.USER } }],
+        } as any,
+      });
+      if (pending === 0) {
+        await this.wa.sendText(
+          partner.whatsapp,
+          'Todos os leads foram atendidos ✅',
+        );
+      }
     }
 
     return { waMeUrl: `https://wa.me/${digits}` };
