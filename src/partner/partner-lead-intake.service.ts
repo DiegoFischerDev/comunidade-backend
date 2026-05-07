@@ -87,7 +87,12 @@ export class PartnerLeadIntakeService {
     const greet = opts.contactFirstName
       ? `Olá ${opts.contactFirstName}, tudo bem?`
       : `Olá, tudo bem?`;
-    return `${greet} Registámos o seu pedido de atendimento com ${opts.partnerName}. O tempo médio de resposta em horário comercial (segunda a sexta, das 10h às 18h de Portugal) está em ${avg}. Se o nosso parceiro demorar muito mais do que isso, chama-me aqui que eu resolvo 😊`;
+    return (
+      `${greet} Registámos o seu pedido de atendimento com ${opts.partnerName}. ` +
+      `O tempo médio de resposta em horário comercial (segunda a sexta, das 10h às 18h de Portugal) está em ${avg}. ` +
+      `Se o nosso parceiro ${opts.partnerName} demorar muito mais do que isso, chama-me aqui que eu resolvo 😊 ` +
+      `e qualquer dúvida deixa aqui no chat que assim que eu puder eu te respondo. Um xero! Rafa Silva`
+    );
   }
 
   private partnerNewLeadText(): string {
@@ -318,20 +323,15 @@ export class PartnerLeadIntakeService {
       return { ok: true, skipped: 'not-trigger' };
     }
 
-    // 1) Sempre responde com o texto informativo
-    await this.whatsApp.sendText(normalizedFrom, this.relocationServiceInfoText(), {
-      preferredInstance: dto.evolutionInstance,
-    });
-
-    // 2) Escolhe parceiro
+    // 1) Escolhe parceiro
     const picked = await this.pickPartnerForCategoryByPriorityAndCapacity('relocation');
     if (!picked) {
-      // Sem parceiros: não cria lead (evita erro); já respondeu com info.
+      // Sem parceiros: não cria lead (evita erro).
       return { ok: true, skipped: 'no-partners' };
     }
 
-    // 3) Cria lead + notifica user + aviso básico ao parceiro (reuso do fluxo existente)
-    const created = await this.createLeadAndNotify({
+    // 2) Cria lead + notifica user (mensagem padrão) + lista para o parceiro
+    await this.createLeadAndNotify({
       normalizedWhatsappDigits: normalizedFrom,
       partnerId: picked.partnerId,
       interestComment: 'Mais sobre o serviço de relocation',

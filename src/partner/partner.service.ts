@@ -1282,6 +1282,7 @@ export class PartnerService {
         createdAt: lead.createdAt,
         attendedAt: lead.attendedAt,
         interestComment: lead.interestComment,
+        contactName: (lead as any).contactName ?? null,
         awaitingAttendance: lead.attendedAt == null,
         contactType: lead.visitorId ? ('visitor' as const) : ('user' as const),
         user: lead.user
