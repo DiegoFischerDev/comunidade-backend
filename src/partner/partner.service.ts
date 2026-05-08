@@ -1401,9 +1401,11 @@ export class PartnerService {
 
   /** Texto curto: «2 cauções · 1 renda» (alinhado à página pública). */
   private formatHouseEntradaShortLine(caucoes: number, rendas: number): string {
-    if (caucoes <= 0 && rendas <= 0) return '';
-    const c = caucoes === 1 ? '1 caução' : `${caucoes} cauções`;
-    const r = rendas === 1 ? '1 renda' : `${rendas} rendas`;
+    const cNum = Number.isFinite(caucoes) ? caucoes : 0;
+    const rNum = Number.isFinite(rendas) ? rendas : 0;
+    if (cNum <= 0 && rNum <= 0) return '';
+    const c = cNum === 1 ? '1 caução' : `${cNum} cauções`;
+    const r = rNum === 1 ? '1 renda' : `${rNum} rendas`;
     return `${c} · ${r}`;
   }
 
