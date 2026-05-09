@@ -58,6 +58,20 @@ export class PartnerLeadInternalController {
   }
 
   @Public()
+  @Post('category-flow/vistos-service-info')
+  @HttpCode(200)
+  async vistosServiceInfo(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() dto: CategoryFlowIntakeDto,
+  ) {
+    const expected = process.env.COMMUNITY_INTERNAL_SECRET;
+    if (!expected || secret !== expected) {
+      throw new UnauthorizedException();
+    }
+    return this.partnerLeadIntake.processVistosServiceInfoInbound(dto);
+  }
+
+  @Public()
   @Post('category-flow/house-interest')
   @HttpCode(200)
   async houseInterest(
