@@ -111,14 +111,14 @@ export class PartnerLeadIntakeService {
     avgMinutes: number | null;
   }): string {
     const avg = formatAvgMinutesForMessage(opts.avgMinutes);
-    const greet = opts.contactFirstName
-      ? `Olá ${opts.contactFirstName}, tudo bem?`
-      : `Olá, tudo bem?`;
-    return (
-      `${greet} Recebemos o seu pedido de atendimento com ${opts.partnerName}. ` +
-      `Você vai receber uma mensagem por aqui no Whatsapp ` +
-      `O tempo médio de resposta em horário comercial está em ${avg}. `
-    );
+    const line1 = opts.contactFirstName
+      ? `👋 Olá ${opts.contactFirstName}, tudo bem?`
+      : `👋 Olá, tudo bem?`;
+    const line2 = `✅ Registramos o seu pedido de atendimento com ${opts.partnerName}.`;
+    const line3 =
+      `⏳ O tempo médio de resposta em horário comercial ` +
+      `está em ${avg}.`
+    return [line1, line2, line3].join('\n\n');
   }
 
   private partnerNewLeadText(): string {
