@@ -242,30 +242,7 @@ export class AuthService {
 
     const communityUrl =
       process.env.FRONTEND_URL?.replace(/\/$/, '') || 'http://localhost:3000';
-    const welcomeMsg =
-      `Bem-vindo(a) à Comunidade Rafa Portugal! A sua conta foi ativada. Já pode acessar a comunidade com o seu WhatsApp e palavra-passe.\n\n${communityUrl}`;
-    const termsMsg =
-      `*TERMOS E CONDIÇÕES – COMUNIDADE RAFA PORTUGAL*\n\n` +
-      `Ao participar da Comunidade Rafa Portugal, você concorda com as regras abaixo. Nosso objetivo é manter um ambiente seguro, respeitoso e útil para quem deseja imigrar para Portugal.\n\n` +
-      `*1. Sobre a Comunidade*\n` +
-      `Compartilhamos informações práticas sobre vistos, documentação, custo de vida, moradia, trabalho e planejamento para viver legalmente em Portugal, ajudando você a evitar erros e ganhar tempo.\n\n` +
-      `*2. Proibições*\n` +
-      `Não é permitido:\n` +
-      `• Divulgar serviços, links ou propagandas\n` +
-      `• Compartilhar grupos ou contatos sem autorização\n` +
-      `• Chamar membros no privado sem consentimento\n` +
-      `• Discutir política, religião ou desrespeitar outros\n\n` +
-      `*3. Parceiros*\n` +
-      `Apenas parceiros oficiais podem ser indicados. Eles são previamente avaliados para garantir mais segurança.\n\n` +
-      `*4. Responsabilidade*\n` +
-      `Até o momento, não tivemos nenhum problema com os parceiros indicados, motivo pelo qual recomendamos seus serviços. Ainda assim, a Comunidade Rafa Portugal não se responsabiliza por serviços prestados por terceiros, sendo qualquer contratação de responsabilidade exclusiva do membro.\n\n` +
-      `*6. Reclamações*\n` +
-      `Existe um canal interno para avaliar parceiros. Caso não atendam aos padrões, serão removidos.\n\n` +
-      `*7. Objetivo*\n` +
-      `Este é um espaço de apoio e troca. Pergunte, compartilhe e aprenda com outros membros.\n\n` +
-      `Ao permanecer na comunidade, você concorda com estes termos.\n\n` +
-      `Seja bem-vindo(a) 💛\n` +
-      `Rafa Silva`;
+    // NOTA: mensagens automáticas de boas-vindas/termos via WhatsApp desativadas a pedido.
 
     const req = await this.prisma.whatsappRegistrationRequest.findUnique({
       where: { code: trimmedCode },
@@ -348,8 +325,7 @@ export class AuthService {
       });
     });
 
-    await this.sendEvolutionText(normalizedFrom, welcomeMsg, evolutionInstance);
-    await this.sendEvolutionText(normalizedFrom, termsMsg, evolutionInstance);
+    // (sem mensagens automáticas de boas-vindas/termos)
     return { ok: true };
   }
 

@@ -840,13 +840,7 @@ export class StripeService {
         amountTotal != null && Number.isFinite(amountTotal)
           ? this.formatMoney(amountTotal, currency)
           : undefined;
-      await this.sendPaymentConfirmationWhatsApp({
-        userId,
-        reason: 'Anuidade Comunidade Rafa Portugal (1 ano)',
-        amountLabel,
-        paidAt,
-        methodLabel,
-      });
+      // Mensagem WhatsApp para membros VIP desativada a pedido.
       await this.notifyAdminsNewPayment({
         payerUserId: userId,
         reason: 'Anuidade Comunidade Rafa Portugal (1 ano)',
@@ -982,13 +976,7 @@ export class StripeService {
         const currency = (inv.currency as string | undefined) ?? 'eur';
         const paidAt = new Date();
         const amountLabel = this.formatMoney(amountPaid, currency);
-        await this.sendPaymentConfirmationWhatsApp({
-          userId,
-          reason: 'Renovação — Anuidade Comunidade Rafa Portugal',
-          amountLabel,
-          paidAt,
-          methodLabel: 'Stripe',
-        });
+        // Mensagem WhatsApp para membros VIP desativada a pedido.
         await this.notifyAdminsNewPayment({
           payerUserId: userId,
           reason: 'Renovação — Anuidade Comunidade Rafa Portugal',

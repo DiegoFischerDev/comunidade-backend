@@ -33,80 +33,6 @@ export class UsersService {
     private readonly whatsapp: WhatsAppService,
   ) {}
 
-  private partnershipTermsText(params: { partnerName: string; today: string }) {
-    return `Termos de Parceria
-
-Comunidade Rafa Pelo Mundo
-
-Pelo presente instrumento, de um lado Rafaela dos Santos Silva, responsável pela plataforma Comunidade Rafa Pelo Mundo, e de outro lado ${params.partnerName}, estabelecem entre si uma parceria de caráter comercial e de marketing por comissão, mediante as condições abaixo:
-
-1. Objeto da Parceria
-
-A presente parceria tem como objetivo a indicação de leads (potenciais clientes) ao PARCEIRO por meio da plataforma Comunidade Rafa Pelo Mundo, com base em serviços previamente cadastrados.
-
-2. Início e Vigência
-
-A parceria tem início na data ${params.today} e vigorará por prazo indeterminado, podendo ser encerrada a qualquer momento por qualquer uma das partes, sem necessidade de justificativa prévia.
-
-Parágrafo único: O encerramento da parceria não isenta o PARCEIRO do pagamento de comissões referentes a leads encaminhados anteriormente à data de encerramento.
-
-3. Obrigações do Parceiro
-
-O PARCEIRO compromete-se a:
-
-✅ Atender os leads enviados com qualidade, clareza e profissionalismo.
-
-⏱️ Responder às solicitações recebidas no prazo máximo de 24 horas.
-
-💶 Praticar os valores previamente cadastrados na plataforma.
-
-🧾 Oferecer aos leads exclusivamente os serviços cadastrados e aprovados na plataforma.
-
-📝 Manter atualizadas as informações sobre seus serviços e empresa.
-
-💳 Realizar corretamente o pagamento das comissões acordadas.
-
-🔒 Garantir a confidencialidade e proteção dos dados dos leads recebidos.
-
-4. Motivos para Encerramento da Parceria
-
-A parceria poderá ser encerrada imediatamente, a critério da Comunidade Rafa Pelo Mundo, nos seguintes casos:
-
-🚫 Não atendimento ou demora recorrente no retorno aos leads enviados.
-
-💸 Cobrança de valores divergentes dos informados na plataforma.
-
-📦 Oferta ou venda de serviços não cadastrados na plataforma.
-
-🔁 Indicação de outros profissionais que não façam parte da comunidade ou não estejam cadastrados.
-
-⭐ Recebimento de feedbacks negativos frequentes relacionados ao atendimento ou à qualidade do serviço.
-
-🧮 Omissão de vendas realizadas a partir de leads enviados ou não pagamento das comissões devidas.
-
-📤 Vazamento ou compartilhamento de dados dos leads com terceiros, sem autorização.
-
-⚖️ Descumprimento de obrigações legais no decorrer da prestação dos serviços.
-
-5. Comissão
-
-Os valores e condições de comissão serão previamente acordados entre as partes e deverão ser respeitados integralmente pelo PARCEIRO.
-
-6. Limitação de Responsabilidade
-
-A Comunidade Rafa Pelo Mundo e Rafaela dos Santos Silva limitam-se à indicação de serviços e profissionais, não sendo responsáveis por qualquer conduta, falha na prestação de serviço, descumprimento contratual ou irregularidade legal por parte do PARCEIRO.
-
-Toda a responsabilidade pela execução dos serviços contratados pelos leads é exclusiva do PARCEIRO.
-
-7. Disposições Gerais
-
-Esta parceria não estabelece vínculo empregatício, societário ou de exclusividade entre as partes, tratando-se de uma relação comercial independente.
-
-E, por estarem de acordo, as partes aceitam os termos acima.
-
-Se está de acordo com os termos, escreva CONCORDO.`;
-  }
-
   /**
    * Métricas para o painel admin. Total de inscrições = soma de `MembershipPayment.amountCreditedEur`
    * (histórico à data de cada pagamento; mudar `STRIPE_AMOUNT_EUR_CENTS` no env não altera o passado).
@@ -273,9 +199,6 @@ Se está de acordo com os termos, escreva CONCORDO.`;
     if (!existing) {
       throw new NotFoundException('Usuário não encontrado.');
     }
-    const shouldSendPartnerTerms =
-      existing.role !== Role.PARTNER && role === Role.PARTNER;
-
     const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.user.update({
         where: { id },
@@ -305,13 +228,6 @@ Se está de acordo com os termos, escreva CONCORDO.`;
 
       return updated;
     });
-
-    if (shouldSendPartnerTerms) {
-      const today = new Date().toLocaleDateString('pt-BR');
-      const partnerName = (existing.name || '').trim() || 'PARCEIRO';
-      const text = this.partnershipTermsText({ partnerName, today });
-      void this.whatsapp.sendText(existing.whatsapp, text);
-    }
 
     return updated;
   }

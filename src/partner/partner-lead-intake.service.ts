@@ -115,22 +115,14 @@ export class PartnerLeadIntakeService {
       ? `Olá ${opts.contactFirstName}, tudo bem?`
       : `Olá, tudo bem?`;
     return (
-      `${greet} Registámos o seu pedido de atendimento com ${opts.partnerName}. ` +
-      `O tempo médio de resposta em horário comercial (segunda a sexta, das 10h às 18h de Portugal) está em ${avg}. ` +
-      `Se o nosso parceiro ${opts.partnerName} demorar muito mais do que isso, chama-me aqui que eu resolvo 😊 ` +
-      `e qualquer dúvida deixa aqui no chat que assim que eu puder eu te respondo. Um xero! Rafa Silva`
+      `${greet} Recebemos o seu pedido de atendimento com ${opts.partnerName}. ` +
+      `Você vai receber uma mensagem por aqui no Whatsapp ` +
+      `O tempo médio de resposta em horário comercial está em ${avg}. `
     );
   }
 
   private partnerNewLeadText(): string {
     return `Recebeu um novo pedido de atendimento em ${this.leadsPageUrl()}`;
-  }
-
-  private relocationServiceInfoText(): string {
-    return (
-      'O serviço de relocation é focado em preparar toda a sua chegada antes mesmo do embarque — desde a busca e validação do imóvel, negociação com senhorios, análise de contratos, até as ligações de serviços essenciais como água, luz, gás e internet.\n\n' +
-      'O objetivo é simples: te ajudar a evitar erros, golpes e gastos desnecessários, garantindo que você chegue em Portugal direto ao seu novo lar, com tranquilidade, segurança e planejamento.'
-    );
   }
 
   private stripHttpProtocol(url: string): string {
@@ -662,6 +654,7 @@ export class PartnerLeadIntakeService {
     partnerId: string,
     whatsappRaw: string,
     interestComment?: string,
+    contactName?: string,
   ): Promise<{ leadId: string }> {
     const digits = this.normalizeWaDigits(whatsappRaw);
     if (!digits) {
@@ -678,10 +671,45 @@ export class PartnerLeadIntakeService {
     const comment =
       interestComment?.trim() || 'Pedido registado manualmente pela equipa.';
 
-    return this.createLeadAndNotify({
+    const created = await this.createLeadAndNotify({
       normalizedWhatsappDigits: digits,
       partnerId,
       interestComment: comment,
+      contactName: contactName?.trim() ? contactName.trim() : undefined,
+      notifyPartnerNewLeadNotice: false,
     });
+
+    // Envia lista de leads pendentes ao parceiro (inclui o lead recém criado)
+    const pending = (await this.prisma.lead.findMany({
+      where: { partnerId, attendedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      include: {
+        user: { select: { name: true, whatsapp: true } },
+        visitor: { select: { whatsapp: true } },
+      },
+    })) as any[];
+
+    const partnerRow = await this.prisma.partner.findUnique({
+      where: { id: partnerId },
+      select: { whatsapp: true },
+    });
+    const partnerDigits = this.normalizeWaDigits(String(partnerRow?.whatsapp || ''));
+    if (partnerDigits) {
+      const lines: string[] = [];
+      lines.push('Olá, temos esses leads aguardando atendimento 🙂:');
+      for (const l of pending) {
+        const leadName =
+          (typeof l.contactName === 'string' && l.contactName.trim()) ||
+          (typeof l.user?.name === 'string' && l.user.name.trim()) ||
+          'Cliente WhatsApp';
+        const interest = formatLeadInterestForPartnerList(l.interestComment);
+        const url = this.leadRedirectUrl(String(l.id));
+        lines.push(`- ${leadName} — ${interest} — ${url}`);
+      }
+      await this.whatsApp.sendText(partnerDigits, lines.join('\n'));
+    }
+
+    return created;
   }
 }

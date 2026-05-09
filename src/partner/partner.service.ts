@@ -1261,6 +1261,7 @@ export class PartnerService {
       partnerId,
       dto.whatsapp,
       dto.interestComment,
+      dto.contactName,
     );
   }
 

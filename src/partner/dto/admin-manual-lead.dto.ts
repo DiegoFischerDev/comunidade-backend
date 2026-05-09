@@ -7,5 +7,9 @@ export class AdminManualLeadDto {
 
   @IsOptional()
   @IsString()
+  contactName?: string;
+
+  @IsOptional()
+  @IsString()
   interestComment?: string;
 }
