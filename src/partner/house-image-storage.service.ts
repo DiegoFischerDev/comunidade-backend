@@ -4,12 +4,10 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
-import { execFile } from 'child_process';
 import { randomBytes } from 'crypto';
 import { readFile, writeFile, mkdir, unlink } from 'fs/promises';
 import { join } from 'path';
 import sharp from 'sharp';
-import { promisify } from 'util';
 
 const HOUSE_VIDEO_MIMES = new Set([
   'video/mp4',
@@ -21,7 +19,6 @@ const HOUSE_VIDEO_MIMES = new Set([
 @Injectable()
 export class HouseImageStorageService {
   private readonly logger = new Logger(HouseImageStorageService.name);
-  private readonly execFileAsync = promisify(execFile);
 
   private getR2Context(): {
     client: S3Client;
@@ -213,66 +210,6 @@ export class HouseImageStorageService {
             : '.mp4';
     const publicUrl = await this.uploadBinary(buf, mime, 'houses/videos', ext);
     return { publicUrl };
-  }
-
-  /**
-   * Gera um thumbnail (poster) a partir do vídeo para preview consistente no mobile/iOS.
-   * - Saída: WebP (leve) em `houses/posters/`.
-   * - Em caso de falha (ffmpeg ausente/formato), lança erro para o chamador decidir fallback.
-   */
-  async storeHouseVideoPoster(
-    file: Express.Multer.File,
-  ): Promise<{ publicUrl: string }> {
-    const buf = await this.readBuffer(file);
-    if (!buf?.length) {
-      throw new Error('Vídeo inválido (sem conteúdo).');
-    }
-    const mime = (file.mimetype || '').split(';')[0]!.trim().toLowerCase();
-    if (!HOUSE_VIDEO_MIMES.has(mime)) {
-      throw new Error('Formato de vídeo não suportado.');
-    }
-
-    const ext =
-      mime === 'video/quicktime'
-        ? '.mov'
-        : mime === 'video/webm'
-          ? '.webm'
-          : mime === 'video/3gpp'
-            ? '.3gp'
-            : '.mp4';
-
-    const tmpIn = join('/tmp', `house-video-${Date.now()}-${randomBytes(6).toString('hex')}${ext}`);
-    const tmpOutJpg = join('/tmp', `house-poster-${Date.now()}-${randomBytes(6).toString('hex')}.jpg`);
-
-    try {
-      await writeFile(tmpIn, buf);
-      // Pega um frame ~0.5s (evita frame preto inicial em muitos vídeos)
-      await this.execFileAsync('ffmpeg', [
-        '-y',
-        '-ss',
-        '0.5',
-        '-i',
-        tmpIn,
-        '-frames:v',
-        '1',
-        '-vf',
-        'scale=1280:-2',
-        tmpOutJpg,
-      ]);
-
-      const jpg = await readFile(tmpOutJpg);
-      const webp = await sharp(jpg)
-        .rotate()
-        .resize(1280, 1280, { fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 82 })
-        .toBuffer();
-
-      const publicUrl = await this.uploadBinary(webp, 'image/webp', 'houses/posters', '.webp');
-      return { publicUrl };
-    } finally {
-      await unlink(tmpIn).catch(() => undefined);
-      await unlink(tmpOutJpg).catch(() => undefined);
-    }
   }
 
   private async uploadBinary(

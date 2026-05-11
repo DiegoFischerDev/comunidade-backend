@@ -408,10 +408,11 @@ export class PartnerController {
       [
         { name: 'images', maxCount: 6 },
         { name: 'video', maxCount: 1 },
+        { name: 'thumbnail', maxCount: 1 },
       ],
       {
         limits: {
-          files: 7,
+          files: 8,
           fileSize: 80 * 1024 * 1024,
         },
         storage: memoryStorage(),
@@ -423,7 +424,7 @@ export class PartnerController {
     @Param('houseId') houseId: string,
     @Body() dto: AdminUpdatePartnerHouseDto,
     @UploadedFiles()
-    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
+    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[]; thumbnail?: Express.Multer.File[] },
   ) {
     return this.partnerService.adminUpdateHouse(
       user.id,
@@ -431,6 +432,7 @@ export class PartnerController {
       dto,
       files?.images ?? [],
       files?.video?.[0] ?? null,
+      files?.thumbnail?.[0] ?? null,
     );
   }
 
@@ -471,10 +473,11 @@ export class PartnerController {
       [
         { name: 'images', maxCount: 6 },
         { name: 'video', maxCount: 1 },
+        { name: 'thumbnail', maxCount: 1 },
       ],
       {
         limits: {
-          files: 7,
+          files: 8,
           fileSize: 500 * 1024 * 1024,
         },
         storage: memoryStorage(),
@@ -485,13 +488,14 @@ export class PartnerController {
     @CurrentUser() user: { id: string },
     @Body() dto: AdminCreatePartnerHouseDto,
     @UploadedFiles()
-    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
+    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[]; thumbnail?: Express.Multer.File[] },
   ) {
     return this.partnerService.adminCreateHousePost(
       user.id,
       dto,
       files?.images ?? [],
       files?.video?.[0] ?? null,
+      files?.thumbnail?.[0] ?? null,
     );
   }
 

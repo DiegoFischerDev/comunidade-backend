@@ -1674,6 +1674,7 @@ export class PartnerService {
     dto: CreatePartnerHouseDto | AdminCreatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
+    thumbnailFile: Express.Multer.File | null,
     options: { strict: boolean },
   ) {
     const payload = options.strict
@@ -1726,20 +1727,29 @@ export class PartnerService {
       try {
         const v = await this.houseImages.storeHouseVideo(videoFile);
         videoUrl = v.publicUrl;
-        try {
-          const p = await this.houseImages.storeHouseVideoPoster(videoFile);
-          videoPosterUrl = p.publicUrl;
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          this.logger.warn(`Falha ao gerar poster do vídeo (create): ${msg}`);
-          videoPosterUrl = null;
-        }
         if (videoFile.path) {
           await unlink(videoFile.path).catch(() => undefined);
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes('inválido') || msg.includes('suportado') || msg.includes('Formato')) {
+          throw new BadRequestException(msg);
+        }
+        throw e;
+      }
+    }
+
+    // Thumbnail manual (admin): guardada em `videoPosterUrl` para uso nos cards/listas.
+    if (thumbnailFile) {
+      try {
+        const { publicUrl } = await this.houseImages.processHouseImageForListing(thumbnailFile);
+        videoPosterUrl = publicUrl;
+        if (thumbnailFile.path) {
+          await unlink(thumbnailFile.path).catch(() => undefined);
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('processar') || msg.includes('inválida')) {
           throw new BadRequestException(msg);
         }
         throw e;
@@ -1778,7 +1788,7 @@ export class PartnerService {
     videoFile: Express.Multer.File | null,
   ) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
-    return this.createHousePostForPartner(partner.id, dto, imageFiles, videoFile, {
+    return this.createHousePostForPartner(partner.id, dto, imageFiles, videoFile, null, {
       strict: true,
     });
   }
@@ -1788,6 +1798,7 @@ export class PartnerService {
     dto: AdminCreatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
+    thumbnailFile: Express.Multer.File | null,
   ) {
     const requestedPartnerId = dto.partnerId?.trim();
     let partnerId: string;
@@ -1815,7 +1826,7 @@ export class PartnerService {
       partnerId = partner.id;
     }
 
-    return this.createHousePostForPartner(partnerId, dto, imageFiles, videoFile, {
+    return this.createHousePostForPartner(partnerId, dto, imageFiles, videoFile, thumbnailFile, {
       strict: false,
     });
   }
@@ -1865,7 +1876,7 @@ export class PartnerService {
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
-    return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile);
+    return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile, null);
   }
 
   /** Admin: carregar qualquer anúncio para edição. */
@@ -1894,6 +1905,7 @@ export class PartnerService {
     dto: AdminUpdatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
+    thumbnailFile: Express.Multer.File | null,
   ) {
     const house = await this.prisma.partnerHouse.findUnique({
       where: { id: houseId },
@@ -1934,7 +1946,7 @@ export class PartnerService {
       }
     }
 
-    return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile, {
+    return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile, thumbnailFile, {
       status: statusOpt,
       partnerId: partnerIdOpt,
     });
@@ -1946,6 +1958,7 @@ export class PartnerService {
     dto: UpdatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
+    thumbnailFile: Express.Multer.File | null,
     opts?: { status?: PartnerHouseStatus; partnerId?: string },
   ) {
     const images = (imageFiles ?? []).filter((f) => !!f);
@@ -2012,36 +2025,41 @@ export class PartnerService {
       if (videoUrl) {
         await this.houseImages.deleteStoredUrl(videoUrl);
       }
-      if (videoPosterUrl) {
-        await this.houseImages.deleteStoredUrl(videoPosterUrl);
-      }
       videoUrl = null;
-      videoPosterUrl = null;
     }
     if (videoFile) {
       if (videoUrl) {
         await this.houseImages.deleteStoredUrl(videoUrl);
       }
-      if (videoPosterUrl) {
-        await this.houseImages.deleteStoredUrl(videoPosterUrl);
-      }
       try {
         const v = await this.houseImages.storeHouseVideo(videoFile);
         videoUrl = v.publicUrl;
-        try {
-          const p = await this.houseImages.storeHouseVideoPoster(videoFile);
-          videoPosterUrl = p.publicUrl;
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          this.logger.warn(`Falha ao gerar poster do vídeo (update): ${msg}`);
-          videoPosterUrl = null;
-        }
         if (videoFile.path) {
           await unlink(videoFile.path).catch(() => undefined);
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes('inválido') || msg.includes('suportado') || msg.includes('Formato')) {
+          throw new BadRequestException(msg);
+        }
+        throw e;
+      }
+    }
+
+    // Thumbnail manual (admin): substitui a atual se enviada.
+    if (thumbnailFile) {
+      if (videoPosterUrl) {
+        await this.houseImages.deleteStoredUrl(videoPosterUrl);
+      }
+      try {
+        const { publicUrl } = await this.houseImages.processHouseImageForListing(thumbnailFile);
+        videoPosterUrl = publicUrl;
+        if (thumbnailFile.path) {
+          await unlink(thumbnailFile.path).catch(() => undefined);
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('processar') || msg.includes('inválida')) {
           throw new BadRequestException(msg);
         }
         throw e;
