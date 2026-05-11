@@ -395,6 +395,12 @@ export class PartnerController {
     return this.partnerService.adminListAllHouses();
   }
 
+  @Get('admin/relocation-cities')
+  @Roles(Role.ADMIN)
+  async adminListRelocationHouseCities() {
+    return this.partnerService.adminListRelocationHouseCities();
+  }
+
   @Get('admin/houses/:houseId')
   @Roles(Role.ADMIN)
   async adminGetHouse(@Param('houseId') houseId: string) {

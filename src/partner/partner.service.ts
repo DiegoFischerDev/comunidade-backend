@@ -326,6 +326,29 @@ export class PartnerService {
     });
   }
 
+  async adminListRelocationHouseCities(): Promise<{ cities: string[] }> {
+    const relocationCategory = await this.prisma.productCategory.findUnique({
+      where: { slug: RELOCATION_CATEGORY_SLUG },
+      select: { id: true },
+    });
+    if (!relocationCategory) {
+      throw new BadRequestException('Categoria relocation não encontrada.');
+    }
+
+    const rows = await this.prisma.partnerHouse.findMany({
+      where: { partner: { categoryId: relocationCategory.id } },
+      select: { city: true },
+      distinct: ['city'] as any,
+    });
+
+    const cities = (rows ?? [])
+      .map((r) => (r.city ?? '').trim())
+      .filter((c): c is string => Boolean(c))
+      .sort((a, b) => a.localeCompare(b, 'pt-PT'));
+
+    return { cities };
+  }
+
   async listCategoriesWithPartners() {
     const categories = await this.prisma.productCategory.findMany({
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
