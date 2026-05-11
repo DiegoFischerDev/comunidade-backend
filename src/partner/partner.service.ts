@@ -1447,6 +1447,8 @@ export class PartnerService {
     relocationFeeEur: string;
     furnished: boolean;
     featured: boolean;
+    partnerName: string;
+    partnerWhatsapp: string;
   }): string {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
@@ -1460,9 +1462,11 @@ export class PartnerService {
     const mobilado = params.furnished ? 'Sim' : 'Não';
     const priceLabel = params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
     const priceValue = `${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`;
-    const rafaPhone = '351936958429';
-    const rafaText = `Oi Rafa, tenho interesse no imovel ${params.houseId}, ${params.title.trim()}`;
-    const rafaWaLink = `wa.me/${rafaPhone}?text=${encodeURIComponent(rafaText)}`;
+    const partnerDigits = String(params.partnerWhatsapp || '').replace(/\D/g, '');
+    const partnerText = `Tenho interesse no imovel ${params.houseId}, ${params.title.trim()}`;
+    const partnerWaLink = partnerDigits
+      ? `wa.me/${partnerDigits}?text=${encodeURIComponent(partnerText)}`
+      : '—';
     const lines = [
       `👆 *${params.title.trim()}*`,
       ``,
@@ -1485,7 +1489,7 @@ export class PartnerService {
       `📝 *Descrição:*`,
       params.description.trim(),
       ``,
-      `📲 *Falar com a Rafa:* ${rafaWaLink}`,
+      `📲 *Falar com ${params.partnerName.trim() || 'o parceiro'}:* ${partnerWaLink}`,
     );
     return lines.join('\n');
   }
@@ -2404,6 +2408,7 @@ export class PartnerService {
         id: houseId,
         partner: { categoryId: relocationCategory.id },
       },
+      include: { partner: { select: { name: true, whatsapp: true } } },
     });
     if (!house) {
       throw new NotFoundException('Imóvel relocation não encontrado.');
@@ -2438,6 +2443,8 @@ export class PartnerService {
       relocationFeeEur: house.relocationFeeEur,
       furnished: house.furnished,
       featured: Boolean((house as any).featured),
+      partnerName: house.partner?.name ?? 'Parceiro',
+      partnerWhatsapp: house.partner?.whatsapp ?? '',
     });
 
     const failures: string[] = [];
