@@ -140,6 +140,105 @@ export class HouseImageStorageService {
   }
 
   /**
+   * Alguns browsers em mobile enviam `video/mp4` para ficheiros QuickTime (brand `qt  `)
+   * ou `application/octet-stream` sem MIME fiável. Preferimos o container real (ftyp / WebM).
+   */
+  private sniffVideoKind(buf: Buffer): 'webm' | 'mov' | 'mp4' | '3gp' | null {
+    if (buf.length >= 4) {
+      if (
+        buf[0] === 0x1a &&
+        buf[1] === 0x45 &&
+        buf[2] === 0xdf &&
+        buf[3] === 0xa3
+      ) {
+        return 'webm';
+      }
+    }
+    const limit = Math.min(buf.length, 128) - 8;
+    for (let i = 0; i <= limit; i++) {
+      if (buf.toString('ascii', i, i + 4) !== 'ftyp') continue;
+      const brand = buf.toString('ascii', i + 4, i + 8);
+      if (brand === 'qt  ' || brand === 'fqt ') {
+        return 'mov';
+      }
+      if (/^3g/.test(brand) || brand === '3g2a' || brand === '3g2b') {
+        return '3gp';
+      }
+      return 'mp4';
+    }
+    return null;
+  }
+
+  private inferMimeFromOriginalName(originalname: string): string | null {
+    const base = (originalname || '').split(/[/\\]/).pop()?.toLowerCase() ?? '';
+    if (!base.includes('.')) return null;
+    const ext = base.slice(base.lastIndexOf('.'));
+    const map: Record<string, string> = {
+      '.mp4': 'video/mp4',
+      '.m4v': 'video/mp4',
+      '.mov': 'video/quicktime',
+      '.qt': 'video/quicktime',
+      '.webm': 'video/webm',
+      '.3gp': 'video/3gpp',
+      '.3gpp': 'video/3gpp',
+      '.3g2': 'video/3gpp',
+    };
+    return map[ext] ?? null;
+  }
+
+  private normalizeDeclaredVideoMime(mime: string): string | null {
+    const m = mime.trim().toLowerCase().split(';')[0]!.trim();
+    if (!m) return null;
+    if (HOUSE_VIDEO_MIMES.has(m)) return m;
+    if (m === 'video/x-m4v' || m === 'video/m4v') return 'video/mp4';
+    if (m === 'video/3gp') return 'video/3gpp';
+    return null;
+  }
+
+  private mimeAndExtFromCanonicalMime(mime: string): { mime: string; ext: string } {
+    if (mime === 'video/quicktime') return { mime, ext: '.mov' };
+    if (mime === 'video/webm') return { mime, ext: '.webm' };
+    if (mime === 'video/3gpp') return { mime, ext: '.3gp' };
+    if (mime === 'video/mp4') return { mime, ext: '.mp4' };
+    throw new Error('MIME de vídeo interno inválido.');
+  }
+
+  private resolveHouseVideoMimeAndExt(
+    file: Express.Multer.File,
+    buf: Buffer,
+  ): { mime: string; ext: string } {
+    const sniffed = this.sniffVideoKind(buf);
+    if (sniffed) {
+      if (sniffed === 'webm') return { mime: 'video/webm', ext: '.webm' };
+      if (sniffed === '3gp') return { mime: 'video/3gpp', ext: '.3gp' };
+      if (sniffed === 'mov') return { mime: 'video/quicktime', ext: '.mov' };
+      return { mime: 'video/mp4', ext: '.mp4' };
+    }
+
+    const rawMime = (file.mimetype || '').split(';')[0]!.trim().toLowerCase();
+    const normalized = this.normalizeDeclaredVideoMime(rawMime);
+    if (normalized) {
+      return this.mimeAndExtFromCanonicalMime(normalized);
+    }
+
+    if (
+      rawMime === 'application/octet-stream' ||
+      rawMime === '' ||
+      rawMime === 'binary/octet-stream'
+    ) {
+      const fromName = this.inferMimeFromOriginalName(file.originalname || '');
+      if (fromName) {
+        const n = this.normalizeDeclaredVideoMime(fromName);
+        if (n) return this.mimeAndExtFromCanonicalMime(n);
+      }
+    }
+
+    throw new Error(
+      'Formato de vídeo não suportado. Usa MP4, MOV, WebM ou 3GP.',
+    );
+  }
+
+  /**
    * Converte para WebP, grava em R2 ou disco, devolve URL pública para a página do imóvel.
    */
   async processHouseImageForListing(file: Express.Multer.File): Promise<{
@@ -194,20 +293,7 @@ export class HouseImageStorageService {
     if (!buf?.length) {
       throw new Error('Vídeo inválido (sem conteúdo).');
     }
-    const mime = (file.mimetype || '').split(';')[0]!.trim().toLowerCase();
-    if (!HOUSE_VIDEO_MIMES.has(mime)) {
-      throw new Error(
-        'Formato de vídeo não suportado. Usa MP4, MOV, WebM ou 3GP.',
-      );
-    }
-    const ext =
-      mime === 'video/quicktime'
-        ? '.mov'
-        : mime === 'video/webm'
-          ? '.webm'
-          : mime === 'video/3gpp'
-            ? '.3gp'
-            : '.mp4';
+    const { mime, ext } = this.resolveHouseVideoMimeAndExt(file, buf);
     const publicUrl = await this.uploadBinary(buf, mime, 'houses/videos', ext);
     return { publicUrl };
   }

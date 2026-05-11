@@ -50,7 +50,7 @@ import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
 import { computePartnerAverageResponseMinutes } from './partner-response-average.util';
 import {
   toAbsoluteMediaUrl,
-  videoMimeFromStoredUrl,
+  videoMimeForEvolutionSend,
 } from '../common/public-media-url';
 import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-relocation-whatsapp-group.dto';
 import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
@@ -2470,7 +2470,7 @@ export class PartnerService {
         }
         if (house.videoUrl) {
           const abs = toAbsoluteMediaUrl(house.videoUrl);
-          const { mime, fileName } = videoMimeFromStoredUrl(abs);
+          const { mime, fileName } = await videoMimeForEvolutionSend(abs);
           await this.wa.sendMedia({
             to,
             caption: '',

@@ -9,7 +9,7 @@ import { GrupoTesteMessageStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   toAbsoluteMediaUrl,
-  videoMimeFromStoredUrl,
+  videoMimeForEvolutionSend,
 } from '../common/public-media-url';
 import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
@@ -167,7 +167,7 @@ export class GrupoTesteService {
 
       if (row.videoUrl) {
         const abs = toAbsoluteMediaUrl(row.videoUrl);
-        const { mime, fileName } = videoMimeFromStoredUrl(abs);
+        const { mime, fileName } = await videoMimeForEvolutionSend(abs);
         await this.wa.sendMedia({
           to: groupJid,
           caption: '',
