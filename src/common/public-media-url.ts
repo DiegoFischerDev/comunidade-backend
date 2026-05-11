@@ -18,7 +18,8 @@ export function toAbsoluteMediaUrl(stored: string): string {
 export function videoMimeFromStoredUrl(url: string): { mime: string; fileName: string } {
   const lower = url.split('?')[0]!.toLowerCase();
   if (lower.endsWith('.mov')) {
-    return { mime: 'video/quicktime', fileName: 'video.mov' };
+    // Mesmo binário ISO; Evolution/WhatsApp falham muitas vezes com quicktime + .mov
+    return { mime: 'video/mp4', fileName: 'video.mp4' };
   }
   if (lower.endsWith('.webm')) {
     return { mime: 'video/webm', fileName: 'video.webm' };
@@ -38,7 +39,7 @@ function mapHttpVideoContentType(
   const m = ct.split(';')[0]!.trim().toLowerCase();
   if (!m.startsWith('video/')) return null;
   if (m === 'video/quicktime') {
-    return { mime: 'video/quicktime', fileName: 'video.mov' };
+    return { mime: 'video/mp4', fileName: 'video.mp4' };
   }
   if (m === 'video/webm') {
     return { mime: 'video/webm', fileName: 'video.webm' };

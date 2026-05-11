@@ -142,6 +142,7 @@ export class HouseImageStorageService {
   /**
    * Alguns browsers em mobile enviam `video/mp4` para ficheiros QuickTime (brand `qt  `)
    * ou `application/octet-stream` sem MIME fiável. Preferimos o container real (ftyp / WebM).
+   * Brand QuickTime (`qt  `) grava-se como MP4: a Evolution costuma falhar com `video/quicktime` / `.mov`.
    */
   private sniffVideoKind(buf: Buffer): 'webm' | 'mov' | 'mp4' | '3gp' | null {
     if (buf.length >= 4) {
@@ -196,7 +197,9 @@ export class HouseImageStorageService {
   }
 
   private mimeAndExtFromCanonicalMime(mime: string): { mime: string; ext: string } {
-    if (mime === 'video/quicktime') return { mime, ext: '.mov' };
+    if (mime === 'video/quicktime') {
+      return { mime: 'video/mp4', ext: '.mp4' };
+    }
     if (mime === 'video/webm') return { mime, ext: '.webm' };
     if (mime === 'video/3gpp') return { mime, ext: '.3gp' };
     if (mime === 'video/mp4') return { mime, ext: '.mp4' };
@@ -211,7 +214,7 @@ export class HouseImageStorageService {
     if (sniffed) {
       if (sniffed === 'webm') return { mime: 'video/webm', ext: '.webm' };
       if (sniffed === '3gp') return { mime: 'video/3gpp', ext: '.3gp' };
-      if (sniffed === 'mov') return { mime: 'video/quicktime', ext: '.mov' };
+      if (sniffed === 'mov') return { mime: 'video/mp4', ext: '.mp4' };
       return { mime: 'video/mp4', ext: '.mp4' };
     }
 
