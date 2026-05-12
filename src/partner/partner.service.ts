@@ -1158,8 +1158,10 @@ export class PartnerService {
     const mobilado = params.furnished ? 'Sim' : 'Não';
     const priceLabel = params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
     const priceValue = `${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`;
-    const frontend = getFrontendBaseUrl();
-    const partnerWaLink = `${frontend}/imovel?id=${encodeURIComponent(String(params.houseId))}`;
+    const frontendBase = getFrontendBaseUrl();
+    /** Sem `https://` para o WhatsApp não gerar preview com metadados no grupo. */
+    const frontendHostPath = frontendBase.replace(/^https?:\/\//i, '');
+    const partnerWaLink = `${frontendHostPath}/imovel?id=${encodeURIComponent(String(params.houseId))}`;
     const lines = [
       `👆 *${params.title.trim()}*`,
       ``,

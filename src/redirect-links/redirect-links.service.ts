@@ -481,6 +481,38 @@ export class RedirectLinksService {
     };
   }
 
+  /** URL wa.me para partilha manual (não regista clique). */
+  async getPublicCustomWhatsappTarget(
+    slugRaw: string,
+  ): Promise<{ whatsappUrl: string } | null> {
+    const slug = decodeURIComponent(slugRaw).trim();
+    const link = await this.prisma.partnerShareLink.findUnique({
+      where: { slug },
+    });
+    if (!link) return null;
+    return {
+      whatsappUrl: buildWhatsAppUrl(link.whatsappDigits, link.whatsappPhrase),
+    };
+  }
+
+  async getPublicHouseWhatsappTarget(
+    houseKeyRaw: string,
+  ): Promise<{ whatsappUrl: string } | null> {
+    const key = decodeURIComponent(houseKeyRaw).trim();
+    const house = await this.findHouseByPublicKey(key);
+    if (!house) return null;
+    const digits = normalizeWhatsappDigits(house.partner.whatsapp);
+    if (digits.length < 9) return null;
+    const text = houseLeadWhatsAppMessage({
+      houseId: house.houseId,
+      typology: house.typology,
+      city: house.city,
+      priceEur: house.priceEur,
+      businessType: house.businessType,
+    });
+    return { whatsappUrl: buildWhatsAppUrl(digits, text) };
+  }
+
   /**
    * Regista clique (no máximo uma vez por visitante por link — cookie `rd_vid`) e devolve URL wa.me.
    */

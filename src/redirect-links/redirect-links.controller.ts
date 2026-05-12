@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   Controller,
-  Get,
   Delete,
+  Get,
+  NotFoundException,
   Patch,
   Param,
   Post,
@@ -9,7 +11,6 @@ import {
   Req,
   Res,
   Query,
-  BadRequestException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Roles } from '../auth/roles.decorator';
@@ -107,6 +108,25 @@ export class RedirectLinksController {
     @Body() dto: UpdatePartnerShareLinkDto,
   ) {
     return this.redirectLinksService.adminUpdatePartnerShareLink(id, dto);
+  }
+
+  /** JSON: URL wa.me (sem registo de clique) — fallback na página de entrada do site. */
+  @Get('public/custom-whatsapp-target/:slug')
+  @Public()
+  async customWhatsappTarget(@Param('slug') slug: string) {
+    const r =
+      await this.redirectLinksService.getPublicCustomWhatsappTarget(slug);
+    if (!r) throw new NotFoundException('Link não encontrado.');
+    return r;
+  }
+
+  @Get('public/house-whatsapp-target/:houseKey')
+  @Public()
+  async houseWhatsappTarget(@Param('houseKey') houseKey: string) {
+    const r =
+      await this.redirectLinksService.getPublicHouseWhatsappTarget(houseKey);
+    if (!r) throw new NotFoundException('Imóvel não encontrado.');
+    return r;
   }
 
   @Get('public/by-titulo/:slug')
