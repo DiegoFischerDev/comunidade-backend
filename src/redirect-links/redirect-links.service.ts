@@ -42,11 +42,47 @@ export function houseLeadWhatsAppMessage(params: {
   return `Ola, vim pela Rafa e tenho interesse no imovel ${title} por ${price}`;
 }
 
+export function houseInterestTriggerMessage(params: {
+  houseId: number;
+  title: string;
+}): string {
+  // IMPORTANTE: precisa conter o gatilho para disparar o flow processHouseInterestInbound.
+  return `Tenho interesse no imovel ${params.houseId}, ${params.title.trim()}`;
+}
+
 @Injectable()
 export class RedirectLinksService {
   private readonly logger = new Logger(RedirectLinksService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Evita contagem duplicada por preview/crawler ou double-open. */
+  private async shouldSkipDuplicateClick(params: {
+    kind: RedirectClickKind;
+    partnerShareLinkId?: string;
+    partnerHouseId?: string;
+    windowMs?: number;
+  }): Promise<boolean> {
+    const windowMs = Math.max(params.windowMs ?? 15000, 0);
+    if (windowMs === 0) return false;
+    const since = new Date(Date.now() - windowMs);
+    const where: any = {
+      kind: params.kind,
+      clickedAt: { gte: since },
+    };
+    if (params.partnerShareLinkId) {
+      where.partnerShareLinkId = params.partnerShareLinkId;
+    }
+    if (params.partnerHouseId) {
+      where.partnerHouseId = params.partnerHouseId;
+    }
+    const last = await this.prisma.redirectClickEvent.findFirst({
+      where,
+      orderBy: { clickedAt: 'desc' },
+      select: { id: true },
+    });
+    return Boolean(last);
+  }
 
   async createPartnerShareLink(dto: CreatePartnerShareLinkDto) {
     const digits = normalizeWhatsappDigits(dto.whatsapp);
@@ -204,7 +240,7 @@ export class RedirectLinksService {
       priceEur: h.priceEur,
       partnerName: h.partner.name,
       clickCount: h._count.redirectClicks,
-      entryUrl: `${frontend}/imovel?id=${encodeURIComponent(h.id)}`,
+      entryUrl: `${frontend}/imovel?id=${encodeURIComponent(String(h.houseId))}`,
       messagePreview: houseLeadWhatsAppMessage({
         title: h.title,
         priceEur: h.priceEur,
@@ -224,16 +260,25 @@ export class RedirectLinksService {
       this.logger.warn(`PartnerShareLink não encontrado: slug=${slug}`);
       return getFrontendBaseUrl();
     }
-    await this.prisma.redirectClickEvent.create({
-      data: {
-        kind: RedirectClickKind.CUSTOM_LINK,
-        partnerShareLinkId: link.id,
-      },
+    const dup = await this.shouldSkipDuplicateClick({
+      kind: RedirectClickKind.CUSTOM_LINK,
+      partnerShareLinkId: link.id,
     });
+    if (!dup) {
+      await this.prisma.redirectClickEvent.create({
+        data: {
+          kind: RedirectClickKind.CUSTOM_LINK,
+          partnerShareLinkId: link.id,
+        },
+      });
+    }
     return buildWhatsAppUrl(link.whatsappDigits, link.whatsappPhrase);
   }
 
-  async resolveHouseRedirect(houseKeyRaw: string): Promise<string> {
+  async resolveHouseRedirect(
+    houseKeyRaw: string,
+    mode?: string,
+  ): Promise<string> {
     const key = decodeURIComponent(houseKeyRaw).trim();
     const house = await this.findHouseByPublicKey(key);
     if (!house) {
@@ -247,16 +292,26 @@ export class RedirectLinksService {
       );
       return getFrontendBaseUrl();
     }
-    const text = houseLeadWhatsAppMessage({
-      title: house.title,
-      priceEur: house.priceEur,
+    const m = String(mode || '').trim().toLowerCase();
+    const text =
+      m === 'interest'
+        ? houseInterestTriggerMessage({ houseId: house.houseId, title: house.title })
+        : houseLeadWhatsAppMessage({
+            title: house.title,
+            priceEur: house.priceEur,
+          });
+    const dup = await this.shouldSkipDuplicateClick({
+      kind: RedirectClickKind.HOUSE,
+      partnerHouseId: house.id,
     });
-    await this.prisma.redirectClickEvent.create({
-      data: {
-        kind: RedirectClickKind.HOUSE,
-        partnerHouseId: house.id,
-      },
-    });
+    if (!dup) {
+      await this.prisma.redirectClickEvent.create({
+        data: {
+          kind: RedirectClickKind.HOUSE,
+          partnerHouseId: house.id,
+        },
+      });
+    }
     return buildWhatsAppUrl(digits, text);
   }
 

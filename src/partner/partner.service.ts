@@ -48,6 +48,7 @@ import { HouseImageStorageService } from './house-image-storage.service';
 import { PartnerLeadIntakeService } from './partner-lead-intake.service';
 import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
 import { computePartnerAverageResponseMinutes } from './partner-response-average.util';
+import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import {
   toAbsoluteMediaUrl,
   videoMimeForEvolutionSend,
@@ -1462,11 +1463,8 @@ export class PartnerService {
     const mobilado = params.furnished ? 'Sim' : 'Não';
     const priceLabel = params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
     const priceValue = `${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`;
-    const partnerDigits = String(params.partnerWhatsapp || '').replace(/\D/g, '');
-    const partnerText = `Tenho interesse no imovel ${params.houseId}, ${params.title.trim()}`;
-    const partnerWaLink = partnerDigits
-      ? `wa.me/${partnerDigits}?text=${encodeURIComponent(partnerText)}`
-      : '—';
+    const frontend = getFrontendBaseUrl();
+    const partnerWaLink = `${frontend}/imovel?id=${encodeURIComponent(String(params.houseId))}&mode=interest`;
     const lines = [
       `👆 *${params.title.trim()}*`,
       ``,
@@ -2540,6 +2538,9 @@ export class PartnerService {
         whatsappSends: {
           select: { sentAt: true },
           orderBy: { sentAt: 'desc' },
+        },
+        _count: {
+          select: { redirectClicks: true },
         },
       } as any,
     });
