@@ -1464,7 +1464,7 @@ export class PartnerService {
     const priceLabel = params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
     const priceValue = `${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`;
     const frontend = getFrontendBaseUrl();
-    const partnerWaLink = `${frontend}/imovel?id=${encodeURIComponent(String(params.houseId))}&mode=interest`;
+    const partnerWaLink = `${frontend}/imovel?id=${encodeURIComponent(String(params.houseId))}`;
     const lines = [
       `👆 *${params.title.trim()}*`,
       ``,

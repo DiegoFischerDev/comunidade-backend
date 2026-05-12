@@ -5,7 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
-import { Prisma, RedirectClickKind } from '@prisma/client';
+import {
+  PartnerHouseBusinessType,
+  Prisma,
+  RedirectClickKind,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { CreatePartnerShareLinkDto } from './dto/create-partner-share-link.dto';
@@ -33,22 +37,47 @@ function slugifyTitle(title: string): string {
   return t;
 }
 
-/** Mensagem padrão para cliques em anúncios de imóvel (WhatsApp do parceiro). */
-export function houseLeadWhatsAppMessage(params: {
-  title: string;
-  priceEur: string;
-}): string {
-  const title = params.title.trim();
-  const price = params.priceEur.trim();
-  return `Ola, vim pela Rafa e tenho interesse no imovel ${title} por ${price}`;
+const HOUSE_TYPOLOGY_LABELS: Record<string, string> = {
+  T1: 'T1',
+  T2: 'T2',
+  T3: 'T3',
+  T4: 'T4',
+  T5: 'T5',
+  QUARTO_AP_COMPARTILHADO: 'Quarto em Ap compartilhado',
+};
+
+function formatHouseLeadPrice(
+  priceEur: string,
+  businessType: PartnerHouseBusinessType,
+): string {
+  const t = priceEur
+    .trim()
+    .replace(/\s*€\s*$/i, '')
+    .replace(/\s*\/\s*m[eê]s?\s*$/i, '')
+    .trim();
+  return businessType === PartnerHouseBusinessType.SALE
+    ? `${t} €`
+    : `${t} € / mês`;
 }
 
-export function houseInterestTriggerMessage(params: {
+/**
+ * Mensagem pré-preenchida ao abrir o WhatsApp do parceiro.
+ * Tem de incluir `tenho interesse no imovel <houseId>` (com dígitos) para o Evolution +
+ * `extractHouseIdFromHouseInterestMessage` identificarem o anúncio.
+ */
+export function houseLeadWhatsAppMessage(params: {
   houseId: number;
-  title: string;
+  typology: string;
+  city: string;
+  priceEur: string;
+  businessType: PartnerHouseBusinessType;
 }): string {
-  // IMPORTANTE: precisa conter o gatilho para disparar o flow processHouseInterestInbound.
-  return `Tenho interesse no imovel ${params.houseId}, ${params.title.trim()}`;
+  const typ =
+    HOUSE_TYPOLOGY_LABELS[params.typology] ?? params.typology.trim();
+  const city = params.city.trim();
+  const price = formatHouseLeadPrice(params.priceEur, params.businessType);
+  const id = params.houseId;
+  return `Ola, vim pela Rafa e tenho interesse no imovel ${id} (${typ} disponível em ${city} por ${price})`;
 }
 
 @Injectable()
@@ -317,7 +346,10 @@ export class RedirectLinksService {
         id: true,
         houseId: true,
         title: true,
+        typology: true,
+        city: true,
         priceEur: true,
+        businessType: true,
         partner: { select: { name: true } },
         _count: { select: { redirectClicks: true } },
       },
@@ -335,8 +367,11 @@ export class RedirectLinksService {
           : h._count.redirectClicks,
         entryUrl: `${frontend}/imovel?id=${encodeURIComponent(String(h.houseId))}`,
         messagePreview: houseLeadWhatsAppMessage({
-          title: h.title,
+          houseId: h.houseId,
+          typology: h.typology,
+          city: h.city,
           priceEur: h.priceEur,
+          businessType: h.businessType,
         }),
       }))
       .sort((a, b) => b.clickCount - a.clickCount);
@@ -379,10 +414,7 @@ export class RedirectLinksService {
     return buildWhatsAppUrl(link.whatsappDigits, link.whatsappPhrase);
   }
 
-  async resolveHouseRedirect(
-    houseKeyRaw: string,
-    mode?: string,
-  ): Promise<string> {
+  async resolveHouseRedirect(houseKeyRaw: string): Promise<string> {
     const key = decodeURIComponent(houseKeyRaw).trim();
     const house = await this.findHouseByPublicKey(key);
     if (!house) {
@@ -396,14 +428,13 @@ export class RedirectLinksService {
       );
       return getFrontendBaseUrl();
     }
-    const m = String(mode || '').trim().toLowerCase();
-    const text =
-      m === 'interest'
-        ? houseInterestTriggerMessage({ houseId: house.houseId, title: house.title })
-        : houseLeadWhatsAppMessage({
-            title: house.title,
-            priceEur: house.priceEur,
-          });
+    const text = houseLeadWhatsAppMessage({
+      houseId: house.houseId,
+      typology: house.typology,
+      city: house.city,
+      priceEur: house.priceEur,
+      businessType: house.businessType,
+    });
     const dup = await this.shouldSkipDuplicateClick({
       kind: RedirectClickKind.HOUSE,
       partnerHouseId: house.id,

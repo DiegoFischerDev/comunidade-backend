@@ -85,9 +85,8 @@ export class RedirectLinksController {
   async redirectByHouse(
     @Param('houseKey') houseKey: string,
     @Res() res: Response,
-    @Query('mode') mode?: string,
   ) {
-    const url = await this.redirectLinksService.resolveHouseRedirect(houseKey, mode);
+    const url = await this.redirectLinksService.resolveHouseRedirect(houseKey);
     return res.redirect(302, url);
   }
 }
