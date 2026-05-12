@@ -11,11 +11,5 @@ export class UpdatePartnerAdminDto {
   @Min(0)
   @Max(10)
   priority?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(999)
-  maxPendingLeads?: number;
 }
 

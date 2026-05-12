@@ -13,6 +13,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { CreatePartnerShareLinkDto } from './dto/create-partner-share-link.dto';
+import { UpdatePartnerShareLinkDto } from './dto/update-partner-share-link.dto';
 
 function normalizeWhatsappDigits(raw: string): string {
   return String(raw ?? '')
@@ -118,34 +119,6 @@ export class RedirectLinksService {
     return { gte, lte };
   }
 
-  /** Evita contagem duplicada por preview/crawler ou double-open. */
-  private async shouldSkipDuplicateClick(params: {
-    kind: RedirectClickKind;
-    partnerShareLinkId?: string;
-    partnerHouseId?: string;
-    windowMs?: number;
-  }): Promise<boolean> {
-    const windowMs = Math.max(params.windowMs ?? 15000, 0);
-    if (windowMs === 0) return false;
-    const since = new Date(Date.now() - windowMs);
-    const where: any = {
-      kind: params.kind,
-      clickedAt: { gte: since },
-    };
-    if (params.partnerShareLinkId) {
-      where.partnerShareLinkId = params.partnerShareLinkId;
-    }
-    if (params.partnerHouseId) {
-      where.partnerHouseId = params.partnerHouseId;
-    }
-    const last = await this.prisma.redirectClickEvent.findFirst({
-      where,
-      orderBy: { clickedAt: 'desc' },
-      select: { id: true },
-    });
-    return Boolean(last);
-  }
-
   async createPartnerShareLink(dto: CreatePartnerShareLinkDto) {
     const digits = normalizeWhatsappDigits(dto.whatsapp);
     if (digits.length < 9) {
@@ -197,6 +170,68 @@ export class RedirectLinksService {
     };
   }
 
+  async adminUpdatePartnerShareLink(id: string, dto: UpdatePartnerShareLinkDto) {
+    const hasAny =
+      dto.title !== undefined ||
+      dto.whatsapp !== undefined ||
+      dto.whatsappPhrase !== undefined;
+    if (!hasAny) {
+      throw new BadRequestException('Envia pelo menos um campo para atualizar.');
+    }
+
+    const existing = await this.prisma.partnerShareLink.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Link não encontrado.');
+    }
+
+    const data: Prisma.PartnerShareLinkUpdateInput = {};
+    if (dto.title !== undefined) {
+      const t = dto.title.trim();
+      if (!t) {
+        throw new BadRequestException('Indica um título.');
+      }
+      data.title = t;
+    }
+    if (dto.whatsapp !== undefined) {
+      const digits = normalizeWhatsappDigits(dto.whatsapp);
+      if (digits.length < 9) {
+        throw new BadRequestException(
+          'Número de WhatsApp inválido (precisa de pelo menos 9 dígitos).',
+        );
+      }
+      data.whatsappDigits = digits;
+    }
+    if (dto.whatsappPhrase !== undefined) {
+      const p = dto.whatsappPhrase.trim();
+      if (!p) {
+        throw new BadRequestException('Indica a frase para o WhatsApp.');
+      }
+      data.whatsappPhrase = p;
+    }
+
+    const updated = await this.prisma.partnerShareLink.update({
+      where: { id },
+      data,
+    });
+
+    const frontend = getFrontendBaseUrl();
+    return {
+      id: updated.id,
+      slug: updated.slug,
+      title: updated.title,
+      whatsappDigits: updated.whatsappDigits,
+      whatsappPhrase: updated.whatsappPhrase,
+      createdAt: updated.createdAt.toISOString(),
+      entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(updated.slug)}`,
+      exitUrlPreview: buildWhatsAppUrl(
+        updated.whatsappDigits,
+        updated.whatsappPhrase,
+      ),
+    };
+  }
+
   /** Remove o link; eventos em `redirect_click_events` apagam-se por FK CASCADE. */
   async adminDeletePartnerShareLink(id: string): Promise<{ ok: true }> {
     try {
@@ -215,13 +250,22 @@ export class RedirectLinksService {
 
   async adminClickHistory(params: {
     kind?: RedirectClickKind;
+    /** Se definido, lista só cliques deste link personalizado (ignora `kind`). */
+    partnerShareLinkId?: string;
     limit: number;
     offset: number;
   }) {
     const take = Math.min(Math.max(params.limit, 1), 200);
     const skip = Math.max(params.offset, 0);
-    const where =
-      params.kind != null ? { kind: params.kind } : {};
+    let where: Prisma.RedirectClickEventWhereInput = {};
+    if (params.partnerShareLinkId) {
+      where = {
+        kind: RedirectClickKind.CUSTOM_LINK,
+        partnerShareLinkId: params.partnerShareLinkId,
+      };
+    } else if (params.kind != null) {
+      where = { kind: params.kind };
+    }
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.redirectClickEvent.findMany({
@@ -250,6 +294,7 @@ export class RedirectLinksService {
       id: e.id,
       kind: e.kind as 'CUSTOM_LINK' | 'HOUSE',
       clickedAt: e.clickedAt.toISOString(),
+      visitorKey: e.visitorKey,
       customLink: e.partnerShareLink
         ? {
             id: e.partnerShareLink.id,
@@ -274,6 +319,41 @@ export class RedirectLinksService {
       offset: skip,
       hasMore: skip + items.length < total,
     };
+  }
+
+  /** Metadados de um link personalizado (admin). */
+  async adminGetPartnerShareLink(id: string) {
+    const link = await this.prisma.partnerShareLink.findUnique({
+      where: { id },
+    });
+    if (!link) {
+      throw new NotFoundException('Link não encontrado.');
+    }
+    const frontend = getFrontendBaseUrl();
+    return {
+      id: link.id,
+      title: link.title,
+      slug: link.slug,
+      entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(link.slug)}`,
+    };
+  }
+
+  /** Apaga todos os eventos de clique deste link (o link em si mantém-se). */
+  async adminClearPartnerShareLinkClicks(id: string): Promise<{ deleted: number }> {
+    const link = await this.prisma.partnerShareLink.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!link) {
+      throw new NotFoundException('Link não encontrado.');
+    }
+    const res = await this.prisma.redirectClickEvent.deleteMany({
+      where: {
+        kind: RedirectClickKind.CUSTOM_LINK,
+        partnerShareLinkId: id,
+      },
+    });
+    return { deleted: res.count };
   }
 
   async adminOverview(params?: { from?: string; to?: string }) {
@@ -389,8 +469,10 @@ export class RedirectLinksService {
     };
   }
 
-  /** Regista clique e devolve URL wa.me (HTTP redirect). */
-  async resolveCustomRedirect(slugRaw: string): Promise<string> {
+  /**
+   * Regista clique (no máximo uma vez por visitante por link — cookie `rd_vid`) e devolve URL wa.me.
+   */
+  async resolveCustomRedirect(slugRaw: string, visitorKey: string): Promise<string> {
     const slug = decodeURIComponent(slugRaw).trim();
     const link = await this.prisma.partnerShareLink.findUnique({
       where: { slug },
@@ -399,22 +481,15 @@ export class RedirectLinksService {
       this.logger.warn(`PartnerShareLink não encontrado: slug=${slug}`);
       return getFrontendBaseUrl();
     }
-    const dup = await this.shouldSkipDuplicateClick({
+    await this.tryRecordRedirectClick({
       kind: RedirectClickKind.CUSTOM_LINK,
+      visitorKey,
       partnerShareLinkId: link.id,
     });
-    if (!dup) {
-      await this.prisma.redirectClickEvent.create({
-        data: {
-          kind: RedirectClickKind.CUSTOM_LINK,
-          partnerShareLinkId: link.id,
-        },
-      });
-    }
     return buildWhatsAppUrl(link.whatsappDigits, link.whatsappPhrase);
   }
 
-  async resolveHouseRedirect(houseKeyRaw: string): Promise<string> {
+  async resolveHouseRedirect(houseKeyRaw: string, visitorKey: string): Promise<string> {
     const key = decodeURIComponent(houseKeyRaw).trim();
     const house = await this.findHouseByPublicKey(key);
     if (!house) {
@@ -435,19 +510,42 @@ export class RedirectLinksService {
       priceEur: house.priceEur,
       businessType: house.businessType,
     });
-    const dup = await this.shouldSkipDuplicateClick({
+    await this.tryRecordRedirectClick({
       kind: RedirectClickKind.HOUSE,
+      visitorKey,
       partnerHouseId: house.id,
     });
-    if (!dup) {
+    return buildWhatsAppUrl(digits, text);
+  }
+
+  /**
+   * Insere evento de clique uma vez por (`visitorKey`, link/imóvel). Pedidos em paralelo:
+   * índice único parcial + P2002.
+   */
+  private async tryRecordRedirectClick(params: {
+    kind: RedirectClickKind;
+    visitorKey: string;
+    partnerShareLinkId?: string;
+    partnerHouseId?: string;
+  }): Promise<void> {
+    try {
       await this.prisma.redirectClickEvent.create({
         data: {
-          kind: RedirectClickKind.HOUSE,
-          partnerHouseId: house.id,
+          kind: params.kind,
+          visitorKey: params.visitorKey,
+          partnerShareLinkId: params.partnerShareLinkId,
+          partnerHouseId: params.partnerHouseId,
         },
       });
+    } catch (e: unknown) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        return;
+      }
+      throw e;
     }
-    return buildWhatsAppUrl(digits, text);
   }
 
   private async findHouseByPublicKey(key: string) {

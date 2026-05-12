@@ -18,7 +18,6 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
-import { CreateLeadDto } from './dto/create-lead.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import {
   PartnerHouse,
@@ -45,9 +44,6 @@ import {
   normalizeRelocationCityForAdminStorage,
 } from './relocation-cities';
 import { HouseImageStorageService } from './house-image-storage.service';
-import { PartnerLeadIntakeService } from './partner-lead-intake.service';
-import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
-import { computePartnerAverageResponseMinutes } from './partner-response-average.util';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import {
   toAbsoluteMediaUrl,
@@ -86,7 +82,6 @@ export class PartnerService {
     private readonly wa: WhatsAppService,
     private readonly houseImages: HouseImageStorageService,
     private readonly jwtService: JwtService,
-    private readonly partnerLeadIntake: PartnerLeadIntakeService,
   ) {}
 
   private async deleteUploadFileIfLocal(url?: string | null) {
@@ -121,73 +116,6 @@ export class PartnerService {
 
   private normalizeWhatsapp(value: string): string {
     return value.replace(/\s+/g, '');
-  }
-
-  private extractImmigrationPlanAnswers(data: Prisma.JsonValue | null | undefined) {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      return null;
-    }
-
-    const root = data as Record<string, unknown>;
-    const meta =
-      root.meta && typeof root.meta === 'object' && !Array.isArray(root.meta)
-        ? (root.meta as Record<string, unknown>)
-        : null;
-
-    if (!meta) return null;
-
-    const answers = {
-      visaType:
-        typeof meta.visaType === 'string' && meta.visaType.trim()
-          ? meta.visaType.trim()
-          : null,
-      cidade:
-        typeof meta.cidade === 'string' && meta.cidade.trim()
-          ? meta.cidade.trim()
-          : null,
-      cidadePlanoB:
-        typeof meta.cidadePlanoB === 'string' && meta.cidadePlanoB.trim()
-          ? meta.cidadePlanoB.trim()
-          : null,
-      agregadoFamiliar:
-        typeof meta.agregadoFamiliar === 'string' && meta.agregadoFamiliar.trim()
-          ? meta.agregadoFamiliar.trim()
-          : null,
-      numQuartos:
-        typeof meta.numQuartos === 'string' && meta.numQuartos.trim()
-          ? meta.numQuartos.trim()
-          : null,
-      profissoesPossiveis: Array.isArray(meta.profissoesPossiveis)
-        ? meta.profissoesPossiveis.filter(
-            (value): value is string => typeof value === 'string' && value.trim().length > 0,
-          )
-        : [],
-      precisaCarro:
-        typeof meta.precisaCarro === 'boolean' || meta.precisaCarro === null
-          ? meta.precisaCarro
-          : null,
-      dataViagem:
-        typeof meta.dataViagem === 'string' && meta.dataViagem.trim()
-          ? meta.dataViagem.trim()
-          : null,
-      dataAima:
-        typeof meta.dataAima === 'string' && meta.dataAima.trim()
-          ? meta.dataAima.trim()
-          : null,
-      notas:
-        typeof meta.notas === 'string' && meta.notas.trim()
-          ? meta.notas.trim()
-          : null,
-    };
-
-    const hasAnyAnswer = Object.values(answers).some((value) => {
-      if (Array.isArray(value)) return value.length > 0;
-      return value !== null;
-    });
-
-    if (!hasAnyAnswer) return null;
-
-    return answers;
   }
 
   listPartners() {
@@ -296,11 +224,6 @@ export class PartnerService {
           Object.prototype.hasOwnProperty.call(dto, 'priority') && typeof dto.priority === 'number'
             ? dto.priority
             : (partner as any).priority ?? 0,
-        maxPendingLeads:
-          Object.prototype.hasOwnProperty.call(dto, 'maxPendingLeads') &&
-          typeof dto.maxPendingLeads === 'number'
-            ? dto.maxPendingLeads
-            : (partner as any).maxPendingLeads ?? 0,
       } as any,
       include: {
         user: {
@@ -1176,249 +1099,21 @@ export class PartnerService {
     });
   }
 
-  async createLeadForPartner(
-    partnerId: string,
-    userId: string,
-    _dto: CreateLeadDto,
-  ) {
-    const partner = await this.prisma.partner.findUnique({
-      where: { id: partnerId },
-    });
-
-    if (!partner) {
-      throw new NotFoundException('Parceiro não encontrado.');
-    }
-
-    return this.prisma.lead.create({
-      data: {
-        partnerId: partner.id,
-        userId,
-      },
-    });
-  }
-
-  async getPartnerLeadDashboardExtras(partnerId: string) {
-    const [pendingLeadsCount, avgStats] = await Promise.all([
-      this.prisma.lead.count({
-        // Tem que refletir a mesma lógica da lista "Aguardam atendimento":
-        // só conta leads pendentes (attendedAt = null) e só de contactos válidos
-        // (visitor ou user role USER). Assim não conta leads de parceiros/admin.
-        where: {
-          partnerId,
-          attendedAt: null,
-          OR: [{ visitorId: { not: null } }, { user: { role: Role.USER } }],
-        } as any,
-      }),
-      computePartnerAverageResponseMinutes(partnerId, this.prisma),
-    ]);
-
-    return {
-      pendingLeadsCount,
-      averageResponseMinutes: avgStats.averageMinutes,
-    };
-  }
-
-  async openLeadWhatsApp(leadId: string, partnerAccountUserId: string) {
-    const partner = await this.getPartnerForUserOrThrow(partnerAccountUserId);
-
-    const lead = await this.prisma.lead.findFirst({
-      where: { id: leadId, partnerId: partner.id },
-      include: {
-        user: { select: { whatsapp: true } },
-        visitor: { select: { whatsapp: true } },
-      },
-    });
-
-    if (!lead) {
-      throw new NotFoundException('Lead não encontrado.');
-    }
-
-    const waRaw = lead.user?.whatsapp ?? lead.visitor?.whatsapp ?? '';
-    const digits = waRaw.replace(/\D/g, '');
-    if (!digits) {
-      throw new BadRequestException('Este contacto não tem WhatsApp registado.');
-    }
-
-    const now = new Date();
-    let didMarkAttended = false;
-
-    if (!lead.attendedAt) {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.lead.update({
-          where: { id: lead.id },
-          data: { attendedAt: now },
-        });
-        const avgStats = await computePartnerAverageResponseMinutes(partner.id, tx);
-        await tx.partner.update({
-          where: { id: partner.id },
-          data: {
-            averageResponseMinutes: avgStats.averageMinutes,
-            leadResponseSampleCount: avgStats.sampleCount,
-          },
-        });
-      });
-      didMarkAttended = true;
-    }
-
-    if (didMarkAttended) {
-      const pending = await this.prisma.lead.count({
-        // Alinha com a lista "Aguardam atendimento" e com o badge do menu.
-        where: {
-          partnerId: partner.id,
-          attendedAt: null,
-          OR: [{ visitorId: { not: null } }, { user: { role: Role.USER } }],
-        } as any,
-      });
-      if (pending === 0) {
-        await this.wa.sendText(
-          partner.whatsapp,
-          'Todos os leads foram atendidos ✅',
-        );
-      }
-    }
-
-    return { waMeUrl: `https://wa.me/${digits}` };
-  }
-
-  async adminManualLead(partnerId: string, dto: AdminManualLeadDto) {
-    return this.partnerLeadIntake.adminManualLead(
-      partnerId,
-      dto.whatsapp,
-      dto.interestComment,
-      dto.contactName,
-    );
-  }
-
-  async adminListAllLeads(params?: { partnerId?: string }) {
-    const partnerId = String(params?.partnerId || '').trim();
-    const leads = await this.prisma.lead.findMany({
-      where: {
-        ...(partnerId ? { partnerId } : {}),
-      } as any,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        partner: { select: { id: true, name: true, category: { select: { slug: true, name: true } } } },
-        user: { select: { id: true, name: true, whatsapp: true, email: true, role: true, tier: true } },
-        visitor: { select: { id: true, whatsapp: true } },
-      } as any,
-      take: 500,
-    });
-
-    return (leads as any[]).map((lead) => ({
-      id: lead.id,
-      createdAt: lead.createdAt,
-      attendedAt: lead.attendedAt,
-      interestComment: lead.interestComment,
-      contactName: lead.contactName ?? null,
-      partner: lead.partner
-        ? {
-            id: lead.partner.id,
-            name: lead.partner.name,
-            category: lead.partner.category ?? null,
-          }
-        : null,
-      user: lead.user
-        ? {
-            id: lead.user.id,
-            name: lead.user.name,
-            whatsapp: lead.user.whatsapp,
-            email: lead.user.email,
-            tier: lead.user.tier,
-            role: lead.user.role,
-          }
-        : null,
-      visitorWhatsapp: lead.visitor?.whatsapp ?? null,
-    }));
-  }
-
-  async adminDeleteLead(leadId: string) {
-    const id = String(leadId || '').trim();
-    if (!id) throw new BadRequestException('Lead inválido.');
-    const exists = await this.prisma.lead.findUnique({
-      where: { id },
-      select: { id: true },
-    });
-    if (!exists) throw new NotFoundException('Lead não encontrado.');
-    await this.prisma.lead.delete({ where: { id } });
-    return { ok: true };
-  }
-
-  async listMyLeads(userId: string) {
-    const partner = await this.getPartnerForUserOrThrow(userId);
-
-    const leads = await this.prisma.lead.findMany({
-      where: {
-        partnerId: partner.id,
-        OR: [
-          { visitorId: { not: null } },
-          { user: { role: Role.USER } },
-        ],
-      },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            whatsapp: true,
-            email: true,
-            role: true,
-            tier: true,
-            immigrationChecklist: {
-              select: {
-                data: true,
-                updatedAt: true,
-              },
-            },
-          },
-        },
-        visitor: { select: { id: true, whatsapp: true } },
-      },
-    });
-
-    return leads.map((lead) => {
-      const answers = lead.user
-        ? this.extractImmigrationPlanAnswers(
-            lead.user.immigrationChecklist?.data,
-          )
-        : null;
-
-      return {
-        id: lead.id,
-        createdAt: lead.createdAt,
-        attendedAt: lead.attendedAt,
-        interestComment: lead.interestComment,
-        contactName: (lead as any).contactName ?? null,
-        awaitingAttendance: lead.attendedAt == null,
-        contactType: lead.visitorId ? ('visitor' as const) : ('user' as const),
-        user: lead.user
-          ? {
-              id: lead.user.id,
-              name: lead.user.name,
-              whatsapp: lead.user.whatsapp,
-              email: lead.user.email,
-              tier: lead.user.tier,
-            }
-          : null,
-        visitorWhatsapp: lead.visitor?.whatsapp ?? null,
-        immigrationPlan:
-          lead.user && answers && lead.user.immigrationChecklist?.updatedAt
-            ? {
-                updatedAt: lead.user.immigrationChecklist.updatedAt,
-                answers,
-              }
-            : null,
-      };
-    });
-  }
-
   async listMySales(userId: string) {
     const partner = await this.getPartnerForUserOrThrow(userId);
     return this.prisma.partnerSale.findMany({
       where: { partnerId: partner.id },
       orderBy: { createdAt: 'desc' },
       include: {
-        user: { select: { id: true, name: true, whatsapp: true, tier: true } },
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            whatsapp: true,
+            tier: true,
+          },
+        },
         service: { select: { id: true, title: true, rpmCommissionEur: true } },
       },
     });
@@ -2630,16 +2325,14 @@ export class PartnerService {
   async createMySale(userId: string, dto: CreatePartnerSaleDto) {
     const partner = await this.getPartnerForUserOrThrow(userId);
 
-    // valida lead pertence ao parceiro (utilizador registado)
-    const lead = await this.prisma.lead.findFirst({
-      where: {
-        partnerId: partner.id,
-        userId: dto.leadUserId,
-      },
+    const buyer = await this.prisma.user.findFirst({
+      where: { id: dto.leadUserId, role: Role.USER },
       select: { id: true },
     });
-    if (!lead) {
-      throw new BadRequestException('Lead inválido para este parceiro.');
+    if (!buyer) {
+      throw new BadRequestException(
+        'Cliente inválido: indica o ID de um utilizador com conta de membro (role USER).',
+      );
     }
 
     // valida serviço pertence ao parceiro
@@ -2663,7 +2356,15 @@ export class PartnerService {
         commissionSuggestedEur: service.rpmCommissionEur ?? null,
       },
       include: {
-        user: { select: { id: true, name: true, whatsapp: true, tier: true } },
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            whatsapp: true,
+            tier: true,
+          },
+        },
         service: { select: { id: true, title: true, rpmCommissionEur: true } },
       },
     });

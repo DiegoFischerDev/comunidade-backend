@@ -171,7 +171,6 @@ model User {
   partner            Partner?
   affiliateProfile AffiliateProfile?
   referredByAffiliate AffiliateProfile? @relation("AffiliateReferrals", fields: [referredByAffiliateId], references: [id], onDelete: SetNull)
-  leads        Lead[]
   affiliateCommissionsFromReferrals AffiliateCommission[] @relation("AffiliateCommissionReferredUser")
   partnerSales PartnerSale[]
   whatsappRegistrationBrowserHandoffs WhatsappRegistrationBrowserHandoff[]
@@ -201,22 +200,13 @@ model GrupoTesteMessage {
   @@map("grupo_teste_messages")
 }
 
-/** Contacto WhatsApp sem conta na plataforma (lead criado só pelo fluxo de atendimento). */
+/** Contacto WhatsApp sem conta na plataforma (legado; pode ser reutilizado no futuro). */
 model Visitor {
   id        String   @id @default(cuid())
   whatsapp  String   @unique @map("whatsapp")
   createdAt DateTime @default(now()) @map("created_at")
-  leads     Lead[]
 
   @@map("visitors")
-}
-
-/** Dedupe de mensagens Evolution já processadas para criar lead (evita duplicados). */
-model ProcessedPartnerLeadMessage {
-  id        String   @id
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@map("processed_partner_lead_messages")
 }
 
 model ImmigrationChecklist {
@@ -345,19 +335,12 @@ model Partner {
   category             ProductCategory? @relation(fields: [categoryId], references: [id])
   /// Contador de ações "partilhar" (abrir o fluxo e registar partilha).
   shareCount           Int              @default(0) @map("share_count")
-  /** Média (minutos) pedido → primeiro contacto, só sobre os últimos 10 atendimentos (cache; dashboard recalcula na hora). */
-  averageResponseMinutes Float?         @map("average_response_minutes")
-  /** Nº de amostras usadas na média acima (1–10). */
-  leadResponseSampleCount Int           @default(0) @map("lead_response_sample_count")
   /// Prioridade do parceiro dentro da categoria (admin). Maior = mais prioritário.
   priority             Int              @default(0) @map("priority")
-  /// Limite de leads pendentes (attendedAt == null). 0 = sem limite.
-  maxPendingLeads      Int              @default(0) @map("max_pending_leads")
   createdAt            DateTime         @default(now()) @map("created_at")
   updatedAt            DateTime         @updatedAt @map("updated_at")
 
   services  Service[]
-  leads     Lead[]
   sales     PartnerSale[]
   houses    PartnerHouse[]
   reactions PartnerReaction[]
@@ -465,6 +448,9 @@ model RedirectClickEvent {
   id        String            @id @default(cuid())
   kind      RedirectClickKind
   clickedAt DateTime          @default(now()) @map("clicked_at")
+
+  /** Cookie HttpOnly `rd_vid` (UUID) no domínio da API — um contador por visitante por link. */
+  visitorKey String? @map("visitor_key") @db.VarChar(128)
 
   partnerShareLinkId String?         @map("partner_share_link_id")
   partnerShareLink   PartnerShareLink? @relation(fields: [partnerShareLinkId], references: [id], onDelete: Cascade)
@@ -582,25 +568,6 @@ model PartnerSale {
   @@index([serviceId])
   @@index([commissionPaymentStatus])
   @@map("partner_sales")
-}
-
-model Lead {
-  id        String    @id @default(cuid())
-  partnerId String    @map("partner_id")
-  partner   Partner   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  userId    String?   @map("user_id")
-  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  visitorId String?   @map("visitor_id")
-  visitor   Visitor?  @relation(fields: [visitorId], references: [id], onDelete: Cascade)
-  /// Nome exibido do contacto (vindo do WhatsApp/Evolution; fallback para user.name quando existir).
-  contactName    String?   @map("contact_name")
-  interestComment String?   @map("interest_comment")
-  attendedAt      DateTime? @map("attended_at")
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@index([partnerId])
-  @@index([userId])
-  @@index([visitorId])
 }
 
 model AffiliateProfile {

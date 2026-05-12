@@ -26,7 +26,6 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
-import { CreateLeadDto } from './dto/create-lead.dto';
 import { Public } from '../auth/public.decorator';
 import { UpdateServiceCommissionDto } from './dto/update-service-commission.dto';
 import {
@@ -41,7 +40,6 @@ import { AdminUpdatePartnerHouseDto } from './dto/admin-update-partner-house.dto
 import { memoryStorage } from 'multer';
 import { SetPartnerReactionDto } from './dto/set-partner-reaction.dto';
 import { CreatePartnerCommentDto } from './dto/create-partner-comment.dto';
-import { AdminManualLeadDto } from './dto/admin-manual-lead.dto';
 import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-relocation-whatsapp-group.dto';
 import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
 
@@ -74,28 +72,6 @@ export class PartnerController {
     @Body() dto: UpdatePartnerAdminDto,
   ) {
     return this.partnerService.updatePartnerAdmin(id, dto);
-  }
-
-  @Post('admin/:partnerId/leads/manual')
-  @Roles(Role.ADMIN)
-  @HttpCode(201)
-  async adminManualLead(
-    @Param('partnerId') partnerId: string,
-    @Body() dto: AdminManualLeadDto,
-  ) {
-    return this.partnerService.adminManualLead(partnerId, dto);
-  }
-
-  @Get('admin/leads')
-  @Roles(Role.ADMIN)
-  async adminListAllLeads(@Query('partnerId') partnerId?: string) {
-    return this.partnerService.adminListAllLeads({ partnerId });
-  }
-
-  @Delete('admin/leads/:leadId')
-  @Roles(Role.ADMIN)
-  async adminDeleteLead(@Param('leadId') leadId: string) {
-    return this.partnerService.adminDeleteLead(leadId);
   }
 
   @Get('admin/categories')
@@ -204,11 +180,7 @@ export class PartnerController {
   @Get('me')
   @Roles(Role.PARTNER)
   async me(@CurrentUser() user: { id: string }) {
-    const partner = await this.partnerService.getCurrentPartner(user.id);
-    const extras = await this.partnerService.getPartnerLeadDashboardExtras(
-      partner.id,
-    );
-    return { ...partner, ...extras };
+    return this.partnerService.getCurrentPartner(user.id);
   }
 
   @Patch('me')
@@ -243,22 +215,6 @@ export class PartnerController {
   @Roles(Role.PARTNER)
   async listMyServices(@CurrentUser() user: { id: string }) {
     return this.partnerService.listMyServices(user.id);
-  }
-
-  @Get('me/leads')
-  @Roles(Role.PARTNER)
-  async listMyLeads(@CurrentUser() user: { id: string }) {
-    return this.partnerService.listMyLeads(user.id);
-  }
-
-  @Post('me/leads/:leadId/contact')
-  @Roles(Role.PARTNER)
-  @HttpCode(200)
-  async openLeadWhatsApp(
-    @CurrentUser() user: { id: string },
-    @Param('leadId') leadId: string,
-  ) {
-    return this.partnerService.openLeadWhatsApp(leadId, user.id);
   }
 
   @Get('me/houses')
@@ -671,13 +627,5 @@ export class PartnerController {
     );
   }
 
-  @Post(':id/leads')
-  async createLead(
-    @Param('id') id: string,
-    @CurrentUser() user: { id: string },
-    @Body() dto: CreateLeadDto,
-  ) {
-    return this.partnerService.createLeadForPartner(id, user.id, dto);
-  }
 }
 
