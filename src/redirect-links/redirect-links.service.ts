@@ -252,11 +252,16 @@ export class RedirectLinksService {
     kind?: RedirectClickKind;
     /** Se definido, lista só cliques deste link personalizado (ignora `kind`). */
     partnerShareLinkId?: string;
+    /** Intervalo opcional em `clickedAt` (AAAA-MM-DD, UTC); ambas vazias = sem filtro. */
+    from?: string;
+    to?: string;
     limit: number;
     offset: number;
   }) {
     const take = Math.min(Math.max(params.limit, 1), 200);
     const skip = Math.max(params.offset, 0);
+    const range = this.parseOptionalDateRange(params.from, params.to);
+
     let where: Prisma.RedirectClickEventWhereInput = {};
     if (params.partnerShareLinkId) {
       where = {
@@ -265,6 +270,12 @@ export class RedirectLinksService {
       };
     } else if (params.kind != null) {
       where = { kind: params.kind };
+    }
+    if (range) {
+      where = {
+        ...where,
+        clickedAt: { gte: range.gte, lte: range.lte },
+      };
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -295,6 +306,7 @@ export class RedirectLinksService {
       kind: e.kind as 'CUSTOM_LINK' | 'HOUSE',
       clickedAt: e.clickedAt.toISOString(),
       visitorKey: e.visitorKey,
+      visitorCountryCode: e.visitorCountryCode,
       customLink: e.partnerShareLink
         ? {
             id: e.partnerShareLink.id,
@@ -472,7 +484,11 @@ export class RedirectLinksService {
   /**
    * Regista clique (no máximo uma vez por visitante por link — cookie `rd_vid`) e devolve URL wa.me.
    */
-  async resolveCustomRedirect(slugRaw: string, visitorKey: string): Promise<string> {
+  async resolveCustomRedirect(
+    slugRaw: string,
+    visitorKey: string,
+    visitorCountryCode?: string | null,
+  ): Promise<string> {
     const slug = decodeURIComponent(slugRaw).trim();
     const link = await this.prisma.partnerShareLink.findUnique({
       where: { slug },
@@ -484,12 +500,17 @@ export class RedirectLinksService {
     await this.tryRecordRedirectClick({
       kind: RedirectClickKind.CUSTOM_LINK,
       visitorKey,
+      visitorCountryCode: visitorCountryCode ?? null,
       partnerShareLinkId: link.id,
     });
     return buildWhatsAppUrl(link.whatsappDigits, link.whatsappPhrase);
   }
 
-  async resolveHouseRedirect(houseKeyRaw: string, visitorKey: string): Promise<string> {
+  async resolveHouseRedirect(
+    houseKeyRaw: string,
+    visitorKey: string,
+    visitorCountryCode?: string | null,
+  ): Promise<string> {
     const key = decodeURIComponent(houseKeyRaw).trim();
     const house = await this.findHouseByPublicKey(key);
     if (!house) {
@@ -513,6 +534,7 @@ export class RedirectLinksService {
     await this.tryRecordRedirectClick({
       kind: RedirectClickKind.HOUSE,
       visitorKey,
+      visitorCountryCode: visitorCountryCode ?? null,
       partnerHouseId: house.id,
     });
     return buildWhatsAppUrl(digits, text);
@@ -525,6 +547,7 @@ export class RedirectLinksService {
   private async tryRecordRedirectClick(params: {
     kind: RedirectClickKind;
     visitorKey: string;
+    visitorCountryCode?: string | null;
     partnerShareLinkId?: string;
     partnerHouseId?: string;
   }): Promise<void> {
@@ -533,6 +556,7 @@ export class RedirectLinksService {
         data: {
           kind: params.kind,
           visitorKey: params.visitorKey,
+          visitorCountryCode: params.visitorCountryCode ?? null,
           partnerShareLinkId: params.partnerShareLinkId,
           partnerHouseId: params.partnerHouseId,
         },

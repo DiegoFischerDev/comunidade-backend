@@ -452,6 +452,9 @@ model RedirectClickEvent {
   /** Cookie HttpOnly `rd_vid` (UUID) no domínio da API — um contador por visitante por link. */
   visitorKey String? @map("visitor_key") @db.VarChar(128)
 
+  /** ISO 3166-1 alpha-2 (ex.: PT); cabeçalhos CF/Vercel ou GeoIP por IP. */
+  visitorCountryCode String? @map("visitor_country_code") @db.VarChar(2)
+
   partnerShareLinkId String?         @map("partner_share_link_id")
   partnerShareLink   PartnerShareLink? @relation(fields: [partnerShareLinkId], references: [id], onDelete: Cascade)
 

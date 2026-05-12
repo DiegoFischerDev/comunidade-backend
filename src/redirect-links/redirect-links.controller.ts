@@ -23,6 +23,7 @@ import {
   buildRedirectVisitorSetCookieHeader,
   resolveRedirectVisitorId,
 } from './redirect-visitor-id';
+import { getCountryCodeFromRequest } from './redirect-request-country';
 
 @Controller('redirect-links')
 export class RedirectLinksController {
@@ -42,6 +43,8 @@ export class RedirectLinksController {
   async adminClicks(
     @Query('kind') kindRaw?: string,
     @Query('partnerShareLinkId') partnerShareLinkId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
     @Query('limit') limitRaw?: string,
     @Query('offset') offsetRaw?: string,
   ) {
@@ -66,6 +69,8 @@ export class RedirectLinksController {
     return this.redirectLinksService.adminClickHistory({
       kind: linkId ? undefined : kind,
       partnerShareLinkId: linkId || undefined,
+      from: (from ?? '').trim() || undefined,
+      to: (to ?? '').trim() || undefined,
       limit,
       offset,
     });
@@ -117,9 +122,11 @@ export class RedirectLinksController {
       cookieHeader: req.headers.cookie,
       queryRdVid: q,
     });
+    const country = getCountryCodeFromRequest(req);
     const url = await this.redirectLinksService.resolveCustomRedirect(
       slug,
       visitorKey,
+      country,
     );
     if (setCookie) {
       res.appendHeader('Set-Cookie', buildRedirectVisitorSetCookieHeader(visitorKey));
@@ -140,9 +147,11 @@ export class RedirectLinksController {
       cookieHeader: req.headers.cookie,
       queryRdVid: q,
     });
+    const country = getCountryCodeFromRequest(req);
     const url = await this.redirectLinksService.resolveHouseRedirect(
       houseKey,
       visitorKey,
+      country,
     );
     if (setCookie) {
       res.appendHeader('Set-Cookie', buildRedirectVisitorSetCookieHeader(visitorKey));
