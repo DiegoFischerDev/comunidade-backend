@@ -110,8 +110,13 @@ export class RedirectLinksController {
     @Param('slug') slug: string,
     @Req() req: Request,
     @Res() res: Response,
+    @Query('rd_vid') rdVid?: string,
   ) {
-    const { visitorKey, setCookie } = resolveRedirectVisitorId(req.headers.cookie);
+    const q = typeof rdVid === 'string' ? rdVid : undefined;
+    const { visitorKey, setCookie } = resolveRedirectVisitorId({
+      cookieHeader: req.headers.cookie,
+      queryRdVid: q,
+    });
     const url = await this.redirectLinksService.resolveCustomRedirect(
       slug,
       visitorKey,
@@ -128,8 +133,13 @@ export class RedirectLinksController {
     @Param('houseKey') houseKey: string,
     @Req() req: Request,
     @Res() res: Response,
+    @Query('rd_vid') rdVid?: string,
   ) {
-    const { visitorKey, setCookie } = resolveRedirectVisitorId(req.headers.cookie);
+    const q = typeof rdVid === 'string' ? rdVid : undefined;
+    const { visitorKey, setCookie } = resolveRedirectVisitorId({
+      cookieHeader: req.headers.cookie,
+      queryRdVid: q,
+    });
     const url = await this.redirectLinksService.resolveHouseRedirect(
       houseKey,
       visitorKey,

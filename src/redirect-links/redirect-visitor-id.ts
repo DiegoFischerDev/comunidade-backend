@@ -38,12 +38,27 @@ export function normalizeVisitorKey(raw: string | undefined | null): string | nu
   return t.toLowerCase();
 }
 
-export function resolveRedirectVisitorId(cookieHeader: string | undefined): {
+/**
+ * Prioridade: query `rd_vid` (enviada pelo frontend, ex. localStorage) → cookie
+ * `rd_vid` → novo UUID. A query evita dois cliques com IDs distintos quando o
+ * browser faz mais do que um GET ao API antes de persistir o cookie HttpOnly.
+ */
+export function resolveRedirectVisitorId(params: {
+  cookieHeader?: string;
+  /** Query `?rd_vid=<uuid>` na URL do redirect público. */
+  queryRdVid?: string;
+}): {
   visitorKey: string;
   /** Quando true, enviar Set-Cookie com `visitorKey` na resposta HTTP. */
   setCookie: boolean;
 } {
-  const fromCookie = normalizeVisitorKey(parseRedirectVisitorCookie(cookieHeader));
+  const fromQuery = normalizeVisitorKey(params.queryRdVid);
+  const fromCookie = normalizeVisitorKey(parseRedirectVisitorCookie(params.cookieHeader));
+
+  if (fromQuery) {
+    const setCookie = !fromCookie || fromCookie !== fromQuery;
+    return { visitorKey: fromQuery, setCookie };
+  }
   if (fromCookie) {
     return { visitorKey: fromCookie, setCookie: false };
   }
