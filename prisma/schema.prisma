@@ -88,6 +88,11 @@ enum PartnerHouseBusinessType {
   SALE
 }
 
+enum RedirectClickKind {
+  CUSTOM_LINK
+  HOUSE
+}
+
 enum PartnerReactionType {
   LIKE
   DISLIKE
@@ -433,10 +438,44 @@ model PartnerHouse {
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
   whatsappSends PartnerHouseWhatsappSend[]
+  redirectClicks RedirectClickEvent[]
 
   @@index([partnerId, status])
   @@index([availableFrom])
   @@map("partner_houses")
+}
+
+/** Link curto criado pelo admin: WhatsApp com mensagem fixa (tracking em RedirectClickEvent). */
+model PartnerShareLink {
+  id             String   @id @default(cuid())
+  /** Segmento da URL de entrada: /whatsapp?t=<slug> */
+  slug           String   @unique
+  title          String
+  whatsappDigits String   @map("whatsapp_digits")
+  whatsappPhrase String   @map("whatsapp_phrase") @db.Text
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  clicks RedirectClickEvent[]
+
+  @@map("partner_share_links")
+}
+
+model RedirectClickEvent {
+  id        String            @id @default(cuid())
+  kind      RedirectClickKind
+  clickedAt DateTime          @default(now()) @map("clicked_at")
+
+  partnerShareLinkId String?         @map("partner_share_link_id")
+  partnerShareLink   PartnerShareLink? @relation(fields: [partnerShareLinkId], references: [id], onDelete: Cascade)
+
+  partnerHouseId String?       @map("partner_house_id")
+  partnerHouse   PartnerHouse? @relation(fields: [partnerHouseId], references: [id], onDelete: Cascade)
+
+  @@index([kind, clickedAt])
+  @@index([partnerShareLinkId, clickedAt])
+  @@index([partnerHouseId, clickedAt])
+  @@map("redirect_click_events")
 }
 
 /// Histórico de envios do anúncio para grupos WhatsApp (admin).

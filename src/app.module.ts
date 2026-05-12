@@ -17,6 +17,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { SupportModule } from './support/support.module';
 import { ChecklistModule } from './checklist/checklist.module';
 import { GrupoTesteModule } from './grupo-teste/grupo-teste.module';
+import { RedirectLinksModule } from './redirect-links/redirect-links.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { GrupoTesteModule } from './grupo-teste/grupo-teste.module';
     SupportModule,
     ChecklistModule,
     GrupoTesteModule,
+    RedirectLinksModule,
   ],
   controllers: [AppController],
   providers: [
