@@ -12,6 +12,7 @@ import { PARTNER_HOUSE_RELOCATION_CITIES } from '../relocation-cities';
 export const PARTNER_HOUSE_FURNISHED_VALUES = ['true', 'false'] as const;
 
 export const PARTNER_HOUSE_TYPOLOGY_CODES = [
+  'T0',
   'T1',
   'T2',
   'T3',

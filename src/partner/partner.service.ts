@@ -1218,6 +1218,8 @@ export class PartnerService {
 
   private formatHouseTypologyLabel(typology: string): string {
     switch (typology) {
+      case 'T0':
+        return 'T0';
       case 'T1':
         return 'T1';
       case 'T2':

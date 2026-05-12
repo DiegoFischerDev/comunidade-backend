@@ -75,6 +75,7 @@ enum PartnerHouseStatus {
 }
 
 enum PartnerHouseTypology {
+  T0
   T1
   T2
   T3

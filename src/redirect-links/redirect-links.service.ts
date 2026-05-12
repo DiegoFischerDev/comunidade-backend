@@ -55,6 +55,7 @@ function partnerHousePreviewImageUrl(h: {
 }
 
 const HOUSE_TYPOLOGY_LABELS: Record<string, string> = {
+  T0: 'T0',
   T1: 'T1',
   T2: 'T2',
   T3: 'T3',
