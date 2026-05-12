@@ -11,7 +11,11 @@ import {
   Req,
   Res,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import type { Request, Response } from 'express';
 import { Roles } from '../auth/roles.decorator';
 import { Role } from '@prisma/client';
@@ -89,6 +93,36 @@ export class RedirectLinksController {
     return this.redirectLinksService.adminGetPartnerShareLink(id);
   }
 
+  @Patch('admin/custom/:id')
+  @Roles(Role.ADMIN)
+  async updateCustom(
+    @Param('id') id: string,
+    @Body() dto: UpdatePartnerShareLinkDto,
+  ) {
+    return this.redirectLinksService.adminUpdatePartnerShareLink(id, dto);
+  }
+
+  @Post('admin/custom/:id/og-image')
+  @Roles(Role.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  async uploadCustomOgImage(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    return this.redirectLinksService.adminUploadPartnerShareOgImage(id, file);
+  }
+
+  @Delete('admin/custom/:id/og-image')
+  @Roles(Role.ADMIN)
+  async deleteCustomOgImage(@Param('id') id: string) {
+    return this.redirectLinksService.adminDeletePartnerShareOgImage(id);
+  }
+
   @Delete('admin/custom/:id/clicks')
   @Roles(Role.ADMIN)
   async clearCustomClicks(@Param('id') id: string) {
@@ -101,21 +135,21 @@ export class RedirectLinksController {
     return this.redirectLinksService.adminDeletePartnerShareLink(id);
   }
 
-  @Patch('admin/custom/:id')
-  @Roles(Role.ADMIN)
-  async updateCustom(
-    @Param('id') id: string,
-    @Body() dto: UpdatePartnerShareLinkDto,
-  ) {
-    return this.redirectLinksService.adminUpdatePartnerShareLink(id, dto);
-  }
-
   /** JSON: URL wa.me (sem registo de clique) — fallback na página de entrada do site. */
   @Get('public/custom-whatsapp-target/:slug')
   @Public()
   async customWhatsappTarget(@Param('slug') slug: string) {
     const r =
       await this.redirectLinksService.getPublicCustomWhatsappTarget(slug);
+    if (!r) throw new NotFoundException('Link não encontrado.');
+    return r;
+  }
+
+  /** Metadados OG para crawlers (WhatsApp, etc.) — sem registo de clique. */
+  @Get('public/og-meta/by-titulo/:slug')
+  @Public()
+  async ogMetaByTitulo(@Param('slug') slug: string) {
+    const r = await this.redirectLinksService.getPublicOgMetaBySlug(slug);
     if (!r) throw new NotFoundException('Link não encontrado.');
     return r;
   }

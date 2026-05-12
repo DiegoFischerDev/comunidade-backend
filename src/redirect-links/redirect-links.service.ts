@@ -12,6 +12,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
+import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import { CreatePartnerShareLinkDto } from './dto/create-partner-share-link.dto';
 import { UpdatePartnerShareLinkDto } from './dto/update-partner-share-link.dto';
 
@@ -36,6 +37,21 @@ function slugifyTitle(title: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 72);
   return t;
+}
+
+/** URL de listagem / pré-visualização: capa, primeira foto ou poster do vídeo. */
+function partnerHousePreviewImageUrl(h: {
+  coverImageUrl: string | null;
+  imageUrls: string[];
+  videoPosterUrl: string | null;
+}): string | null {
+  const cover = h.coverImageUrl?.trim();
+  if (cover) return cover;
+  const first = h.imageUrls.find((u) => (u ?? '').trim());
+  if (first) return first.trim();
+  const poster = h.videoPosterUrl?.trim();
+  if (poster) return poster;
+  return null;
 }
 
 const HOUSE_TYPOLOGY_LABELS: Record<string, string> = {
@@ -85,7 +101,10 @@ export function houseLeadWhatsAppMessage(params: {
 export class RedirectLinksService {
   private readonly logger = new Logger(RedirectLinksService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly houseImageStorage: HouseImageStorageService,
+  ) {}
 
   /**
    * Filtro opcional por intervalo de datas (UTC) em `clickedAt`.
@@ -161,6 +180,7 @@ export class RedirectLinksService {
       title: created.title,
       whatsappDigits: created.whatsappDigits,
       whatsappPhrase: created.whatsappPhrase,
+      ogImageUrl: created.ogImageUrl,
       createdAt: created.createdAt.toISOString(),
       entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(created.slug)}`,
       exitUrlPreview: buildWhatsAppUrl(
@@ -223,6 +243,7 @@ export class RedirectLinksService {
       title: updated.title,
       whatsappDigits: updated.whatsappDigits,
       whatsappPhrase: updated.whatsappPhrase,
+      ogImageUrl: updated.ogImageUrl,
       createdAt: updated.createdAt.toISOString(),
       entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(updated.slug)}`,
       exitUrlPreview: buildWhatsAppUrl(
@@ -234,6 +255,16 @@ export class RedirectLinksService {
 
   /** Remove o link; eventos em `redirect_click_events` apagam-se por FK CASCADE. */
   async adminDeletePartnerShareLink(id: string): Promise<{ ok: true }> {
+    const row = await this.prisma.partnerShareLink.findUnique({
+      where: { id },
+      select: { ogImageUrl: true },
+    });
+    if (!row) {
+      throw new NotFoundException('Link não encontrado.');
+    }
+    if (row.ogImageUrl) {
+      await this.houseImageStorage.deleteStoredUrl(row.ogImageUrl);
+    }
     try {
       await this.prisma.partnerShareLink.delete({ where: { id } });
     } catch (e: unknown) {
@@ -346,8 +377,62 @@ export class RedirectLinksService {
       id: link.id,
       title: link.title,
       slug: link.slug,
+      ogImageUrl: link.ogImageUrl,
       entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(link.slug)}`,
     };
+  }
+
+  async adminUploadPartnerShareOgImage(
+    id: string,
+    file: Express.Multer.File | undefined,
+  ): Promise<{ ogImageUrl: string }> {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Ficheiro de imagem em falta.');
+    }
+    const existing = await this.prisma.partnerShareLink.findUnique({
+      where: { id },
+      select: { ogImageUrl: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Link não encontrado.');
+    }
+    let publicUrl: string;
+    try {
+      ({ publicUrl } =
+        await this.houseImageStorage.processShareLinkOgImage(file));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Erro ao processar imagem.';
+      throw new BadRequestException(msg);
+    }
+    if (existing.ogImageUrl) {
+      await this.houseImageStorage.deleteStoredUrl(existing.ogImageUrl);
+    }
+    const updated = await this.prisma.partnerShareLink.update({
+      where: { id },
+      data: { ogImageUrl: publicUrl },
+      select: { ogImageUrl: true },
+    });
+    return { ogImageUrl: updated.ogImageUrl! };
+  }
+
+  async adminDeletePartnerShareOgImage(
+    id: string,
+  ): Promise<{ ok: true; ogImageUrl: null }> {
+    const row = await this.prisma.partnerShareLink.findUnique({
+      where: { id },
+      select: { ogImageUrl: true },
+    });
+    if (!row) {
+      throw new NotFoundException('Link não encontrado.');
+    }
+    if (row.ogImageUrl) {
+      await this.houseImageStorage.deleteStoredUrl(row.ogImageUrl);
+    }
+    await this.prisma.partnerShareLink.update({
+      where: { id },
+      data: { ogImageUrl: null },
+    });
+    return { ok: true, ogImageUrl: null };
   }
 
   /** Apaga todos os eventos de clique deste link (o link em si mantém-se). */
@@ -422,6 +507,7 @@ export class RedirectLinksService {
         title: c.title,
         whatsappDigits: c.whatsappDigits,
         whatsappPhrase: c.whatsappPhrase,
+        ogImageUrl: c.ogImageUrl,
         clickCount: range
           ? (customCountMap.get(c.id) ?? 0)
           : c._count.clicks,
@@ -442,6 +528,9 @@ export class RedirectLinksService {
         city: true,
         priceEur: true,
         businessType: true,
+        coverImageUrl: true,
+        imageUrls: true,
+        videoPosterUrl: true,
         partner: { select: { name: true } },
         _count: { select: { redirectClicks: true } },
       },
@@ -454,6 +543,7 @@ export class RedirectLinksService {
         title: h.title,
         priceEur: h.priceEur,
         partnerName: h.partner.name,
+        previewImageUrl: partnerHousePreviewImageUrl(h),
         clickCount: range
           ? (houseCountMap.get(h.id) ?? 0)
           : h._count.redirectClicks,
@@ -493,6 +583,31 @@ export class RedirectLinksService {
     return {
       whatsappUrl: buildWhatsAppUrl(link.whatsappDigits, link.whatsappPhrase),
     };
+  }
+
+  /** Metadados para Open Graph (WhatsApp, etc.) — sem registo de clique. */
+  async getPublicOgMetaBySlug(slugRaw: string): Promise<{
+    title: string;
+    description: string;
+    ogImageUrl: string | null;
+  } | null> {
+    const slug = decodeURIComponent(slugRaw).trim();
+    const link = await this.prisma.partnerShareLink.findUnique({
+      where: { slug },
+      select: { title: true, whatsappPhrase: true, ogImageUrl: true },
+    });
+    if (!link) return null;
+    const title = link.title.trim() || 'WhatsApp';
+    const phrase = link.whatsappPhrase.trim();
+    const description =
+      phrase ||
+      'Abre o WhatsApp com a mensagem preparada para contactar o parceiro.';
+    const maxDesc = 2000;
+    const descriptionClamped =
+      description.length > maxDesc
+        ? `${description.slice(0, maxDesc - 1)}…`
+        : description;
+    return { title, description: descriptionClamped, ogImageUrl: link.ogImageUrl };
   }
 
   async getPublicHouseWhatsappTarget(

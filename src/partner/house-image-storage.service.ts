@@ -290,6 +290,54 @@ export class HouseImageStorageService {
     return `/uploads/houses/${name}`;
   }
 
+  private async uploadOgJpeg(jpeg: Buffer): Promise<string> {
+    const key = `share-links/og/${Date.now()}-${randomBytes(8).toString('hex')}.jpg`;
+    const r2 = this.getR2Context();
+    if (r2) {
+      await r2.client.send(
+        new PutObjectCommand({
+          Bucket: r2.bucket,
+          Key: key,
+          Body: jpeg,
+          ContentType: 'image/jpeg',
+          CacheControl: 'public, max-age=31536000, immutable',
+        }),
+      );
+      return `${r2.publicBase}/${key}`;
+    }
+
+    const dir = join(process.cwd(), 'uploads', 'share-links', 'og');
+    await mkdir(dir, { recursive: true });
+    const name = `${Date.now()}-${randomBytes(8).toString('hex')}.jpg`;
+    await writeFile(join(dir, name), jpeg);
+    return `/uploads/share-links/og/${name}`;
+  }
+
+  /**
+   * Imagem OG para partilha do link (1200×630, JPEG). Grava em R2 ou `uploads/share-links/og/`.
+   */
+  async processShareLinkOgImage(file: Express.Multer.File): Promise<{
+    publicUrl: string;
+  }> {
+    const buf = await this.readBuffer(file);
+    if (!buf?.length) {
+      throw new Error('Imagem inválida (sem conteúdo).');
+    }
+    let jpeg: Buffer;
+    try {
+      jpeg = await sharp(buf)
+        .rotate()
+        .resize(1200, 630, { fit: 'cover', position: 'centre' })
+        .jpeg({ quality: 86, mozjpeg: true })
+        .toBuffer();
+    } catch (e) {
+      this.logger.warn(`sharp OG share link: ${e}`);
+      throw new Error('Não foi possível processar esta imagem.');
+    }
+    const publicUrl = await this.uploadOgJpeg(jpeg);
+    return { publicUrl };
+  }
+
   /** Grava vídeo original para a página pública do imóvel (não enviado ao WhatsApp). */
   async storeHouseVideo(file: Express.Multer.File): Promise<{ publicUrl: string }> {
     const buf = await this.readBuffer(file);
