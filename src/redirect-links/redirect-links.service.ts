@@ -2,9 +2,10 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
-import { RedirectClickKind } from '@prisma/client';
+import { Prisma, RedirectClickKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { CreatePartnerShareLinkDto } from './dto/create-partner-share-link.dto';
@@ -55,6 +56,38 @@ export class RedirectLinksService {
   private readonly logger = new Logger(RedirectLinksService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Filtro opcional por intervalo de datas (UTC) em `clickedAt`.
+   * Ambas vazias = sem filtro (totais desde sempre).
+   */
+  private parseOptionalDateRange(
+    from?: string,
+    to?: string,
+  ): { gte: Date; lte: Date } | null {
+    const f = (from ?? '').trim();
+    const t = (to ?? '').trim();
+    if (!f && !t) return null;
+    if (!f || !t) {
+      throw new BadRequestException(
+        'Indica data inicial e final do período, ou deixa ambas vazias para todo o período.',
+      );
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t)) {
+      throw new BadRequestException('Formato de data inválido (use AAAA-MM-DD).');
+    }
+    const gte = new Date(`${f}T00:00:00.000Z`);
+    const lte = new Date(`${t}T23:59:59.999Z`);
+    if (Number.isNaN(gte.getTime()) || Number.isNaN(lte.getTime())) {
+      throw new BadRequestException('Datas inválidas.');
+    }
+    if (gte > lte) {
+      throw new BadRequestException(
+        'A data inicial deve ser anterior ou igual à final.',
+      );
+    }
+    return { gte, lte };
+  }
 
   /** Evita contagem duplicada por preview/crawler ou double-open. */
   private async shouldSkipDuplicateClick(params: {
@@ -135,6 +168,22 @@ export class RedirectLinksService {
     };
   }
 
+  /** Remove o link; eventos em `redirect_click_events` apagam-se por FK CASCADE. */
+  async adminDeletePartnerShareLink(id: string): Promise<{ ok: true }> {
+    try {
+      await this.prisma.partnerShareLink.delete({ where: { id } });
+    } catch (e: unknown) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2025'
+      ) {
+        throw new NotFoundException('Link não encontrado.');
+      }
+      throw e;
+    }
+    return { ok: true };
+  }
+
   async adminClickHistory(params: {
     kind?: RedirectClickKind;
     limit: number;
@@ -198,8 +247,45 @@ export class RedirectLinksService {
     };
   }
 
-  async adminOverview() {
+  async adminOverview(params?: { from?: string; to?: string }) {
     const frontend = getFrontendBaseUrl();
+    const range = this.parseOptionalDateRange(params?.from, params?.to);
+
+    let customCountMap = new Map<string, number>();
+    let houseCountMap = new Map<string, number>();
+
+    if (range) {
+      const [customGb, houseGb] = await Promise.all([
+        this.prisma.redirectClickEvent.groupBy({
+          by: ['partnerShareLinkId'],
+          where: {
+            kind: RedirectClickKind.CUSTOM_LINK,
+            partnerShareLinkId: { not: null },
+            clickedAt: { gte: range.gte, lte: range.lte },
+          },
+          _count: { _all: true },
+        }),
+        this.prisma.redirectClickEvent.groupBy({
+          by: ['partnerHouseId'],
+          where: {
+            kind: RedirectClickKind.HOUSE,
+            partnerHouseId: { not: null },
+            clickedAt: { gte: range.gte, lte: range.lte },
+          },
+          _count: { _all: true },
+        }),
+      ]);
+      for (const row of customGb) {
+        if (row.partnerShareLinkId) {
+          customCountMap.set(row.partnerShareLinkId, row._count._all);
+        }
+      }
+      for (const row of houseGb) {
+        if (row.partnerHouseId) {
+          houseCountMap.set(row.partnerHouseId, row._count._all);
+        }
+      }
+    }
 
     const customRows = await this.prisma.partnerShareLink.findMany({
       orderBy: { createdAt: 'desc' },
@@ -208,17 +294,21 @@ export class RedirectLinksService {
       },
     });
 
-    const customLinks = customRows.map((c) => ({
-      id: c.id,
-      slug: c.slug,
-      title: c.title,
-      whatsappDigits: c.whatsappDigits,
-      whatsappPhrase: c.whatsappPhrase,
-      clickCount: c._count.clicks,
-      createdAt: c.createdAt.toISOString(),
-      entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(c.slug)}`,
-      exitUrlPreview: buildWhatsAppUrl(c.whatsappDigits, c.whatsappPhrase),
-    }));
+    const customLinks = customRows
+      .map((c) => ({
+        id: c.id,
+        slug: c.slug,
+        title: c.title,
+        whatsappDigits: c.whatsappDigits,
+        whatsappPhrase: c.whatsappPhrase,
+        clickCount: range
+          ? (customCountMap.get(c.id) ?? 0)
+          : c._count.clicks,
+        createdAt: c.createdAt.toISOString(),
+        entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(c.slug)}`,
+        exitUrlPreview: buildWhatsAppUrl(c.whatsappDigits, c.whatsappPhrase),
+      }))
+      .sort((a, b) => b.clickCount - a.clickCount);
 
     const houseRows = await this.prisma.partnerHouse.findMany({
       orderBy: { createdAt: 'desc' },
@@ -233,21 +323,35 @@ export class RedirectLinksService {
       },
     });
 
-    const houseLinks = houseRows.map((h) => ({
-      id: h.id,
-      houseId: h.houseId,
-      title: h.title,
-      priceEur: h.priceEur,
-      partnerName: h.partner.name,
-      clickCount: h._count.redirectClicks,
-      entryUrl: `${frontend}/imovel?id=${encodeURIComponent(String(h.houseId))}`,
-      messagePreview: houseLeadWhatsAppMessage({
+    const houseLinks = houseRows
+      .map((h) => ({
+        id: h.id,
+        houseId: h.houseId,
         title: h.title,
         priceEur: h.priceEur,
-      }),
-    }));
+        partnerName: h.partner.name,
+        clickCount: range
+          ? (houseCountMap.get(h.id) ?? 0)
+          : h._count.redirectClicks,
+        entryUrl: `${frontend}/imovel?id=${encodeURIComponent(String(h.houseId))}`,
+        messagePreview: houseLeadWhatsAppMessage({
+          title: h.title,
+          priceEur: h.priceEur,
+        }),
+      }))
+      .sort((a, b) => b.clickCount - a.clickCount);
 
-    return { customLinks, houseLinks };
+    return {
+      customLinks,
+      houseLinks,
+      clickPeriod:
+        range != null
+          ? {
+              from: (params?.from ?? '').trim(),
+              to: (params?.to ?? '').trim(),
+            }
+          : null,
+    };
   }
 
   /** Regista clique e devolve URL wa.me (HTTP redirect). */

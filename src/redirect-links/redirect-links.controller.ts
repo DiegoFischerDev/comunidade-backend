@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Delete,
   Param,
   Post,
   Body,
@@ -22,8 +23,11 @@ export class RedirectLinksController {
 
   @Get('admin/overview')
   @Roles(Role.ADMIN)
-  async adminOverview() {
-    return this.redirectLinksService.adminOverview();
+  async adminOverview(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.redirectLinksService.adminOverview({ from, to });
   }
 
   @Get('admin/clicks')
@@ -61,6 +65,12 @@ export class RedirectLinksController {
   @Roles(Role.ADMIN)
   async createCustom(@Body() dto: CreatePartnerShareLinkDto) {
     return this.redirectLinksService.createPartnerShareLink(dto);
+  }
+
+  @Delete('admin/custom/:id')
+  @Roles(Role.ADMIN)
+  async deleteCustom(@Param('id') id: string) {
+    return this.redirectLinksService.adminDeletePartnerShareLink(id);
   }
 
   @Get('public/by-titulo/:slug')
