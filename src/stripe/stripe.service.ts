@@ -994,8 +994,6 @@ export class StripeService {
           referredByAffiliateId: pending.referredByAffiliateId,
           referredByCodeSnapshot: pending.affiliateCodeSnapshot,
           referredAt: pending.referredByAffiliateId ? new Date() : null,
-          rafaCallSchedulingUnlocked: true,
-          rafaCallUnlockOrigin: 'USER_PAID',
         },
       });
       userId = created.id;
@@ -1009,8 +1007,6 @@ export class StripeService {
           tier: UserTier.MEMBER,
           membershipExpiresAt: validUntil,
           emailVerifiedAt: new Date(),
-          rafaCallSchedulingUnlocked: true,
-          rafaCallUnlockOrigin: 'USER_PAID',
         },
       });
     }
@@ -1227,8 +1223,6 @@ export class StripeService {
     const customerId = typeof sess.customer === 'string' ? sess.customer : sess.customer?.id;
     const subscriptionId = resolveSubscriptionId(session.subscription);
     const validUntil = addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
-    const grantRafaUnlock = true;
-
     await this.prisma.$transaction([
       this.prisma.subscription.upsert({
         where: { userId },
@@ -1251,13 +1245,6 @@ export class StripeService {
         data: {
           tier: UserTier.MEMBER,
           membershipExpiresAt: validUntil,
-          ...(grantRafaUnlock
-            ? {
-                rafaCallSchedulingUnlocked: true,
-                // Pagou anuidade: ganha 1 agendamento com a Rafa.
-                rafaCallUnlockOrigin: 'USER_PAID',
-              }
-            : {}),
         },
       }),
     ]);
@@ -1395,9 +1382,6 @@ export class StripeService {
       data: {
         tier: UserTier.MEMBER,
         membershipExpiresAt: validUntil,
-        // Renovação/ativação da anuidade também libera novo agendamento.
-        rafaCallSchedulingUnlocked: true,
-        rafaCallUnlockOrigin: 'USER_PAID',
       },
     });
 
