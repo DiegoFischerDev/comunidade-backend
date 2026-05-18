@@ -1,5 +1,5 @@
 -- Converte utilizadores VISITOR para MEMBER (acesso expirado via membership_expires_at).
-UPDATE "users" SET "tier" = 'MEMBER' WHERE "tier"::text = 'VISITOR';
+UPDATE "User" SET "tier" = 'MEMBER' WHERE "tier"::text = 'VISITOR';
 
 -- Remove VISITOR do enum UserTier (cast via texto evita erro ao mudar de enum).
 DO $$
@@ -13,22 +13,22 @@ BEGIN
   ) THEN
     ALTER TYPE "UserTier" RENAME TO "UserTier_old";
     CREATE TYPE "UserTier" AS ENUM ('MEMBER');
-    ALTER TABLE "users" ALTER COLUMN "tier" DROP DEFAULT;
-    ALTER TABLE "users"
+    ALTER TABLE "User" ALTER COLUMN "tier" DROP DEFAULT;
+    ALTER TABLE "User"
       ALTER COLUMN "tier" TYPE "UserTier"
       USING ("tier"::text::"UserTier");
-    ALTER TABLE "users" ALTER COLUMN "tier" SET DEFAULT 'MEMBER';
+    ALTER TABLE "User" ALTER COLUMN "tier" SET DEFAULT 'MEMBER';
     DROP TYPE "UserTier_old";
   ELSIF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'UserTier_old') THEN
     -- Estado intermédio de deploy anterior: terminar conversão do enum.
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'UserTier') THEN
       CREATE TYPE "UserTier" AS ENUM ('MEMBER');
     END IF;
-    ALTER TABLE "users" ALTER COLUMN "tier" DROP DEFAULT;
-    ALTER TABLE "users"
+    ALTER TABLE "User" ALTER COLUMN "tier" DROP DEFAULT;
+    ALTER TABLE "User"
       ALTER COLUMN "tier" TYPE "UserTier"
       USING ("tier"::text::"UserTier");
-    ALTER TABLE "users" ALTER COLUMN "tier" SET DEFAULT 'MEMBER';
+    ALTER TABLE "User" ALTER COLUMN "tier" SET DEFAULT 'MEMBER';
     DROP TYPE IF EXISTS "UserTier_old";
   END IF;
 END $$;
@@ -81,6 +81,6 @@ BEGIN
   ) THEN
     ALTER TABLE "membership_checkout_handoffs"
       ADD CONSTRAINT "membership_checkout_handoffs_user_id_fkey"
-      FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+      FOREIGN KEY ("user_id") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
