@@ -281,6 +281,7 @@ export class AffiliateService {
         name: true,
         instagram: true,
         tier: true,
+        membershipExpiresAt: true,
         role: true,
         createdAt: true,
         affiliateCommissionsFromReferrals: {
@@ -298,6 +299,7 @@ export class AffiliateService {
           name: u.name,
           instagram: u.instagram,
           tier: u.tier,
+          membershipExpiresAt: u.membershipExpiresAt,
           role: u.role,
           createdAt: u.createdAt,
           commission:
@@ -345,7 +347,7 @@ export class AffiliateService {
           },
         },
         referredUsers: {
-          select: { id: true, tier: true, role: true },
+          select: { id: true, tier: true, role: true, membershipExpiresAt: true },
         },
         commissions: true,
       },
@@ -355,8 +357,17 @@ export class AffiliateService {
       return {
         ...a,
         referralsByTier: {
-          visitor: a.referredUsers.filter((u) => u.tier === 'VISITOR').length,
-          member: a.referredUsers.filter((u) => u.tier === 'MEMBER').length,
+          inactive: a.referredUsers.filter(
+            (u) =>
+              u.tier === 'MEMBER' &&
+              (!u.membershipExpiresAt || u.membershipExpiresAt <= new Date()),
+          ).length,
+          member: a.referredUsers.filter(
+            (u) =>
+              u.tier === 'MEMBER' &&
+              u.membershipExpiresAt != null &&
+              u.membershipExpiresAt > new Date(),
+          ).length,
           partner: a.referredUsers.filter((u) => u.role === 'PARTNER').length,
           admin: a.referredUsers.filter((u) => u.role === 'ADMIN').length,
         },

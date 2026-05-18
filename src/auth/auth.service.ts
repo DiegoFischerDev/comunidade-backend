@@ -17,6 +17,7 @@ import { LoginDto } from './dto/login.dto';
 import { $Enums, Role, UserTier } from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { isMembershipActive } from '../membership/membership-access.util';
 
 const SALT_ROUNDS = 10;
 
@@ -389,6 +390,28 @@ export class AuthService {
     return { status: 'invalid' as const };
   }
 
+  async issueAuthTokenForUserId(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, role: true, whatsapp: true },
+    });
+    if (!user) return null;
+    const token = this.signAuthJwt({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    });
+    return {
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        whatsapp: user.whatsapp,
+      },
+    };
+  }
+
   async login(dto: LoginDto) {
     const normalizedWhatsapp = dto.whatsapp.replace(/\D/g, '');
     if (!normalizedWhatsapp) {
@@ -685,21 +708,20 @@ Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
     });
     if (!user) return null;
     if (
-      user.tier === 'MEMBER' &&
+      isMembershipActive(user.tier, user.membershipExpiresAt) === false &&
       user.membershipExpiresAt &&
       user.membershipExpiresAt < new Date()
     ) {
       await this.prisma.user.update({
         where: { id: userId },
         data: {
-          tier: UserTier.VISITOR,
           membershipExpiresAt: null,
           rafaCallSchedulingUnlocked: false,
           rafaCallSlotStartsAt: null,
           rafaCallSlotEndsAt: null,
         },
       });
-      user = { ...user, tier: UserTier.VISITOR, membershipExpiresAt: null };
+      user = { ...user, membershipExpiresAt: null };
     }
     return user;
   }

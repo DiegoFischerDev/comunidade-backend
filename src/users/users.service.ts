@@ -63,7 +63,15 @@ export class UsersService {
     ] = await Promise.all([
       this.prisma.user.count(),
       this.prisma.user.count({ where: { role: Role.PARTNER } }),
-      this.prisma.user.count({ where: { tier: UserTier.VISITOR } }),
+      this.prisma.user.count({
+        where: {
+          role: Role.USER,
+          OR: [
+            { membershipExpiresAt: null },
+            { membershipExpiresAt: { lte: new Date() } },
+          ],
+        },
+      }),
       this.prisma.user.count({ where: { tier: UserTier.MEMBER } }),
       this.prisma.subscription.count(),
       this.prisma.membershipPayment.aggregate({

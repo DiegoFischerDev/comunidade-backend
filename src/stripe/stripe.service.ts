@@ -1,12 +1,24 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
-import { PartnerSaleCommissionPaymentStatus, SubscriptionStatus, UserTier } from '@prisma/client';
+import {
+  PartnerSaleCommissionPaymentStatus,
+  RegistrationChannel,
+  Role,
+  SubscriptionStatus,
+  UserTier,
+} from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
+import { AuthService } from '../auth/auth.service';
+import { isMembershipActive } from '../membership/membership-access.util';
+import { CreateGuestMembershipCheckoutDto } from './dto/create-guest-membership-checkout.dto';
 
 const MEMBERSHIP_DURATION_YEARS = 1;
+const GUEST_SIGNUP_SALT_ROUNDS = 10;
+const GUEST_SIGNUP_TTL_HOURS = 24;
 
 @Injectable()
 export class StripeService {
@@ -16,6 +28,7 @@ export class StripeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsAppService,
+    private readonly authService: AuthService,
   ) {}
 
   private formatMoney(amountMinor: number, currency: string): string {
@@ -612,6 +625,272 @@ export class StripeService {
     return { url: session.url };
   }
 
+  private appendStripeSessionIdPlaceholder(url: string): string {
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}session_id={CHECKOUT_SESSION_ID}`;
+  }
+
+  private normalizeSignupWhatsapp(raw: string): string {
+    return raw.replace(/\D/g, '');
+  }
+
+  private getGuestSignupExpiry(): Date {
+    const d = new Date();
+    d.setHours(d.getHours() + GUEST_SIGNUP_TTL_HOURS);
+    return d;
+  }
+
+  async createGuestMembershipCheckout(
+    dto: CreateGuestMembershipCheckoutDto,
+  ): Promise<{ url: string }> {
+    if (dto.password !== dto.passwordConfirm) {
+      throw new BadRequestException('As senhas não coincidem.');
+    }
+
+    const whatsapp = this.normalizeSignupWhatsapp(dto.whatsapp);
+    if (whatsapp.length < 8) {
+      throw new BadRequestException('WhatsApp inválido.');
+    }
+
+    const email = dto.email.trim().toLowerCase();
+    const name = dto.name.trim();
+    if (!name) {
+      throw new BadRequestException('Nome é obrigatório.');
+    }
+
+    const existingByWhatsapp = await this.prisma.user.findUnique({
+      where: { whatsapp },
+      select: { id: true, tier: true, membershipExpiresAt: true, role: true },
+    });
+    if (
+      existingByWhatsapp &&
+      isMembershipActive(
+        existingByWhatsapp.tier,
+        existingByWhatsapp.membershipExpiresAt,
+      )
+    ) {
+      throw new BadRequestException(
+        'Já existe uma conta ativa com este WhatsApp. Faça login.',
+      );
+    }
+
+    const existingByEmail = await this.prisma.user.findFirst({
+      where: { email },
+      select: { id: true, tier: true, membershipExpiresAt: true },
+    });
+    if (
+      existingByEmail &&
+      existingByEmail.id !== existingByWhatsapp?.id &&
+      isMembershipActive(existingByEmail.tier, existingByEmail.membershipExpiresAt)
+    ) {
+      throw new BadRequestException(
+        'Já existe uma conta ativa com este e-mail. Faça login.',
+      );
+    }
+
+    const rawAffiliateCode = (dto.affiliateCode ?? '').trim().toLowerCase();
+    let referredByAffiliateId: string | null = null;
+    let referredByCodeSnapshot: string | null = null;
+    if (rawAffiliateCode && rawAffiliateCode !== 'nenhum') {
+      const affiliate = await this.prisma.affiliateProfile.findUnique({
+        where: { affiliateCode: rawAffiliateCode },
+        select: { id: true, isActive: true },
+      });
+      if (affiliate?.isActive) {
+        referredByAffiliateId = affiliate.id;
+        referredByCodeSnapshot = rawAffiliateCode;
+      }
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, GUEST_SIGNUP_SALT_ROUNDS);
+    const pending = await this.prisma.pendingMembershipSignup.create({
+      data: {
+        name,
+        email,
+        whatsapp,
+        passwordHash,
+        affiliateCodeSnapshot: referredByCodeSnapshot,
+        indicadoPor: referredByCodeSnapshot,
+        referredByAffiliateId,
+        existingUserId: existingByWhatsapp?.id ?? existingByEmail?.id ?? null,
+        expiresAt: this.getGuestSignupExpiry(),
+      },
+    });
+
+    const successUrl = this.appendStripeSessionIdPlaceholder(dto.successUrl);
+    const cancelUrl = dto.cancelUrl;
+
+    const stripe = this.getClient();
+    const metadata = {
+      checkoutType: 'membership_guest',
+      pendingSignupId: pending.id,
+      membershipEurCents: String(this.eurAmountCents),
+    };
+
+    let session: Stripe.Checkout.Session;
+
+    if (dto.paymentMethod === 'pix') {
+      session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer_email: email,
+        line_items: [
+          {
+            price_data: {
+              currency: 'brl',
+              unit_amount: this.pixAmountCentavos,
+              product_data: {
+                name: 'Anuidade Comunidade Rafa Portugal',
+                description: 'Acesso à comunidade por 1 ano (pagamento único)',
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        payment_method_types: ['pix'],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        client_reference_id: pending.id,
+        metadata,
+        payment_method_options: {
+          pix: { expires_after_seconds: 30 * 60 },
+        },
+      });
+    } else if (dto.paymentMethod === 'mbway') {
+      session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer_email: email,
+        line_items: [
+          {
+            price_data: {
+              currency: 'eur',
+              unit_amount: this.eurAmountCents,
+              product_data: {
+                name: 'Anuidade Comunidade Rafa Portugal',
+                description: 'Acesso à comunidade por 1 ano (pagamento único)',
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        payment_method_types: ['mb_way'],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        client_reference_id: pending.id,
+        metadata,
+      });
+    } else {
+      session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer_email: email,
+        line_items: [
+          {
+            price_data: {
+              currency: 'eur',
+              unit_amount: this.eurAmountCents,
+              product_data: {
+                name: 'Anuidade Comunidade Rafa Portugal',
+                description: 'Acesso à comunidade por 1 ano (pagamento único)',
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        payment_method_types: ['card'],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        client_reference_id: pending.id,
+        metadata,
+        allow_promotion_codes: true,
+      });
+    }
+
+    if (!session.url) {
+      throw new BadRequestException('Não foi possível criar a sessão de pagamento.');
+    }
+
+    await this.prisma.pendingMembershipSignup.update({
+      where: { id: pending.id },
+      data: { stripeSessionId: session.id },
+    });
+
+    return { url: session.url };
+  }
+
+  async claimGuestMembershipCheckout(sessionId: string) {
+    const trimmed = sessionId.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Sessão de pagamento em falta.');
+    }
+
+    const handoff = await this.prisma.membershipCheckoutHandoff.findUnique({
+      where: { stripeSessionId: trimmed },
+    });
+
+    if (handoff) {
+      if (handoff.consumedAt) {
+        return { status: 'consumed' as const };
+      }
+      if (handoff.expiresAt < new Date()) {
+        return { status: 'expired' as const };
+      }
+      const auth = await this.authService.issueAuthTokenForUserId(handoff.userId);
+      if (!auth) {
+        return { status: 'invalid' as const };
+      }
+      await this.prisma.membershipCheckoutHandoff.update({
+        where: { id: handoff.id },
+        data: { consumedAt: new Date() },
+      });
+      return {
+        status: 'ready' as const,
+        token: auth.token,
+        user: auth.user,
+      };
+    }
+
+    const stripe = this.getClient();
+    let session: Stripe.Checkout.Session;
+    try {
+      session = await stripe.checkout.sessions.retrieve(trimmed);
+    } catch {
+      return { status: 'invalid' as const };
+    }
+
+    if (!this.isCheckoutSessionSuccessfullyPaid(session)) {
+      return { status: 'pending' as const };
+    }
+
+    const checkoutType = session.metadata?.checkoutType;
+    if (checkoutType !== 'membership_guest') {
+      return { status: 'invalid' as const };
+    }
+
+    await this.handleGuestMembershipCheckoutCompleted(session);
+
+    const retryHandoff = await this.prisma.membershipCheckoutHandoff.findUnique({
+      where: { stripeSessionId: trimmed },
+    });
+    if (!retryHandoff || retryHandoff.consumedAt) {
+      return retryHandoff?.consumedAt
+        ? { status: 'consumed' as const }
+        : { status: 'pending' as const };
+    }
+
+    const auth = await this.authService.issueAuthTokenForUserId(retryHandoff.userId);
+    if (!auth) return { status: 'invalid' as const };
+
+    await this.prisma.membershipCheckoutHandoff.update({
+      where: { id: retryHandoff.id },
+      data: { consumedAt: new Date() },
+    });
+
+    return {
+      status: 'ready' as const,
+      token: auth.token,
+      user: auth.user,
+    };
+  }
+
   /**
    * Processa eventos do webhook Stripe e atualiza Subscription + User.
    */
@@ -676,8 +955,159 @@ export class StripeService {
       meta.membershipEurCents != null ||
       meta.rafacallFeeEurCents != null ||
       checkoutType === 'rafa_call_unlock' ||
-      checkoutType === 'partner_sale_commission'
+      checkoutType === 'partner_sale_commission' ||
+      checkoutType === 'membership_guest'
     );
+  }
+
+  private async handleGuestMembershipCheckoutCompleted(
+    session: Stripe.Checkout.Session,
+  ): Promise<void> {
+    const sess = session as any;
+    const pendingSignupId =
+      (sess.metadata?.pendingSignupId as string | undefined) ||
+      (sess.client_reference_id as string | undefined);
+    if (!pendingSignupId) return;
+
+    const pending = await this.prisma.pendingMembershipSignup.findUnique({
+      where: { id: pendingSignupId },
+    });
+    if (!pending || pending.consumedAt) return;
+    if (pending.expiresAt < new Date()) return;
+
+    const validUntil = addYears(new Date(), MEMBERSHIP_DURATION_YEARS);
+    let userId = pending.existingUserId ?? pending.createdUserId ?? null;
+
+    if (!userId) {
+      const created = await this.prisma.user.create({
+        data: {
+          email: pending.email,
+          name: pending.name,
+          whatsapp: pending.whatsapp,
+          passwordHash: pending.passwordHash,
+          role: Role.USER,
+          tier: UserTier.MEMBER,
+          membershipExpiresAt: validUntil,
+          emailVerifiedAt: new Date(),
+          registrationChannel: RegistrationChannel.EMAIL,
+          indicadoPor: pending.indicadoPor,
+          referredByAffiliateId: pending.referredByAffiliateId,
+          referredByCodeSnapshot: pending.affiliateCodeSnapshot,
+          referredAt: pending.referredByAffiliateId ? new Date() : null,
+          rafaCallSchedulingUnlocked: true,
+          rafaCallUnlockOrigin: 'USER_PAID',
+        },
+      });
+      userId = created.id;
+    } else {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          name: pending.name,
+          email: pending.email,
+          passwordHash: pending.passwordHash,
+          tier: UserTier.MEMBER,
+          membershipExpiresAt: validUntil,
+          emailVerifiedAt: new Date(),
+          rafaCallSchedulingUnlocked: true,
+          rafaCallUnlockOrigin: 'USER_PAID',
+        },
+      });
+    }
+
+    const customerId =
+      typeof sess.customer === 'string' ? sess.customer : sess.customer?.id;
+
+    await this.prisma.$transaction([
+      this.prisma.subscription.upsert({
+        where: { userId },
+        create: {
+          userId,
+          stripeCustomerId: customerId ?? null,
+          status: SubscriptionStatus.ACTIVE,
+          validUntil,
+        },
+        update: {
+          ...(customerId && { stripeCustomerId: customerId }),
+          status: SubscriptionStatus.ACTIVE,
+          validUntil,
+        },
+      }),
+      this.prisma.pendingMembershipSignup.update({
+        where: { id: pending.id },
+        data: {
+          consumedAt: new Date(),
+          createdUserId: userId,
+        },
+      }),
+    ]);
+
+    await this.recordMembershipPaymentFromCheckoutSession(userId, session);
+    await this.createAffiliateCommissionIfEligible(userId);
+
+    const handoffExpires = new Date();
+    handoffExpires.setHours(handoffExpires.getHours() + 2);
+
+    await this.prisma.membershipCheckoutHandoff.upsert({
+      where: { stripeSessionId: sess.id as string },
+      create: {
+        stripeSessionId: sess.id as string,
+        userId,
+        expiresAt: handoffExpires,
+      },
+      update: {
+        userId,
+        expiresAt: handoffExpires,
+        consumedAt: null,
+      },
+    });
+
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true, email: true },
+      });
+      if (user?.email) {
+        const frontendBase = getFrontendBaseUrl();
+        const heroUrl = `${frontendBase}/comunidade_bg.svg`;
+        await sendEmailBase({
+          to: user.email,
+          subject: 'Bem-vindo à Comunidade Rafa Portugal – já és membro',
+          text: `Olá ${user.name},\n\nObrigado por te juntares à Comunidade Rafa Portugal. O teu pagamento foi confirmado e agora tens acesso a todos os benefícios durante um ano.\n\nAté já!\nA equipa Comunidade Rafa Portugal`,
+          html: `
+            <div style="max-width:640px;margin:0 auto;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
+              <div style="width:100%;height:180px;overflow:hidden;">
+                <img src="${heroUrl}" alt="Comunidade Rafa Portugal" style="width:100%;height:100%;object-fit:cover;display:block;" />
+              </div>
+              <div style="padding:24px 20px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827;">
+                <p style="font-size:16px;margin:0 0 12px;">Olá <strong>${user.name}</strong>,</p>
+                <p style="margin:0 0 12px;">Obrigado por te juntares à <strong>Comunidade Rafa Portugal</strong>. O teu pagamento foi confirmado e agora tens acesso a todos os benefícios durante um ano.</p>
+                <p style="margin:16px 0 0;">Até já!</p>
+                <p style="margin:4px 0 0;">A equipa Comunidade Rafa Portugal</p>
+              </div>
+            </div>
+          `,
+        });
+      }
+    } catch {
+      // ignore email errors
+    }
+
+    const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
+    const currency = ((sess.currency as string | undefined) ?? 'eur').toLowerCase();
+    const paidAt = new Date();
+    const methodLabel = this.formatPaymentMethodFromSession(session);
+    const amountLabel =
+      amountTotal != null && Number.isFinite(amountTotal)
+        ? this.formatMoney(amountTotal, currency)
+        : undefined;
+    await this.notifyAdminsNewPayment({
+      payerUserId: userId,
+      reason: 'Anuidade Comunidade Rafa Portugal (1 ano) — nova conta',
+      amountLabel,
+      paidAt,
+      methodLabel,
+    });
   }
 
   private async handleCheckoutCompleted(session: Stripe.Checkout.Session): Promise<void> {
@@ -690,6 +1120,12 @@ export class StripeService {
           `Stripe checkout não atualizou conta (session=${sess.id}, payment_status=${ps ?? 'undefined'})`,
         );
       }
+      return;
+    }
+
+    const checkoutTypeEarly = sess.metadata?.checkoutType as string | undefined;
+    if (checkoutTypeEarly === 'membership_guest') {
+      await this.handleGuestMembershipCheckoutCompleted(session);
       return;
     }
 
@@ -916,7 +1352,7 @@ export class StripeService {
     await this.prisma.user.update({
       where: { id: userId },
       data: {
-        tier: isActive ? UserTier.MEMBER : UserTier.VISITOR,
+        tier: UserTier.MEMBER,
         membershipExpiresAt: isActive ? validUntil : null,
         ...(!isActive
           ? {

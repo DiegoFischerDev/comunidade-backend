@@ -14,7 +14,6 @@ enum Role {
 }
 
 enum UserTier {
-  VISITOR
   MEMBER
 }
 
@@ -129,12 +128,47 @@ model WhatsappRegistrationBrowserHandoff {
   @@map("whatsapp_registration_browser_handoffs")
 }
 
+/** Dados de registo guardados até confirmação do pagamento da anuidade (checkout convidado). */
+model PendingMembershipSignup {
+  id                    String    @id @default(cuid())
+  name                  String
+  email                 String
+  whatsapp              String
+  passwordHash          String    @map("password_hash")
+  affiliateCodeSnapshot String?   @map("affiliate_code_snapshot")
+  indicadoPor           String?   @map("indicado_por")
+  referredByAffiliateId String?   @map("referred_by_affiliate_id")
+  existingUserId        String?   @map("existing_user_id")
+  stripeSessionId       String?   @unique @map("stripe_session_id")
+  expiresAt             DateTime  @map("expires_at")
+  consumedAt            DateTime? @map("consumed_at")
+  createdUserId         String?   @map("created_user_id")
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  @@index([whatsapp])
+  @@index([expiresAt])
+  @@map("pending_membership_signups")
+}
+
+/** Troca única de JWT após pagamento no checkout convidado (session_id do Stripe). */
+model MembershipCheckoutHandoff {
+  id              String    @id @default(cuid())
+  stripeSessionId String    @unique @map("stripe_session_id")
+  userId          String    @map("user_id")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt       DateTime  @map("expires_at")
+  consumedAt      DateTime? @map("consumed_at")
+
+  @@index([expiresAt])
+  @@map("membership_checkout_handoffs")
+}
+
 model User {
   id                         String    @id @default(cuid())
   email                      String?   @unique
   passwordHash               String    @map("password_hash")
   role                       Role      @default(USER)
-  tier                       UserTier  @default(VISITOR) @map("tier")
+  tier                       UserTier  @default(MEMBER) @map("tier")
   membershipExpiresAt        DateTime? @map("membership_expires_at")
   name                       String
   whatsapp                   String    @unique @map("whatsapp")
@@ -175,6 +209,7 @@ model User {
   affiliateCommissionsFromReferrals AffiliateCommission[] @relation("AffiliateCommissionReferredUser")
   partnerSales PartnerSale[]
   whatsappRegistrationBrowserHandoffs WhatsappRegistrationBrowserHandoff[]
+  membershipCheckoutHandoffs        MembershipCheckoutHandoff[]
   supportTickets SupportTicket[]
   immigrationChecklist ImmigrationChecklist?
   partnerReactions   PartnerReaction[]

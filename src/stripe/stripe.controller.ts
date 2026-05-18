@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
+import { CreateGuestMembershipCheckoutDto } from './dto/create-guest-membership-checkout.dto';
 
 @Controller('stripe')
 export class StripeController {
@@ -20,6 +21,20 @@ export class StripeController {
   @Get('rafa-call-amounts')
   getRafaCallAmounts() {
     return this.stripeService.getRafaCallAmounts();
+  }
+
+  @Public()
+  @Post('create-guest-membership-checkout')
+  async createGuestMembershipCheckout(@Body() dto: CreateGuestMembershipCheckoutDto) {
+    return this.stripeService.createGuestMembershipCheckout(dto);
+  }
+
+  @Public()
+  @Get('claim-guest-membership')
+  async claimGuestMembership(@Req() req: { query?: Record<string, string | string[] | undefined> }) {
+    const sessionId =
+      typeof req.query?.session_id === 'string' ? req.query.session_id : '';
+    return this.stripeService.claimGuestMembershipCheckout(sessionId);
   }
 
   @Post('create-checkout-session')
