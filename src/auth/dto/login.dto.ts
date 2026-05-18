@@ -1,9 +1,13 @@
-import { IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class LoginDto {
+  @IsOptional()
   @IsString()
-  @MinLength(1, { message: 'WhatsApp é obrigatório' })
-  whatsapp: string;
+  whatsapp?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
 
   @IsString()
   @MinLength(1, { message: 'Senha é obrigatória' })

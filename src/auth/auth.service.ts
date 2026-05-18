@@ -160,21 +160,32 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const normalizedWhatsapp = dto.whatsapp.replace(/\D/g, '');
-    if (!normalizedWhatsapp) {
-      throw new UnauthorizedException('WhatsApp ou senha inválidos.');
+    const email = dto.email?.trim().toLowerCase() ?? '';
+    const normalizedWhatsapp = dto.whatsapp?.replace(/\D/g, '') ?? '';
+
+    if ((!email && !normalizedWhatsapp) || (email && normalizedWhatsapp)) {
+      throw new BadRequestException(
+        'Informe WhatsApp ou e-mail (apenas um) para entrar.',
+      );
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { whatsapp: normalizedWhatsapp },
-    });
+    const invalidCredentials = email
+      ? 'E-mail ou senha inválidos.'
+      : 'WhatsApp ou senha inválidos.';
+
+    const user = email
+      ? await this.prisma.user.findUnique({ where: { email } })
+      : await this.prisma.user.findUnique({
+          where: { whatsapp: normalizedWhatsapp },
+        });
+
     if (!user) {
-      throw new UnauthorizedException('WhatsApp ou senha inválidos.');
+      throw new UnauthorizedException(invalidCredentials);
     }
 
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) {
-      throw new UnauthorizedException('WhatsApp ou senha inválidos.');
+      throw new UnauthorizedException(invalidCredentials);
     }
     const token = this.signAuthJwt({
       id: user.id,
@@ -192,15 +203,15 @@ export class AuthService {
     };
   }
 
-  async requestPasswordReset(whatsappRaw: string) {
-    const normalizedWhatsapp = whatsappRaw.replace(/\D/g, '');
+  async requestPasswordReset(emailRaw: string) {
+    const email = emailRaw.trim().toLowerCase();
 
-    if (!normalizedWhatsapp) {
+    if (!email) {
       return { success: true };
     }
 
     const user = await this.prisma.user.findUnique({
-      where: { whatsapp: normalizedWhatsapp },
+      where: { email },
     });
 
     if (!user) {
@@ -218,20 +229,8 @@ export class AuthService {
       },
     });
 
-    const waText = `Olá ${user.name},
-
-Recebemos um pedido para redefinir a sua palavra-passe na Comunidade Rafa Portugal.
-
-Utilize este código no site (válido por 30 minutos): ${resetCode}
-
-Se não foi você, ignore esta mensagem.`;
-
-    await this.sendEvolutionText(normalizedWhatsapp, waText);
-
-    if (user.email) {
-      try {
-        const subject = 'Pedido de redefinição de senha – Comunidade Rafa Portugal';
-        const text = `Olá ${user.name},
+    const subject = 'Pedido de redefinição de senha – Comunidade Rafa Portugal';
+    const text = `Olá ${user.name},
 
 Recebemos um pedido para redefinir a sua senha na Comunidade Rafa Portugal.
 
@@ -243,36 +242,38 @@ Este código é válido por 30 minutos.
 
 Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
 
-        const html = `<p>Olá ${user.name},</p>
+    const html = `<p>Olá ${user.name},</p>
 <p>Recebemos um pedido para redefinir a sua senha na <strong>Comunidade Rafa Portugal</strong>.</p>
 <p>Utilize o código abaixo para criar uma nova senha:</p>
 <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${resetCode}</p>
 <p>Este código é válido por 30 minutos.</p>
 <p>Se não foi você que fez este pedido, pode ignorar esta mensagem.</p>`;
 
-        await sendEmailBase({
-          to: user.email,
-          subject,
-          text,
-          html,
-        });
-      } catch {
-        // WhatsApp já foi tentado; e-mail é opcional
-      }
+    try {
+      await sendEmailBase({
+        to: email,
+        subject,
+        text,
+        html,
+      });
+    } catch {
+      throw new ServiceUnavailableException(
+        'Não foi possível enviar o e-mail de recuperação. Tente novamente em instantes.',
+      );
     }
 
     return { success: true };
   }
 
   async resetPassword(
-    whatsappRaw: string,
+    emailRaw: string,
     code: string,
     newPassword: string,
   ) {
-    const normalizedWhatsapp = whatsappRaw.replace(/\D/g, '');
+    const email = emailRaw.trim().toLowerCase();
 
     const user = await this.prisma.user.findUnique({
-      where: { whatsapp: normalizedWhatsapp },
+      where: { email },
     });
 
     if (
