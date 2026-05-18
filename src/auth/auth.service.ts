@@ -10,9 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { join } from 'path';
 import { unlink } from 'fs/promises';
-import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
-import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { $Enums, Role, UserTier } from '@prisma/client';
 import { sendEmailBase } from '../email/resend.client';
@@ -66,10 +64,6 @@ export class AuthService {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
-  private generateBrowserSessionToken(): string {
-    return randomBytes(32).toString('hex');
-  }
-
   private signAuthJwt(user: {
     id: string;
     email: string | null;
@@ -82,33 +76,10 @@ export class AuthService {
     });
   }
 
-  private getVerificationExpiryDate(): Date {
-    const expires = new Date();
-    expires.setMinutes(expires.getMinutes() + 15);
-    return expires;
-  }
-
   private getResetPasswordExpiryDate(): Date {
     const expires = new Date();
     expires.setMinutes(expires.getMinutes() + 30);
     return expires;
-  }
-
-  private buildWhatsappRegistrationUrl(name: string, code: string): string {
-    const num =
-      this.getRegistrationNumbers()[0] || '351927398547';
-    const text = `Olá, meu nome é ${name}, gostaria de confirmar meu acesso à Comunidade Rafa Portugal. meu codigo é ${code}`;
-    return `https://wa.me/${num.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
-  }
-
-  private getRegistrationNumbers(): string[] {
-    const primary = (process.env.WHATSAPP_REGISTRATION_NUMBER || '351927398547')
-      .replace(/\D/g, '')
-      .trim();
-    const secondary = (process.env.WHATSAPP_REGISTRATION_NUMBER_SECONDARY || '')
-      .replace(/\D/g, '')
-      .trim();
-    return [primary, secondary].filter((v, i, arr) => !!v && arr.indexOf(v) === i);
   }
 
   private getAllowedEvolutionInstances(): string[] {
@@ -166,230 +137,6 @@ export class AuthService {
     console.warn('[auth] Evolution sendText falhou em todas as instâncias:', lastError);
   }
 
-  async register(dto: RegisterDto) {
-    const rawAffiliateCode = (dto.affiliateCode ?? '').trim().toLowerCase();
-    let referredByAffiliateId: string | null = null;
-    let referredByCodeSnapshot: string | null = null;
-    if (rawAffiliateCode && rawAffiliateCode !== 'nenhum') {
-      const affiliate = await this.prisma.affiliateProfile.findUnique({
-        where: { affiliateCode: rawAffiliateCode },
-        select: { id: true, isActive: true },
-      });
-      // Não deve bloquear criação de conta: se inválido, ignora (considera null).
-      if (affiliate && affiliate.isActive) {
-        referredByAffiliateId = affiliate.id;
-        referredByCodeSnapshot = rawAffiliateCode;
-      }
-    }
-
-    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
-    const verificationCode = this.generateVerificationCode();
-    const browserSessionToken = this.generateBrowserSessionToken();
-    const verificationExpiresAt = this.getVerificationExpiryDate();
-    // Em vez de criar o utilizador agora, criamos um "pedido de registo" e só
-    // criamos o User quando o Evolution confirmar o WhatsApp com este código.
-    await this.prisma.whatsappRegistrationRequest.create({
-      data: {
-        code: verificationCode,
-        browserSessionToken,
-        name: dto.name.trim(),
-        passwordHash,
-        affiliateCodeSnapshot: referredByCodeSnapshot,
-        indicadoPor: referredByCodeSnapshot,
-        referredByAffiliateId,
-        expiresAt: verificationExpiresAt,
-      },
-    });
-
-    const registrationNumbers = this.getRegistrationNumbers();
-    const registrationDigits = registrationNumbers[0] || '351927398547';
-
-    return {
-      user: {
-        // placeholder para o frontend (a conta só será criada após confirmação)
-        id: 'pending',
-        role: Role.USER,
-        name: dto.name.trim(),
-        whatsapp: '',
-        createdAt: new Date().toISOString(),
-      },
-      requiresEmailVerification: false,
-      requiresWhatsappVerification: true,
-      whatsappVerificationCode: verificationCode,
-      whatsappRegistrationNumber: registrationDigits,
-      whatsappRegistrationNumberSecondary: registrationNumbers[1] || null,
-      whatsappOpenUrl: this.buildWhatsappRegistrationUrl(
-        dto.name.trim(),
-        verificationCode,
-      ),
-      whatsappBrowserSessionToken: browserSessionToken,
-    };
-  }
-
-  /**
-   * Chamado pelo receiver do webhook (Evolution). Responde sempre com 200 no controller
-   * quando o processamento termina; envia texto ao utilizador via Evolution em sucesso/erro.
-   */
-  async confirmWhatsappRegistration(
-    code: string,
-    fromWhatsapp: string,
-    evolutionInstance?: string,
-  ) {
-    const normalizedFrom = fromWhatsapp.replace(/\D/g, '');
-    const trimmedCode = code.trim();
-
-    const invalidMsg =
-      'Não encontrámos um registo com este código ou o código expirou (15 minutos). Volte ao site, crie de novo a conta e envie a mensagem outra vez.';
-
-    const communityUrl =
-      process.env.FRONTEND_URL?.replace(/\/$/, '') || 'http://localhost:3000';
-    // NOTA: mensagens automáticas de boas-vindas/termos via WhatsApp desativadas a pedido.
-
-    const req = await this.prisma.whatsappRegistrationRequest.findUnique({
-      where: { code: trimmedCode },
-    });
-
-    if (!req) {
-      await this.sendEvolutionText(normalizedFrom, invalidMsg, evolutionInstance);
-      return { ok: true };
-    }
-
-    const now = new Date();
-    if (req.expiresAt < now) {
-      await this.sendEvolutionText(normalizedFrom, invalidMsg, evolutionInstance);
-      return { ok: true };
-    }
-
-    const existingUser = await this.prisma.user.findFirst({
-      where: {
-        whatsapp: normalizedFrom,
-      },
-    });
-
-    const handoffExpires = new Date();
-    handoffExpires.setMinutes(handoffExpires.getMinutes() + 30);
-
-    const passwordUpdatedMsg =
-      `Confirmámos o seu número. A palavra-passe da sua conta foi atualizada para a que acabou de definir no site. Já pode entrar na comunidade com o mesmo WhatsApp e esta nova senha.\n\n${communityUrl}`;
-
-    if (existingUser) {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.user.update({
-          where: { id: existingUser.id },
-          data: { passwordHash: req.passwordHash },
-        });
-
-        await tx.whatsappRegistrationBrowserHandoff.create({
-          data: {
-            sessionToken: req.browserSessionToken,
-            userId: existingUser.id,
-            expiresAt: handoffExpires,
-          },
-        });
-
-        await tx.whatsappRegistrationRequest.delete({
-          where: { id: req.id },
-        });
-      });
-
-      await this.sendEvolutionText(normalizedFrom, passwordUpdatedMsg, evolutionInstance);
-      return { ok: true };
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      const created = await tx.user.create({
-        data: {
-          email: null,
-          name: req.name,
-          whatsapp: normalizedFrom,
-          passwordHash: req.passwordHash,
-          role: Role.USER,
-          registrationChannel: $Enums.RegistrationChannel.WHATSAPP,
-          emailVerifiedAt: new Date(),
-          indicadoPor: req.indicadoPor,
-          referredByAffiliateId: req.referredByAffiliateId,
-          referredByCodeSnapshot: req.affiliateCodeSnapshot,
-          referredAt: req.referredByAffiliateId ? new Date() : null,
-        },
-      });
-
-      await tx.whatsappRegistrationBrowserHandoff.create({
-        data: {
-          sessionToken: req.browserSessionToken,
-          userId: created.id,
-          expiresAt: handoffExpires,
-        },
-      });
-
-      await tx.whatsappRegistrationRequest.delete({
-        where: { id: req.id },
-      });
-    });
-
-    // (sem mensagens automáticas de boas-vindas/termos)
-    return { ok: true };
-  }
-
-  /**
-   * O browser faz polling com o token opaco recebido em /auth/register até a conta
-   * ser criada no WhatsApp; devolve JWT uma única vez.
-   */
-  async pollWhatsappRegistrationBrowser(rawToken: string) {
-    const token = rawToken.trim();
-    if (!token) {
-      throw new BadRequestException('Token em falta.');
-    }
-
-    const handoff = await this.prisma.whatsappRegistrationBrowserHandoff.findUnique(
-      {
-        where: { sessionToken: token },
-        include: {
-          user: { select: { id: true, email: true, role: true, whatsapp: true } },
-        },
-      },
-    );
-
-    if (handoff) {
-      if (handoff.consumedAt) {
-        return { status: 'consumed' as const };
-      }
-      const now = new Date();
-      if (handoff.expiresAt < now) {
-        return { status: 'expired' as const };
-      }
-      await this.prisma.whatsappRegistrationBrowserHandoff.update({
-        where: { id: handoff.id },
-        data: { consumedAt: now },
-      });
-      const u = handoff.user;
-      const jwt = this.signAuthJwt({
-        id: u.id,
-        email: u.email,
-        role: u.role,
-      });
-      return {
-        status: 'ready' as const,
-        token: jwt,
-        user: {
-          id: u.id,
-          email: u.email,
-          role: u.role,
-          whatsapp: u.whatsapp,
-        },
-      };
-    }
-
-    const pending = await this.prisma.whatsappRegistrationRequest.findUnique({
-      where: { browserSessionToken: token },
-      select: { id: true },
-    });
-    if (pending) {
-      return { status: 'pending' as const };
-    }
-
-    return { status: 'invalid' as const };
-  }
-
   async issueAuthTokenForUserId(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -425,22 +172,6 @@ export class AuthService {
       throw new UnauthorizedException('WhatsApp ou senha inválidos.');
     }
 
-    if (!user.emailVerifiedAt) {
-      if (
-        user.registrationChannel === $Enums.RegistrationChannel.WHATSAPP &&
-        user.whatsappVerificationCode
-      ) {
-        throw new ForbiddenException(
-          'Confirme a sua conta pelo WhatsApp: abra o link que mostrámos após o registo e envie a mensagem com o código.',
-        );
-      }
-      if (user.emailVerificationCode) {
-        throw new ForbiddenException(
-          'É necessário confirmar o seu e-mail antes de entrar. Verifique a sua caixa de entrada e também a pasta de spam/lixo eletrónico. Se precisar, peça o reenvio do código.',
-        );
-      }
-    }
-
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) {
       throw new UnauthorizedException('WhatsApp ou senha inválidos.');
@@ -459,47 +190,6 @@ export class AuthService {
       },
       token,
     };
-  }
-
-  async verifyEmail(email: string, code: string) {
-    const normalizedEmail = email.toLowerCase().trim();
-
-    const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
-
-    if (!user) {
-      throw new BadRequestException('Utilizador não encontrado.');
-    }
-
-    if (!user.emailVerificationCode || !user.emailVerificationExpiresAt) {
-      if (user.emailVerifiedAt) {
-        return { success: true };
-      }
-      throw new BadRequestException(
-        'Não há um código de confirmação ativo para este e-mail.',
-      );
-    }
-
-    const now = new Date();
-    if (user.emailVerificationExpiresAt < now) {
-      throw new ForbiddenException('O código de confirmação expirou.');
-    }
-
-    if (user.emailVerificationCode !== code.trim()) {
-      throw new ForbiddenException('Código de confirmação inválido.');
-    }
-
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        emailVerifiedAt: new Date(),
-        emailVerificationCode: null,
-        emailVerificationExpiresAt: null,
-      },
-    });
-
-    return { success: true };
   }
 
   async requestPasswordReset(whatsappRaw: string) {
@@ -614,79 +304,6 @@ Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
         resetPasswordExpiresAt: null,
       },
     });
-
-    return { success: true };
-  }
-
-  async resendVerification(email: string) {
-    const normalizedEmail = email.toLowerCase().trim();
-
-    const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
-
-    if (!user) {
-      throw new BadRequestException('Utilizador não encontrado.');
-    }
-
-    if (user.emailVerifiedAt) {
-      return { success: true };
-    }
-
-    if (user.registrationChannel === $Enums.RegistrationChannel.WHATSAPP) {
-      throw new BadRequestException(
-        'Este registo deve ser confirmado pelo WhatsApp. Inicie o processo novamente no site se precisar de ajuda.',
-      );
-    }
-
-    const verificationCode = this.generateVerificationCode();
-    const verificationExpiresAt = this.getVerificationExpiryDate();
-
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        emailVerificationCode: verificationCode,
-        emailVerificationExpiresAt: verificationExpiresAt,
-      },
-    });
-
-    try {
-      if (!user.email) {
-        throw new ServiceUnavailableException(
-          'E-mail do utilizador não está configurado.',
-        );
-      }
-      const subject = 'Novo código de confirmação da Comunidade Rafa Portugal';
-      const text = `Olá ${user.name},
-
-Recebemos um pedido para reenviar o seu código de confirmação da Comunidade Rafa Portugal.
-
-Utilize o seguinte código para confirmar o seu e-mail:
-
-${verificationCode}
-
-Este código é válido por 15 minutos.
-
-Se não foi você que iniciou este pedido, pode ignorar esta mensagem.`;
-
-      const html = `<p>Olá ${user.name},</p>
-<p>Recebemos um pedido para reenviar o seu código de confirmação da <strong>Comunidade Rafa Portugal</strong>.</p>
-<p>Utilize o seguinte código para confirmar o seu e-mail:</p>
-<p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${verificationCode}</p>
-<p>Este código é válido por 15 minutos.</p>
-<p>Se não foi você que iniciou este pedido, pode ignorar esta mensagem.</p>`;
-
-      await sendEmailBase({
-        to: user.email,
-        subject,
-        text,
-        html,
-      });
-    } catch {
-      throw new ServiceUnavailableException(
-        'Não foi possível reenviar o e-mail de confirmação. Tente novamente mais tarde.',
-      );
-    }
 
     return { success: true };
   }

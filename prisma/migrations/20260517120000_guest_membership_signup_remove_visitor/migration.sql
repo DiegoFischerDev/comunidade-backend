@@ -1,15 +1,39 @@
 -- Converte utilizadores VISITOR para MEMBER (acesso expirado via membership_expires_at).
-UPDATE "users" SET "tier" = 'MEMBER' WHERE "tier" = 'VISITOR';
+UPDATE "users" SET "tier" = 'MEMBER' WHERE "tier"::text = 'VISITOR';
 
--- Remove valor VISITOR do enum UserTier.
-ALTER TYPE "UserTier" RENAME TO "UserTier_old";
-CREATE TYPE "UserTier" AS ENUM ('MEMBER');
-ALTER TABLE "users" ALTER COLUMN "tier" DROP DEFAULT;
-ALTER TABLE "users" ALTER COLUMN "tier" TYPE "UserTier" USING ('MEMBER'::"UserTier");
-ALTER TABLE "users" ALTER COLUMN "tier" SET DEFAULT 'MEMBER';
-DROP TYPE "UserTier_old";
+-- Remove VISITOR do enum UserTier (cast via texto evita erro ao mudar de enum).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_type t
+    JOIN pg_enum e ON e.enumtypid = t.oid
+    WHERE t.typname = 'UserTier'
+      AND e.enumlabel = 'VISITOR'
+  ) THEN
+    ALTER TYPE "UserTier" RENAME TO "UserTier_old";
+    CREATE TYPE "UserTier" AS ENUM ('MEMBER');
+    ALTER TABLE "users" ALTER COLUMN "tier" DROP DEFAULT;
+    ALTER TABLE "users"
+      ALTER COLUMN "tier" TYPE "UserTier"
+      USING ("tier"::text::"UserTier");
+    ALTER TABLE "users" ALTER COLUMN "tier" SET DEFAULT 'MEMBER';
+    DROP TYPE "UserTier_old";
+  ELSIF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'UserTier_old') THEN
+    -- Estado intermédio de deploy anterior: terminar conversão do enum.
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'UserTier') THEN
+      CREATE TYPE "UserTier" AS ENUM ('MEMBER');
+    END IF;
+    ALTER TABLE "users" ALTER COLUMN "tier" DROP DEFAULT;
+    ALTER TABLE "users"
+      ALTER COLUMN "tier" TYPE "UserTier"
+      USING ("tier"::text::"UserTier");
+    ALTER TABLE "users" ALTER COLUMN "tier" SET DEFAULT 'MEMBER';
+    DROP TYPE IF EXISTS "UserTier_old";
+  END IF;
+END $$;
 
-CREATE TABLE "pending_membership_signups" (
+CREATE TABLE IF NOT EXISTS "pending_membership_signups" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "email" TEXT NOT NULL,
@@ -28,11 +52,14 @@ CREATE TABLE "pending_membership_signups" (
     CONSTRAINT "pending_membership_signups_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "pending_membership_signups_stripe_session_id_key" ON "pending_membership_signups"("stripe_session_id");
-CREATE INDEX "pending_membership_signups_whatsapp_idx" ON "pending_membership_signups"("whatsapp");
-CREATE INDEX "pending_membership_signups_expires_at_idx" ON "pending_membership_signups"("expires_at");
+CREATE UNIQUE INDEX IF NOT EXISTS "pending_membership_signups_stripe_session_id_key"
+  ON "pending_membership_signups"("stripe_session_id");
+CREATE INDEX IF NOT EXISTS "pending_membership_signups_whatsapp_idx"
+  ON "pending_membership_signups"("whatsapp");
+CREATE INDEX IF NOT EXISTS "pending_membership_signups_expires_at_idx"
+  ON "pending_membership_signups"("expires_at");
 
-CREATE TABLE "membership_checkout_handoffs" (
+CREATE TABLE IF NOT EXISTS "membership_checkout_handoffs" (
     "id" TEXT NOT NULL,
     "stripe_session_id" TEXT NOT NULL,
     "user_id" TEXT NOT NULL,
@@ -42,7 +69,18 @@ CREATE TABLE "membership_checkout_handoffs" (
     CONSTRAINT "membership_checkout_handoffs_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "membership_checkout_handoffs_stripe_session_id_key" ON "membership_checkout_handoffs"("stripe_session_id");
-CREATE INDEX "membership_checkout_handoffs_expires_at_idx" ON "membership_checkout_handoffs"("expires_at");
+CREATE UNIQUE INDEX IF NOT EXISTS "membership_checkout_handoffs_stripe_session_id_key"
+  ON "membership_checkout_handoffs"("stripe_session_id");
+CREATE INDEX IF NOT EXISTS "membership_checkout_handoffs_expires_at_idx"
+  ON "membership_checkout_handoffs"("expires_at");
 
-ALTER TABLE "membership_checkout_handoffs" ADD CONSTRAINT "membership_checkout_handoffs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'membership_checkout_handoffs_user_id_fkey'
+  ) THEN
+    ALTER TABLE "membership_checkout_handoffs"
+      ADD CONSTRAINT "membership_checkout_handoffs_user_id_fkey"
+      FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
