@@ -477,9 +477,26 @@ model PartnerShareLink {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  clicks RedirectClickEvent[]
+  clicks               RedirectClickEvent[]
+  recommendedServices  RecommendedService[]
 
   @@map("partner_share_links")
+}
+
+/** Serviço em destaque no dashboard (título + link de redirecionamento WhatsApp). */
+model RecommendedService {
+  id                 String           @id @default(cuid())
+  title              String
+  partnerShareLinkId String           @map("partner_share_link_id")
+  partnerShareLink   PartnerShareLink @relation(fields: [partnerShareLinkId], references: [id], onDelete: Cascade)
+  sortOrder          Int              @default(0) @map("sort_order")
+  active             Boolean          @default(true)
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+
+  @@unique([partnerShareLinkId])
+  @@index([active, sortOrder])
+  @@map("recommended_services")
 }
 
 model RedirectClickEvent {
