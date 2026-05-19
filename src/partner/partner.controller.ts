@@ -99,6 +99,21 @@ export class PartnerController {
     );
   }
 
+  @Patch('admin/:id/advertising-balance')
+  @Roles(Role.ADMIN)
+  async adminSetPartnerAdvertisingBalance(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Body() body: { balanceEurCents: number; note?: string },
+  ) {
+    return this.partnerService.adminSetPartnerAdvertisingBalance(
+      user.id,
+      id,
+      body.balanceEurCents,
+      body.note,
+    );
+  }
+
   @Get('admin/categories')
   @Roles(Role.ADMIN)
   async listCategories() {

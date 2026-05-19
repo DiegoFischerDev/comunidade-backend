@@ -83,6 +83,49 @@ export class PartnerAdvertisingService {
     });
   }
 
+  /** Admin: define o saldo absoluto (ajuste no ledger com o delta). */
+  async setBalance(
+    partnerId: string,
+    balanceEurCents: number,
+    meta?: { adminUserId?: string; note?: string },
+  ): Promise<{ balanceEurCents: number }> {
+    if (!Number.isInteger(balanceEurCents) || balanceEurCents < 0) {
+      throw new BadRequestException('Saldo inválido.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.partner.findUnique({
+        where: { id: partnerId },
+        select: { advertisingBalanceEurCents: true },
+      });
+      if (!current) throw new NotFoundException('Parceiro não encontrado.');
+
+      const delta = balanceEurCents - current.advertisingBalanceEurCents;
+      if (delta === 0) {
+        return { balanceEurCents: current.advertisingBalanceEurCents };
+      }
+
+      const partner = await tx.partner.update({
+        where: { id: partnerId },
+        data: { advertisingBalanceEurCents: balanceEurCents },
+        select: { advertisingBalanceEurCents: true },
+      });
+
+      await tx.partnerAdvertisingLedgerEntry.create({
+        data: {
+          partnerId,
+          type: PartnerAdvertisingLedgerType.ADMIN_CREDIT,
+          amountEurCents: delta,
+          balanceAfterEurCents: partner.advertisingBalanceEurCents,
+          adminUserId: meta?.adminUserId ?? null,
+          note: meta?.note ?? 'Ajuste manual de saldo pelo admin',
+        },
+      });
+
+      return { balanceEurCents: partner.advertisingBalanceEurCents };
+    });
+  }
+
   async debitForPublication(
     partnerId: string,
     houseId: string,

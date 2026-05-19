@@ -1402,6 +1402,23 @@ export class PartnerService {
     return this.advertising.getBalance(partnerId);
   }
 
+  async adminSetPartnerAdvertisingBalance(
+    adminUserId: string,
+    partnerId: string,
+    balanceEurCents: number,
+    note?: string,
+  ) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { id: partnerId },
+      select: { id: true },
+    });
+    if (!partner) throw new NotFoundException('Parceiro não encontrado.');
+    return this.advertising.setBalance(partnerId, balanceEurCents, {
+      adminUserId,
+      note: note?.trim() || 'Saldo definido manualmente pelo admin',
+    });
+  }
+
   async publishMyHouse(userId: string, houseId: string) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
     const house = await this.prisma.partnerHouse.findFirst({
