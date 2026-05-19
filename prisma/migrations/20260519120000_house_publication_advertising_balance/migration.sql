@@ -3,8 +3,8 @@ CREATE TYPE "PartnerHousePublicationStatus" AS ENUM ('PUBLISHED', 'HIDDEN');
 
 CREATE TYPE "PartnerAdvertisingLedgerType" AS ENUM ('STRIPE_TOP_UP', 'ADMIN_CREDIT', 'PUBLICATION_DEBIT');
 
--- Partner advertising balance
-ALTER TABLE "partners" ADD COLUMN "advertising_balance_eur_cents" INTEGER NOT NULL DEFAULT 0;
+-- Partner advertising balance (tabela legada: "Partner", não "partners")
+ALTER TABLE "Partner" ADD COLUMN "advertising_balance_eur_cents" INTEGER NOT NULL DEFAULT 0;
 
 -- Partner house publication fields
 ALTER TABLE "partner_houses" ADD COLUMN "publication_status" "PartnerHousePublicationStatus" NOT NULL DEFAULT 'HIDDEN';
@@ -40,5 +40,5 @@ CREATE TABLE "partner_advertising_ledger_entries" (
 CREATE UNIQUE INDEX "partner_advertising_ledger_entries_stripe_checkout_session_id_key" ON "partner_advertising_ledger_entries"("stripe_checkout_session_id");
 CREATE INDEX "partner_advertising_ledger_entries_partner_id_created_at_idx" ON "partner_advertising_ledger_entries"("partner_id", "created_at");
 
-ALTER TABLE "partner_advertising_ledger_entries" ADD CONSTRAINT "partner_advertising_ledger_entries_partner_id_fkey" FOREIGN KEY ("partner_id") REFERENCES "partners"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "partner_advertising_ledger_entries" ADD CONSTRAINT "partner_advertising_ledger_entries_partner_id_fkey" FOREIGN KEY ("partner_id") REFERENCES "Partner"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "partner_advertising_ledger_entries" ADD CONSTRAINT "partner_advertising_ledger_entries_partner_house_id_fkey" FOREIGN KEY ("partner_house_id") REFERENCES "partner_houses"("id") ON DELETE SET NULL ON UPDATE CASCADE;
