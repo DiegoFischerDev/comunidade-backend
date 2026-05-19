@@ -363,6 +363,16 @@ export class PartnerController {
     return this.partnerService.publishMyHouse(user.id, id);
   }
 
+  @Post('me/houses/:id/unpublish')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  async unpublishMyHouse(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+  ) {
+    return this.partnerService.unpublishMyHouse(user.id, id);
+  }
+
   @Delete('me/houses/:id')
   @Roles(Role.PARTNER)
   @HttpCode(200)

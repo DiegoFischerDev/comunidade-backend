@@ -1414,6 +1414,35 @@ export class PartnerService {
     return this.publishHouseToChannels(houseId, { chargePartner: true });
   }
 
+  /** Parceiro: oculta o anúncio no site (sem reembolso do saldo já gasto). */
+  async unpublishMyHouse(userId: string, houseId: string) {
+    const partner = await this.getRelocationPartnerOrThrow(userId);
+    const house = await this.prisma.partnerHouse.findFirst({
+      where: { id: houseId, partnerId: partner.id },
+      select: { id: true, publicationStatus: true },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    if (house.publicationStatus !== PartnerHousePublicationStatus.PUBLISHED) {
+      throw new BadRequestException('Este imóvel já está oculto.');
+    }
+    const updated = await this.prisma.partnerHouse.update({
+      where: { id: houseId },
+      data: { publicationStatus: PartnerHousePublicationStatus.HIDDEN },
+      select: {
+        id: true,
+        publicationStatus: true,
+        publishedUntil: true,
+      },
+    });
+    return {
+      ok: true as const,
+      publicationStatus: updated.publicationStatus,
+      publishedUntil: updated.publishedUntil?.toISOString() ?? null,
+    };
+  }
+
   private partnerHouseCreatePayloadFromStrictDto(
     dto: CreatePartnerHouseDto,
   ): {
