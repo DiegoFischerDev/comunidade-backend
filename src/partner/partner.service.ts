@@ -21,7 +21,7 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import {
   PartnerHouse,
-  PartnerHouseStatus,
+  PartnerHousePublicationStatus,
   PartnerHouseTypology,
   PartnerReactionType,
   PartnerSaleCommissionPaymentStatus,
@@ -51,6 +51,11 @@ import {
 } from '../common/public-media-url';
 import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-relocation-whatsapp-group.dto';
 import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
+import { PartnerAdvertisingService } from './partner-advertising.service';
+import {
+  isHousePubliclyVisible,
+  nextPublishedUntil,
+} from './house-publication.constants';
 
 const SALT_ROUNDS = 10;
 
@@ -59,18 +64,6 @@ function sleep(ms: number): Promise<void> {
 }
 
 const RELOCATION_CATEGORY_SLUG = 'relocation';
-
-/** Ordem na listagem pública (PG enum não segue esta ordem após ADD VALUE). */
-function relocationHouseStatusRank(status: PartnerHouseStatus): number {
-  switch (status) {
-    case 'AVAILABLE':
-      return 0;
-    case 'RESERVED':
-      return 1;
-    case 'UNAVAILABLE':
-      return 2;
-  }
-}
 
 @Injectable()
 export class PartnerService {
@@ -82,6 +75,7 @@ export class PartnerService {
     private readonly wa: WhatsAppService,
     private readonly houseImages: HouseImageStorageService,
     private readonly jwtService: JwtService,
+    private readonly advertising: PartnerAdvertisingService,
   ) {}
 
   private async deleteUploadFileIfLocal(url?: string | null) {
@@ -121,7 +115,14 @@ export class PartnerService {
   listPartners() {
     return this.prisma.partner.findMany({
       orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }] as any,
-      include: {
+      select: {
+        id: true,
+        name: true,
+        whatsapp: true,
+        logoUrl: true,
+        priority: true,
+        createdAt: true,
+        advertisingBalanceEurCents: true,
         user: {
           select: {
             id: true,
@@ -1280,6 +1281,9 @@ export class PartnerService {
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
+    if (!isHousePubliclyVisible(house)) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
 
     return house;
   }
@@ -1291,7 +1295,8 @@ export class PartnerService {
       select: {
         id: true,
         houseId: true,
-        status: true,
+        publicationStatus: true,
+        publishedUntil: true,
         title: true,
         businessType: true,
         city: true,
@@ -1299,12 +1304,78 @@ export class PartnerService {
         priceEur: true,
         furnished: true,
         partnerId: true,
-      } as any,
+      },
     });
     if (!row) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
+    if (!isHousePubliclyVisible(row)) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
     return row;
+  }
+
+  async getMyAdvertisingBalance(userId: string) {
+    return this.advertising.getBalanceByUserId(userId);
+  }
+
+  async startAdvertisingBalanceTopup(
+    userId: string,
+    userEmail: string | null | undefined,
+    dto: {
+      amountEurCents: number;
+      paymentMethod: 'card' | 'mbway' | 'pix';
+      successUrl?: string;
+      cancelUrl?: string;
+    },
+  ) {
+    const partner = await this.getRelocationPartnerOrThrow(userId);
+    const frontendBase = getFrontendBaseUrl();
+    const successUrl =
+      dto.successUrl ?? `${frontendBase}/dashboard/casas?topup=success`;
+    const cancelUrl = dto.cancelUrl ?? `${frontendBase}/dashboard/casas?topup=cancel`;
+    return this.stripeService.createPartnerAdvertisingTopupCheckout({
+      partnerUserId: userId,
+      partnerId: partner.id,
+      partnerEmail: userEmail,
+      amountEurCents: dto.amountEurCents,
+      paymentMethod: dto.paymentMethod,
+      successUrl,
+      cancelUrl,
+    });
+  }
+
+  async adminCreditPartnerAdvertisingBalance(
+    adminUserId: string,
+    partnerId: string,
+    amountEurCents: number,
+    note?: string,
+  ) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { id: partnerId },
+      select: { id: true },
+    });
+    if (!partner) throw new NotFoundException('Parceiro não encontrado.');
+    return this.advertising.credit(partnerId, amountEurCents, 'ADMIN_CREDIT', {
+      adminUserId,
+      note: note?.trim() || 'Crédito manual pelo admin',
+    });
+  }
+
+  async adminGetPartnerAdvertisingBalance(partnerId: string) {
+    return this.advertising.getBalance(partnerId);
+  }
+
+  async publishMyHouse(userId: string, houseId: string) {
+    const partner = await this.getRelocationPartnerOrThrow(userId);
+    const house = await this.prisma.partnerHouse.findFirst({
+      where: { id: houseId, partnerId: partner.id },
+      select: { id: true },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    return this.publishHouseToChannels(houseId, { chargePartner: true });
   }
 
   private partnerHouseCreatePayloadFromStrictDto(
@@ -1494,7 +1565,6 @@ export class PartnerService {
         caucoesCount: payload.caucoesCount,
         rendasEntradaCount: payload.rendasEntradaCount,
         furnished: payload.furnished,
-        status: 'AVAILABLE',
         imageUrls,
         coverImageUrl,
         videoUrl,
@@ -1510,9 +1580,10 @@ export class PartnerService {
     dto: CreatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
+    thumbnailFile: Express.Multer.File | null,
   ) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
-    return this.createHousePostForPartner(partner.id, dto, imageFiles, videoFile, null, {
+    return this.createHousePostForPartner(partner.id, dto, imageFiles, videoFile, thumbnailFile, {
       strict: true,
     });
   }
@@ -1592,6 +1663,7 @@ export class PartnerService {
     dto: UpdatePartnerHouseDto,
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
+    thumbnailFile: Express.Multer.File | null,
   ) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
     const house = await this.prisma.partnerHouse.findFirst({
@@ -1600,7 +1672,7 @@ export class PartnerService {
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
-    return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile, null);
+    return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile, thumbnailFile);
   }
 
   /** Admin: carregar qualquer anúncio para edição. */
@@ -1637,12 +1709,6 @@ export class PartnerService {
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
-    const statusOpt =
-      dto.status != null &&
-      (['AVAILABLE', 'RESERVED', 'UNAVAILABLE'] as const).includes(dto.status)
-        ? (dto.status as PartnerHouseStatus)
-        : undefined;
-
     let partnerIdOpt: string | undefined = undefined;
     if (dto.partnerId !== undefined) {
       const requestedPartnerId = (dto.partnerId ?? '').trim();
@@ -1671,7 +1737,6 @@ export class PartnerService {
     }
 
     return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile, thumbnailFile, {
-      status: statusOpt,
       partnerId: partnerIdOpt,
     });
   }
@@ -1683,7 +1748,7 @@ export class PartnerService {
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
     thumbnailFile: Express.Multer.File | null,
-    opts?: { status?: PartnerHouseStatus; partnerId?: string },
+    opts?: { partnerId?: string },
   ) {
     const images = (imageFiles ?? []).filter((f) => !!f);
     if (images.length > 6) {
@@ -1846,7 +1911,6 @@ export class PartnerService {
         ...(dto.relocationFeeEur != null && {
           relocationFeeEur: dto.relocationFeeEur.trim(),
         }),
-        ...(opts?.status != null && { status: opts.status }),
         caucoesCount,
         rendasEntradaCount,
         furnished,
@@ -1925,9 +1989,12 @@ export class PartnerService {
         : 10;
     const pageSize = Math.min(10, requestedPageSize);
 
+    const now = new Date();
     const rows = (await this.prisma.partnerHouse.findMany({
       where: {
         partner: { categoryId: cat.id },
+        publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
+        publishedUntil: { gt: now },
         ...(partnerId ? { partnerId } : {}),
         ...(city
           ? {
@@ -1958,7 +2025,8 @@ export class PartnerService {
         videoUrl: true,
         videoPosterUrl: true,
         partnerId: true,
-        status: true,
+        publicationStatus: true,
+        publishedUntil: true,
         featured: true,
         partner: {
           select: {
@@ -1984,9 +2052,6 @@ export class PartnerService {
           });
     filteredByPrice.sort((a, b) => {
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
-      const byStatus =
-        relocationHouseStatusRank(a.status) - relocationHouseStatusRank(b.status);
-      if (byStatus !== 0) return byStatus;
       return (
         new Date(b.availableFrom as any).getTime() -
         new Date(a.availableFrom as any).getTime()
@@ -2089,9 +2154,88 @@ export class PartnerService {
   }
 
   /**
-   * Envia o anúncio aos grupos ativos: imagens (ordem), vídeo, texto (formato existente).
+   * Admin: envia WhatsApp sem cobrança e prolonga a janela de publicação (+7 dias).
    */
   async adminSendHouseToRelocationWhatsappGroups(houseId: string) {
+    return this.publishHouseToChannels(houseId, { chargePartner: false });
+  }
+
+  private async publishHouseToChannels(
+    houseId: string,
+    options: { chargePartner: boolean },
+  ) {
+    const relocationCategory = await this.prisma.productCategory.findUnique({
+      where: { slug: RELOCATION_CATEGORY_SLUG },
+      select: { id: true },
+    });
+    if (!relocationCategory) {
+      throw new BadRequestException('Categoria relocation não encontrada.');
+    }
+
+    const house = await this.prisma.partnerHouse.findFirst({
+      where: {
+        id: houseId,
+        partner: { categoryId: relocationCategory.id },
+      },
+      select: {
+        id: true,
+        partnerId: true,
+        publicationStatus: true,
+        publishedUntil: true,
+        lastPublishedAt: true,
+      },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel relocation não encontrado.');
+    }
+
+    const prevPublication = {
+      publicationStatus: house.publicationStatus,
+      publishedUntil: house.publishedUntil,
+      lastPublishedAt: house.lastPublishedAt,
+    };
+
+    if (options.chargePartner) {
+      await this.advertising.debitForPublication(house.partnerId, houseId);
+    }
+
+    const publishedUntil = nextPublishedUntil(house.publishedUntil);
+    const now = new Date();
+
+    try {
+      await this.prisma.partnerHouse.update({
+        where: { id: houseId },
+        data: {
+          publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
+          publishedUntil,
+          lastPublishedAt: now,
+        },
+      });
+
+      const result = await this.sendHouseToRelocationWhatsappGroups(houseId);
+
+      if (options.chargePartner) {
+        const balance = await this.advertising.getBalance(house.partnerId);
+        return { ...result, publishedUntil, balanceEurCents: balance.balanceEurCents };
+      }
+
+      return { ...result, publishedUntil };
+    } catch (err) {
+      if (options.chargePartner) {
+        await this.advertising.refundPublicationDebit(house.partnerId, houseId);
+      }
+      await this.prisma.partnerHouse.update({
+        where: { id: houseId },
+        data: prevPublication,
+      });
+      throw err;
+    }
+  }
+
+  /**
+   * Envia o anúncio aos grupos ativos: imagens (ordem), vídeo, texto (formato existente).
+   */
+  private async sendHouseToRelocationWhatsappGroups(houseId: string) {
     const relocationCategory = await this.prisma.productCategory.findUnique({
       where: { slug: RELOCATION_CATEGORY_SLUG },
       select: { id: true },
@@ -2278,51 +2422,20 @@ export class PartnerService {
     });
   }
 
-  /** Anúncios indisponíveis com data de disponibilidade há pelo menos 2 meses — remove registo e médias. */
-  async purgeStaleUnavailableHouses(): Promise<{ deleted: number }> {
-    const threshold = new Date();
-    threshold.setMonth(threshold.getMonth() - 2);
-    const stale = await this.prisma.partnerHouse.findMany({
-      where: {
-        status: 'UNAVAILABLE',
-        availableFrom: { lte: threshold },
-      },
-      select: { id: true, imageUrls: true, videoUrl: true, videoPosterUrl: true } as any,
-    });
-    for (const h of stale) {
-      await this.removeHouseMediaFiles({
-        imageUrls: Array.isArray((h as any).imageUrls) ? (h as any).imageUrls : [],
-        videoUrl: typeof (h as any).videoUrl === 'string' ? (h as any).videoUrl : null,
-        videoPosterUrl:
-          typeof (h as any).videoPosterUrl === 'string' ? (h as any).videoPosterUrl : null,
-      });
-      await this.prisma.partnerHouse.delete({ where: { id: String((h as any).id) } });
-    }
-    return { deleted: stale.length };
-  }
-
   async listMyHouses(userId: string) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
     return this.prisma.partnerHouse.findMany({
       where: { partnerId: partner.id },
       orderBy: { createdAt: 'desc' },
-    });
-  }
-
-  async updateMyHouseStatus(
-    userId: string,
-    houseId: string,
-    status: PartnerHouseStatus,
-  ) {
-    const partner = await this.getRelocationPartnerOrThrow(userId);
-    const exists = await this.prisma.partnerHouse.findFirst({
-      where: { id: houseId, partnerId: partner.id },
-      select: { id: true },
-    });
-    if (!exists) throw new NotFoundException('Imóvel não encontrado.');
-    return this.prisma.partnerHouse.update({
-      where: { id: houseId },
-      data: { status },
+      include: {
+        whatsappSends: {
+          select: { sentAt: true },
+          orderBy: { sentAt: 'desc' },
+        },
+        _count: {
+          select: { redirectClicks: true },
+        },
+      } as any,
     });
   }
 

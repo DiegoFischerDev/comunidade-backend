@@ -18,7 +18,7 @@ import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PartnerService } from './partner.service';
 import { CreatePartnerDto } from './dto/create-partner.dto';
 import { Roles } from '../auth/roles.decorator';
-import { PartnerHouseStatus, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
@@ -42,6 +42,7 @@ import { SetPartnerReactionDto } from './dto/set-partner-reaction.dto';
 import { CreatePartnerCommentDto } from './dto/create-partner-comment.dto';
 import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-relocation-whatsapp-group.dto';
 import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
+import { StartAdvertisingTopupDto } from './dto/start-advertising-topup.dto';
 
 @Controller('partners')
 export class PartnerController {
@@ -72,6 +73,28 @@ export class PartnerController {
     @Body() dto: UpdatePartnerAdminDto,
   ) {
     return this.partnerService.updatePartnerAdmin(id, dto);
+  }
+
+  @Get('admin/:id/advertising-balance')
+  @Roles(Role.ADMIN)
+  async adminGetPartnerAdvertisingBalance(@Param('id') id: string) {
+    return this.partnerService.adminGetPartnerAdvertisingBalance(id);
+  }
+
+  @Post('admin/:id/advertising-balance/credit')
+  @Roles(Role.ADMIN)
+  @HttpCode(200)
+  async adminCreditPartnerAdvertisingBalance(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Body() body: { amountEurCents: number; note?: string },
+  ) {
+    return this.partnerService.adminCreditPartnerAdvertisingBalance(
+      user.id,
+      id,
+      body.amountEurCents,
+      body.note,
+    );
   }
 
   @Get('admin/categories')
@@ -230,10 +253,11 @@ export class PartnerController {
       [
         { name: 'images', maxCount: 6 },
         { name: 'video', maxCount: 1 },
+        { name: 'thumbnail', maxCount: 1 },
       ],
       {
         limits: {
-          files: 7,
+          files: 8,
           // Fotos até ~5MB cada no cliente; vídeo até ~48MB (WhatsApp pode recusar vídeos muito grandes)
           fileSize: 48 * 1024 * 1024,
         },
@@ -245,13 +269,18 @@ export class PartnerController {
     @CurrentUser() user: { id: string },
     @Body() dto: CreatePartnerHouseDto,
     @UploadedFiles()
-    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
+    files: {
+      images?: Express.Multer.File[];
+      video?: Express.Multer.File[];
+      thumbnail?: Express.Multer.File[];
+    },
   ) {
     return this.partnerService.createMyHousePost(
       user.id,
       dto,
       files?.images ?? [],
       files?.video?.[0] ?? null,
+      files?.thumbnail?.[0] ?? null,
     );
   }
 
@@ -271,10 +300,11 @@ export class PartnerController {
       [
         { name: 'images', maxCount: 6 },
         { name: 'video', maxCount: 1 },
+        { name: 'thumbnail', maxCount: 1 },
       ],
       {
         limits: {
-          files: 7,
+          files: 8,
           fileSize: 500 * 1024 * 1024,
         },
         storage: memoryStorage(),
@@ -286,7 +316,11 @@ export class PartnerController {
     @Param('id') id: string,
     @Body() dto: UpdatePartnerHouseDto,
     @UploadedFiles()
-    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
+    files: {
+      images?: Express.Multer.File[];
+      video?: Express.Multer.File[];
+      thumbnail?: Express.Multer.File[];
+    },
   ) {
     return this.partnerService.updateMyHouse(
       user.id,
@@ -294,18 +328,33 @@ export class PartnerController {
       dto,
       files?.images ?? [],
       files?.video?.[0] ?? null,
+      files?.thumbnail?.[0] ?? null,
     );
   }
 
-  @Patch('me/houses/:id/status')
+  @Get('me/advertising-balance')
+  @Roles(Role.PARTNER)
+  async getMyAdvertisingBalance(@CurrentUser() user: { id: string }) {
+    return this.partnerService.getMyAdvertisingBalance(user.id);
+  }
+
+  @Post('me/advertising-topup-checkout')
+  @Roles(Role.PARTNER)
+  async startAdvertisingTopupCheckout(
+    @CurrentUser() user: { id: string; email?: string | null },
+    @Body() dto: StartAdvertisingTopupDto,
+  ) {
+    return this.partnerService.startAdvertisingBalanceTopup(user.id, user.email, dto);
+  }
+
+  @Post('me/houses/:id/publish')
   @Roles(Role.PARTNER)
   @HttpCode(200)
-  async updateMyHouseStatus(
+  async publishMyHouse(
     @CurrentUser() user: { id: string },
     @Param('id') id: string,
-    @Body() body: { status: PartnerHouseStatus },
   ) {
-    return this.partnerService.updateMyHouseStatus(user.id, id, body.status);
+    return this.partnerService.publishMyHouse(user.id, id);
   }
 
   @Delete('me/houses/:id')

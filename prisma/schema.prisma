@@ -67,10 +67,15 @@ enum GrupoTesteMessageStatus {
   FAILED
 }
 
-enum PartnerHouseStatus {
-  AVAILABLE
-  RESERVED
-  UNAVAILABLE
+enum PartnerHousePublicationStatus {
+  PUBLISHED
+  HIDDEN
+}
+
+enum PartnerAdvertisingLedgerType {
+  STRIPE_TOP_UP
+  ADMIN_CREDIT
+  PUBLICATION_DEBIT
 }
 
 enum PartnerHouseTypology {
@@ -373,14 +378,17 @@ model Partner {
   shareCount           Int              @default(0) @map("share_count")
   /// Prioridade do parceiro dentro da categoria (admin). Maior = mais prioritário.
   priority             Int              @default(0) @map("priority")
+  /// Saldo para publicação de imóveis (cêntimos EUR); controlado no backend.
+  advertisingBalanceEurCents Int        @default(0) @map("advertising_balance_eur_cents")
   createdAt            DateTime         @default(now()) @map("created_at")
   updatedAt            DateTime         @updatedAt @map("updated_at")
 
-  services  Service[]
-  sales     PartnerSale[]
-  houses    PartnerHouse[]
-  reactions PartnerReaction[]
-  comments  PartnerComment[]
+  services                    Service[]
+  sales                       PartnerSale[]
+  houses                      PartnerHouse[]
+  reactions                   PartnerReaction[]
+  comments                    PartnerComment[]
+  advertisingLedgerEntries    PartnerAdvertisingLedgerEntry[]
 }
 
 model PartnerReaction {
@@ -449,19 +457,41 @@ model PartnerHouse {
   /// Thumbnail (poster) gerada do vídeo (para preview consistente em iOS/mobile).
   videoPosterUrl String?          @map("video_poster_url")
   /// Destaque manual pelo admin. Imóveis em destaque aparecem primeiro em /relocation/imoveis.
-  featured      Boolean           @default(false) @map("featured")
-  status        PartnerHouseStatus @default(AVAILABLE)
-  whatsappSentAt DateTime?        @map("whatsapp_sent_at")
-  whatsappError  String?          @map("whatsapp_error")
-  createdAt     DateTime          @default(now()) @map("created_at")
-  updatedAt     DateTime          @updatedAt @map("updated_at")
+  featured           Boolean                        @default(false) @map("featured")
+  publicationStatus  PartnerHousePublicationStatus  @default(HIDDEN) @map("publication_status")
+  publishedUntil     DateTime?                      @map("published_until")
+  lastPublishedAt    DateTime?                      @map("last_published_at")
+  whatsappSentAt     DateTime?                      @map("whatsapp_sent_at")
+  whatsappError      String?                        @map("whatsapp_error")
+  createdAt          DateTime                       @default(now()) @map("created_at")
+  updatedAt          DateTime                       @updatedAt @map("updated_at")
 
-  whatsappSends PartnerHouseWhatsappSend[]
-  redirectClicks RedirectClickEvent[]
+  whatsappSends              PartnerHouseWhatsappSend[]
+  redirectClicks             RedirectClickEvent[]
+  advertisingLedgerEntries   PartnerAdvertisingLedgerEntry[]
 
-  @@index([partnerId, status])
+  @@index([partnerId, publicationStatus])
+  @@index([publicationStatus, publishedUntil])
   @@index([availableFrom])
   @@map("partner_houses")
+}
+
+model PartnerAdvertisingLedgerEntry {
+  id                     String                       @id @default(cuid())
+  partnerId              String                       @map("partner_id")
+  partner                Partner                      @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  type                   PartnerAdvertisingLedgerType
+  amountEurCents         Int                          @map("amount_eur_cents")
+  balanceAfterEurCents   Int                          @map("balance_after_eur_cents")
+  partnerHouseId         String?                      @map("partner_house_id")
+  partnerHouse           PartnerHouse?                @relation(fields: [partnerHouseId], references: [id], onDelete: SetNull)
+  stripeCheckoutSessionId String?                     @unique @map("stripe_checkout_session_id")
+  adminUserId            String?                      @map("admin_user_id")
+  note                   String?
+  createdAt              DateTime                     @default(now()) @map("created_at")
+
+  @@index([partnerId, createdAt])
+  @@map("partner_advertising_ledger_entries")
 }
 
 /** Link curto criado pelo admin: WhatsApp com mensagem fixa (tracking em RedirectClickEvent). */
