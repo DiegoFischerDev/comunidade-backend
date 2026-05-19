@@ -1,16 +1,21 @@
-import { IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreatePartnerShareLinkDto {
   @IsString()
   @MinLength(1, { message: 'Indica um título.' })
   title: string;
 
-  /** Número com ou sem +351 / espaços — normalizado no servidor. */
+  /** URL externa (http/https). Se definida, whatsapp e frase não são necessários. */
+  @IsOptional()
   @IsString()
-  @MinLength(8, { message: 'Indica um número de WhatsApp válido.' })
-  whatsapp: string;
+  destinationUrl?: string;
 
+  /** Número com ou sem +351 / espaços — normalizado no servidor. */
+  @IsOptional()
   @IsString()
-  @MinLength(1, { message: 'Indica a frase para o WhatsApp.' })
-  whatsappPhrase: string;
+  whatsapp?: string;
+
+  @IsOptional()
+  @IsString()
+  whatsappPhrase?: string;
 }

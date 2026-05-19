@@ -16,4 +16,8 @@ export class UpdatePartnerShareLinkDto {
   @IsString()
   @MinLength(1, { message: 'Indica a frase para o WhatsApp.' })
   whatsappPhrase?: string;
+
+  @IsOptional()
+  @IsString()
+  destinationUrl?: string;
 }

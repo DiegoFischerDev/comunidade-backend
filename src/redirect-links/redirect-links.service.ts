@@ -28,6 +28,62 @@ export function buildWhatsAppUrl(digits: string, text: string): string {
   return `https://wa.me/${d}?text=${q}`;
 }
 
+function parseDestinationUrl(raw: string): string {
+  const t = raw.trim();
+  if (!t) {
+    throw new BadRequestException('Indica a URL de destino.');
+  }
+  let url: URL;
+  try {
+    url = new URL(t);
+  } catch {
+    throw new BadRequestException('URL de destino inválida.');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new BadRequestException(
+      'A URL deve começar por http:// ou https://',
+    );
+  }
+  return url.toString();
+}
+
+function shareLinkExitUrl(link: {
+  destinationUrl: string | null;
+  whatsappDigits: string;
+  whatsappPhrase: string;
+}): string {
+  const dest = link.destinationUrl?.trim();
+  if (dest) return dest;
+  return buildWhatsAppUrl(link.whatsappDigits, link.whatsappPhrase);
+}
+
+function mapShareLinkResponse(
+  link: {
+    id: string;
+    slug: string;
+    title: string;
+    whatsappDigits: string;
+    whatsappPhrase: string;
+    destinationUrl: string | null;
+    ogImageUrl: string | null;
+    createdAt: Date;
+  },
+  frontend: string,
+) {
+  return {
+    id: link.id,
+    slug: link.slug,
+    title: link.title,
+    whatsappDigits: link.whatsappDigits,
+    whatsappPhrase: link.whatsappPhrase,
+    destinationUrl: link.destinationUrl,
+    ogImageUrl: link.ogImageUrl,
+    createdAt: link.createdAt.toISOString(),
+    entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(link.slug)}`,
+    exitUrlPreview: shareLinkExitUrl(link),
+  };
+}
+
 function slugifyTitle(title: string): string {
   const t = title
     .normalize('NFD')
@@ -140,12 +196,27 @@ export class RedirectLinksService {
   }
 
   async createPartnerShareLink(dto: CreatePartnerShareLinkDto) {
-    const digits = normalizeWhatsappDigits(dto.whatsapp);
-    if (digits.length < 9) {
-      throw new BadRequestException(
-        'Número de WhatsApp inválido (precisa de pelo menos 9 dígitos).',
-      );
+    const destRaw = dto.destinationUrl?.trim();
+    const isUrlLink = Boolean(destRaw);
+    let destinationUrl: string | null = null;
+    let digits = '';
+    let phrase = '';
+
+    if (isUrlLink) {
+      destinationUrl = parseDestinationUrl(destRaw!);
+    } else {
+      digits = normalizeWhatsappDigits(dto.whatsapp ?? '');
+      if (digits.length < 9) {
+        throw new BadRequestException(
+          'Número de WhatsApp inválido (precisa de pelo menos 9 dígitos).',
+        );
+      }
+      phrase = (dto.whatsappPhrase ?? '').trim();
+      if (!phrase) {
+        throw new BadRequestException('Indica a frase para o WhatsApp.');
+      }
     }
+
     let base = slugifyTitle(dto.title);
     if (!base) base = 'link';
     let slug = base;
@@ -170,32 +241,21 @@ export class RedirectLinksService {
         slug,
         title: dto.title.trim(),
         whatsappDigits: digits,
-        whatsappPhrase: dto.whatsappPhrase.trim(),
+        whatsappPhrase: phrase,
+        destinationUrl,
       },
     });
 
     const frontend = getFrontendBaseUrl();
-    return {
-      id: created.id,
-      slug: created.slug,
-      title: created.title,
-      whatsappDigits: created.whatsappDigits,
-      whatsappPhrase: created.whatsappPhrase,
-      ogImageUrl: created.ogImageUrl,
-      createdAt: created.createdAt.toISOString(),
-      entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(created.slug)}`,
-      exitUrlPreview: buildWhatsAppUrl(
-        created.whatsappDigits,
-        created.whatsappPhrase,
-      ),
-    };
+    return mapShareLinkResponse(created, frontend);
   }
 
   async adminUpdatePartnerShareLink(id: string, dto: UpdatePartnerShareLinkDto) {
     const hasAny =
       dto.title !== undefined ||
       dto.whatsapp !== undefined ||
-      dto.whatsappPhrase !== undefined;
+      dto.whatsappPhrase !== undefined ||
+      dto.destinationUrl !== undefined;
     if (!hasAny) {
       throw new BadRequestException('Envia pelo menos um campo para atualizar.');
     }
@@ -215,17 +275,35 @@ export class RedirectLinksService {
       }
       data.title = t;
     }
-    if (dto.whatsapp !== undefined) {
-      const digits = normalizeWhatsappDigits(dto.whatsapp);
+
+    if (dto.destinationUrl !== undefined) {
+      const destRaw = dto.destinationUrl.trim();
+      if (destRaw) {
+        data.destinationUrl = parseDestinationUrl(destRaw);
+        data.whatsappDigits = '';
+        data.whatsappPhrase = '';
+      } else {
+        data.destinationUrl = null;
+      }
+    }
+
+    const switchingToWhatsapp =
+      dto.destinationUrl !== undefined && !dto.destinationUrl.trim();
+
+    if (dto.whatsapp !== undefined || switchingToWhatsapp) {
+      const digits = normalizeWhatsappDigits(
+        dto.whatsapp ?? existing.whatsappDigits,
+      );
       if (digits.length < 9) {
         throw new BadRequestException(
           'Número de WhatsApp inválido (precisa de pelo menos 9 dígitos).',
         );
       }
       data.whatsappDigits = digits;
+      data.destinationUrl = null;
     }
-    if (dto.whatsappPhrase !== undefined) {
-      const p = dto.whatsappPhrase.trim();
+    if (dto.whatsappPhrase !== undefined || switchingToWhatsapp) {
+      const p = (dto.whatsappPhrase ?? existing.whatsappPhrase).trim();
       if (!p) {
         throw new BadRequestException('Indica a frase para o WhatsApp.');
       }
@@ -238,20 +316,7 @@ export class RedirectLinksService {
     });
 
     const frontend = getFrontendBaseUrl();
-    return {
-      id: updated.id,
-      slug: updated.slug,
-      title: updated.title,
-      whatsappDigits: updated.whatsappDigits,
-      whatsappPhrase: updated.whatsappPhrase,
-      ogImageUrl: updated.ogImageUrl,
-      createdAt: updated.createdAt.toISOString(),
-      entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(updated.slug)}`,
-      exitUrlPreview: buildWhatsAppUrl(
-        updated.whatsappDigits,
-        updated.whatsappPhrase,
-      ),
-    };
+    return mapShareLinkResponse(updated, frontend);
   }
 
   /** Remove o link; eventos em `redirect_click_events` apagam-se por FK CASCADE. */
@@ -508,13 +573,14 @@ export class RedirectLinksService {
         title: c.title,
         whatsappDigits: c.whatsappDigits,
         whatsappPhrase: c.whatsappPhrase,
+        destinationUrl: c.destinationUrl,
         ogImageUrl: c.ogImageUrl,
         clickCount: range
           ? (customCountMap.get(c.id) ?? 0)
           : c._count.clicks,
         createdAt: c.createdAt.toISOString(),
         entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(c.slug)}`,
-        exitUrlPreview: buildWhatsAppUrl(c.whatsappDigits, c.whatsappPhrase),
+        exitUrlPreview: shareLinkExitUrl(c),
       }))
       .sort((a, b) => b.clickCount - a.clickCount);
 
@@ -582,7 +648,7 @@ export class RedirectLinksService {
     });
     if (!link) return null;
     return {
-      whatsappUrl: buildWhatsAppUrl(link.whatsappDigits, link.whatsappPhrase),
+      whatsappUrl: shareLinkExitUrl(link),
     };
   }
 
@@ -595,14 +661,21 @@ export class RedirectLinksService {
     const slug = decodeURIComponent(slugRaw).trim();
     const link = await this.prisma.partnerShareLink.findUnique({
       where: { slug },
-      select: { title: true, whatsappPhrase: true, ogImageUrl: true },
+      select: {
+        title: true,
+        whatsappPhrase: true,
+        destinationUrl: true,
+        ogImageUrl: true,
+      },
     });
     if (!link) return null;
     const title = link.title.trim() || 'WhatsApp';
+    const dest = link.destinationUrl?.trim();
     const phrase = link.whatsappPhrase.trim();
-    const description =
-      phrase ||
-      'Abre o WhatsApp com a mensagem preparada para contactar o parceiro.';
+    const description = dest
+      ? 'Segue o link para continuar.'
+      : phrase ||
+        'Abre o WhatsApp com a mensagem preparada para contactar o parceiro.';
     const maxDesc = 2000;
     const descriptionClamped =
       description.length > maxDesc
@@ -651,7 +724,7 @@ export class RedirectLinksService {
       visitorCountryCode: visitorCountryCode ?? null,
       partnerShareLinkId: link.id,
     });
-    return buildWhatsAppUrl(link.whatsappDigits, link.whatsappPhrase);
+    return shareLinkExitUrl(link);
   }
 
   async resolveHouseRedirect(

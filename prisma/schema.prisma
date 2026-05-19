@@ -502,6 +502,8 @@ model PartnerShareLink {
   title          String
   whatsappDigits String   @map("whatsapp_digits")
   whatsappPhrase String   @map("whatsapp_phrase") @db.Text
+  /** Quando definido, o clique redireciona para esta URL em vez de wa.me. */
+  destinationUrl String?  @map("destination_url") @db.VarChar(2048)
   /** URL pública da imagem OG (partilha WhatsApp); R2 ou `/uploads/...`. */
   ogImageUrl     String?  @map("og_image_url") @db.VarChar(2048)
   createdAt      DateTime @default(now()) @map("created_at")
