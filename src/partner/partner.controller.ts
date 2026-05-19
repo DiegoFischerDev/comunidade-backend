@@ -12,6 +12,7 @@ import {
   Query,
   UploadedFile,
   UploadedFiles,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
@@ -27,6 +28,7 @@ import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Public } from '../auth/public.decorator';
+import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { UpdateServiceCommissionDto } from './dto/update-service-commission.dto';
 import {
   CreatePartnerSaleDto,
@@ -182,9 +184,13 @@ export class PartnerController {
 
   /** Página pública do anúncio (detalhes + parceiro relocation). */
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @Get('houses/:houseId/public')
-  async getHousePublic(@Param('houseId') houseId: string) {
-    return this.partnerService.getPublicHousePage(houseId);
+  async getHousePublic(
+    @Param('houseId') houseId: string,
+    @CurrentUser() viewer?: { id: string; role: Role } | null,
+  ) {
+    return this.partnerService.getPublicHousePage(houseId, viewer ?? undefined);
   }
 
   /** Dados mínimos do anúncio para contacto (público: fluxo WhatsApp admin sem login). */

@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { AuthModule } from '../auth/auth.module';
 import { PartnerService } from './partner.service';
 import { PartnerController } from './partner.controller';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -10,6 +11,7 @@ import { PartnerAdvertisingService } from './partner-advertising.service';
 import { PartnerHousePublicationExpiryTask } from './partner-house-publication-expiry.task';
 @Module({
   imports: [
+    AuthModule,
     PrismaModule,
     forwardRef(() => StripeModule),
     WhatsAppModule,

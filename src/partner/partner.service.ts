@@ -1242,47 +1242,85 @@ export class PartnerService {
     return type === 'SALE' ? 'Venda' : 'Arrendamento';
   }
 
-  /**
-   * Página pública do anúncio: imóvel relocation + dados mínimos do parceiro (nome, logo, categoria).
-   */
-  async getPublicHousePage(houseId: string) {
+  private relocationHousePublicInclude = {
+    partner: {
+      select: {
+        id: true,
+        name: true,
+        whatsapp: true,
+        logoUrl: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+    },
+  } as const;
+
+  /** Resolve imóvel relocation por UUID (`id`) ou identificador numérico (`houseId`). */
+  private async findRelocationHouseByPublicKey(houseKey: string) {
     const cat = await this.prisma.productCategory.findUnique({
       where: { slug: RELOCATION_CATEGORY_SLUG },
       select: { id: true },
     });
-    if (!cat) {
-      throw new NotFoundException('Imóvel não encontrado.');
-    }
+    if (!cat) return null;
 
-    const house = await this.prisma.partnerHouse.findFirst({
-      where: {
-        id: houseId,
-        partner: { categoryId: cat.id },
-      },
-      include: {
-        partner: {
-          select: {
-            id: true,
-            name: true,
-            whatsapp: true,
-            logoUrl: true,
-            category: {
-              select: {
-                id: true,
-                name: true,
-                slug: true,
-              },
-            },
-          },
-        },
-      },
+    const baseWhere = { partner: { categoryId: cat.id } } as const;
+    const include = this.relocationHousePublicInclude;
+
+    const byId = await this.prisma.partnerHouse.findFirst({
+      where: { id: houseKey, ...baseWhere },
+      include,
     });
+    if (byId) return byId;
 
+    if (/^\d+$/.test(houseKey)) {
+      const n = parseInt(houseKey, 10);
+      if (!Number.isNaN(n)) {
+        return this.prisma.partnerHouse.findFirst({
+          where: { houseId: n, ...baseWhere },
+          include,
+        });
+      }
+    }
+    return null;
+  }
+
+  private async canViewNonPublicHouse(
+    viewer: { id: string; role: Role },
+    housePartnerId: string,
+  ): Promise<boolean> {
+    if (viewer.role === Role.ADMIN) return true;
+    if (viewer.role !== Role.PARTNER) return false;
+    const owned = await this.prisma.partner.findFirst({
+      where: { userId: viewer.id, id: housePartnerId },
+      select: { id: true },
+    });
+    return !!owned;
+  }
+
+  /**
+   * Página pública do anúncio: imóvel relocation + dados mínimos do parceiro (nome, logo, categoria).
+   * Admin ou parceiro dono do imóvel podem ver anúncios ocultos ou expirados.
+   */
+  async getPublicHousePage(
+    houseId: string,
+    viewer?: { id: string; role: Role } | null,
+  ) {
+    const house = await this.findRelocationHouseByPublicKey(houseId);
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
     if (!isHousePubliclyVisible(house)) {
-      throw new NotFoundException('Imóvel não encontrado.');
+      const allowed =
+        viewer &&
+        (await this.canViewNonPublicHouse(viewer, house.partnerId));
+      if (!allowed) {
+        throw new NotFoundException('Imóvel não encontrado.');
+      }
     }
 
     return house;
