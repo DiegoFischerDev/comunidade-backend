@@ -1324,7 +1324,6 @@ export class PartnerService {
     userEmail: string | null | undefined,
     dto: {
       amountEurCents: number;
-      paymentMethod: 'card' | 'mbway' | 'pix';
       successUrl?: string;
       cancelUrl?: string;
     },
@@ -1339,7 +1338,6 @@ export class PartnerService {
       partnerId: partner.id,
       partnerEmail: userEmail,
       amountEurCents: dto.amountEurCents,
-      paymentMethod: dto.paymentMethod,
       successUrl,
       cancelUrl,
     });

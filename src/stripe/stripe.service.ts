@@ -202,7 +202,6 @@ export class StripeService {
     partnerId: string;
     partnerEmail: string | null | undefined;
     amountEurCents: number;
-    paymentMethod: 'card' | 'mbway' | 'pix';
     successUrl: string;
     cancelUrl: string;
   }): Promise<{ url: string; sessionId: string }> {
@@ -216,55 +215,7 @@ export class StripeService {
       throw new BadRequestException('Parceiro não encontrado.');
     }
 
-    if (input.paymentMethod === 'pix') {
-      return this.createPartnerAdvertisingTopupPixSession(input);
-    }
-    if (input.paymentMethod === 'mbway') {
-      return this.createPartnerAdvertisingTopupMbWaySession(input);
-    }
-    return this.createPartnerAdvertisingTopupCardSession(input);
-  }
-
-  private async createPartnerAdvertisingTopupCardSession(input: {
-    partnerUserId: string;
-    partnerId: string;
-    partnerEmail: string | null | undefined;
-    amountEurCents: number;
-    successUrl: string;
-    cancelUrl: string;
-  }): Promise<{ url: string; sessionId: string }> {
-    const stripe = this.getClient();
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      customer_email: this.stripeCustomerEmail(input.partnerUserId, input.partnerEmail),
-      line_items: [
-        {
-          price_data: {
-            currency: 'eur',
-            unit_amount: input.amountEurCents,
-            product_data: {
-              name: 'Saldo de publicidade',
-              description: 'Recarga para publicar imóveis na comunidade',
-            },
-          },
-          quantity: 1,
-        },
-      ],
-      payment_method_types: ['card'],
-      success_url: input.successUrl,
-      cancel_url: input.cancelUrl,
-      client_reference_id: input.partnerUserId,
-      metadata: {
-        userId: input.partnerUserId,
-        partnerId: input.partnerId,
-        checkoutType: 'partner_advertising_topup',
-        amountEurCents: String(input.amountEurCents),
-      },
-    });
-    if (!session.url || !session.id) {
-      throw new BadRequestException('Não foi possível criar a sessão de pagamento.');
-    }
-    return { url: session.url, sessionId: session.id };
+    return this.createPartnerAdvertisingTopupMbWaySession(input);
   }
 
   private async createPartnerAdvertisingTopupMbWaySession(input: {
@@ -305,52 +256,6 @@ export class StripeService {
     });
     if (!session.url || !session.id) {
       throw new BadRequestException('Não foi possível criar a sessão MB WAY.');
-    }
-    return { url: session.url, sessionId: session.id };
-  }
-
-  private async createPartnerAdvertisingTopupPixSession(input: {
-    partnerUserId: string;
-    partnerId: string;
-    partnerEmail: string | null | undefined;
-    amountEurCents: number;
-    successUrl: string;
-    cancelUrl: string;
-  }): Promise<{ url: string; sessionId: string }> {
-    const stripe = this.getClient();
-    const pixCentavos = this.eurCentsToPixCentavos(input.amountEurCents);
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      customer_email: this.stripeCustomerEmail(input.partnerUserId, input.partnerEmail),
-      line_items: [
-        {
-          price_data: {
-            currency: 'brl',
-            unit_amount: pixCentavos,
-            product_data: {
-              name: 'Saldo de publicidade (Pix)',
-              description: 'Recarga para publicar imóveis na comunidade',
-            },
-          },
-          quantity: 1,
-        },
-      ],
-      payment_method_types: ['pix'],
-      success_url: input.successUrl,
-      cancel_url: input.cancelUrl,
-      client_reference_id: input.partnerUserId,
-      metadata: {
-        userId: input.partnerUserId,
-        partnerId: input.partnerId,
-        checkoutType: 'partner_advertising_topup',
-        amountEurCents: String(input.amountEurCents),
-      },
-      payment_method_options: {
-        pix: { expires_after_seconds: 30 * 60 },
-      },
-    });
-    if (!session.url || !session.id) {
-      throw new BadRequestException('Não foi possível criar a sessão Pix.');
     }
     return { url: session.url, sessionId: session.id };
   }
