@@ -23,15 +23,18 @@ function slugifyTitle(title: string): string {
   return t;
 }
 
+const PARTNER_CONTACT_PHRASE_PREFIX =
+  'Olá, vim pelo site da comunidade da Rafa e ';
+
 function partnerAtendimentoPhrase(partnerName: string): string {
-  return `Olá, gostaria de atendimento com ${partnerName}`;
+  return `${PARTNER_CONTACT_PHRASE_PREFIX}gostaria de atendimento com ${partnerName}.`;
 }
 
 function partnerServiceInterestPhrase(
   partnerName: string,
   serviceTitle: string,
 ): string {
-  return `Olá, gostaria de mais informações sobre o serviço "${serviceTitle}". Atendimento com ${partnerName}.`;
+  return `${PARTNER_CONTACT_PHRASE_PREFIX}gostaria de mais informações sobre o serviço "${serviceTitle}" com ${partnerName}.`;
 }
 
 export function partnerShareLinkRedirectPath(slug: string): string {

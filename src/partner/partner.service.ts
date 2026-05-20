@@ -1464,9 +1464,11 @@ export class PartnerService {
     partner: {
       select: {
         id: true,
+        publicSlug: true,
         name: true,
         whatsapp: true,
         logoUrl: true,
+        shortDescription: true,
         category: {
           select: {
             id: true,

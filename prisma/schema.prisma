@@ -535,6 +535,8 @@ model PartnerShareLink {
 model RecommendedService {
   id                 String           @id @default(cuid())
   title              String
+  /** Imagem do card na página /relocation/servicos (R2 ou `/uploads/...`). */
+  cardImageUrl       String?          @map("card_image_url") @db.VarChar(2048)
   partnerShareLinkId String           @map("partner_share_link_id")
   partnerShareLink   PartnerShareLink @relation(fields: [partnerShareLinkId], references: [id], onDelete: Cascade)
   sortOrder          Int              @default(0) @map("sort_order")

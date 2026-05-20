@@ -559,7 +559,12 @@ export class RedirectLinksService {
       }
     }
 
+    /** Exclui links gerados em Parceiros (contacto hero / serviços) — só links criados pelo admin aqui. */
     const customRows = await this.prisma.partnerShareLink.findMany({
+      where: {
+        heroForPartner: null,
+        serviceContact: null,
+      },
       orderBy: { createdAt: 'desc' },
       include: {
         _count: { select: { clicks: true } },

@@ -6,7 +6,11 @@ import {
   Param,
   Patch,
   Post,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { Role } from '@prisma/client';
 import { Public } from '../auth/public.decorator';
 import { Roles } from '../auth/roles.decorator';
@@ -57,5 +61,26 @@ export class RecommendedServicesController {
   @Roles(Role.ADMIN)
   adminDelete(@Param('id') id: string) {
     return this.recommendedServicesService.adminDelete(id);
+  }
+
+  @Post('admin/:id/card-image')
+  @Roles(Role.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  adminUploadCardImage(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    return this.recommendedServicesService.adminUploadCardImage(id, file);
+  }
+
+  @Delete('admin/:id/card-image')
+  @Roles(Role.ADMIN)
+  adminDeleteCardImage(@Param('id') id: string) {
+    return this.recommendedServicesService.adminDeleteCardImage(id);
   }
 }

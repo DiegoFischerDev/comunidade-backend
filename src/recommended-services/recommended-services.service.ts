@@ -1,15 +1,20 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import { CreateRecommendedServiceDto } from './dto/create-recommended-service.dto';
 import { UpdateRecommendedServiceDto } from './dto/update-recommended-service.dto';
 
 @Injectable()
 export class RecommendedServicesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly houseImageStorage: HouseImageStorageService,
+  ) {}
 
   async listPublic() {
     const rows = await this.prisma.recommendedService.findMany({
@@ -25,6 +30,7 @@ export class RecommendedServicesService {
     return rows.map((r) => ({
       id: r.id,
       title: r.title,
+      cardImageUrl: r.cardImageUrl,
       slug: r.partnerShareLink.slug,
       linkTitle: r.partnerShareLink.title,
       whatsappPhrase: r.partnerShareLink.whatsappPhrase,
@@ -50,6 +56,7 @@ export class RecommendedServicesService {
     return rows.map((r) => ({
       id: r.id,
       title: r.title,
+      cardImageUrl: r.cardImageUrl,
       sortOrder: r.sortOrder,
       active: r.active,
       createdAt: r.createdAt.toISOString(),
@@ -60,6 +67,10 @@ export class RecommendedServicesService {
 
   async adminAvailableLinks() {
     const links = await this.prisma.partnerShareLink.findMany({
+      where: {
+        heroForPartner: null,
+        serviceContact: null,
+      },
       orderBy: { title: 'asc' },
       select: {
         id: true,
@@ -172,7 +183,61 @@ export class RecommendedServicesService {
     if (!row) {
       throw new NotFoundException('Serviço indicado não encontrado.');
     }
+    if (row.cardImageUrl) {
+      await this.houseImageStorage.deleteStoredUrl(row.cardImageUrl);
+    }
     await this.prisma.recommendedService.delete({ where: { id } });
     return { ok: true };
+  }
+
+  async adminUploadCardImage(
+    id: string,
+    file: Express.Multer.File | undefined,
+  ): Promise<{ cardImageUrl: string }> {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Ficheiro de imagem em falta.');
+    }
+    const existing = await this.prisma.recommendedService.findUnique({
+      where: { id },
+      select: { cardImageUrl: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Serviço indicado não encontrado.');
+    }
+    let publicUrl: string;
+    try {
+      ({ publicUrl } =
+        await this.houseImageStorage.processRecommendedServiceCardImage(file));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Erro ao processar imagem.';
+      throw new BadRequestException(msg);
+    }
+    if (existing.cardImageUrl) {
+      await this.houseImageStorage.deleteStoredUrl(existing.cardImageUrl);
+    }
+    const updated = await this.prisma.recommendedService.update({
+      where: { id },
+      data: { cardImageUrl: publicUrl },
+      select: { cardImageUrl: true },
+    });
+    return { cardImageUrl: updated.cardImageUrl! };
+  }
+
+  async adminDeleteCardImage(id: string): Promise<{ ok: true; cardImageUrl: null }> {
+    const row = await this.prisma.recommendedService.findUnique({
+      where: { id },
+      select: { cardImageUrl: true },
+    });
+    if (!row) {
+      throw new NotFoundException('Serviço indicado não encontrado.');
+    }
+    if (row.cardImageUrl) {
+      await this.houseImageStorage.deleteStoredUrl(row.cardImageUrl);
+    }
+    await this.prisma.recommendedService.update({
+      where: { id },
+      data: { cardImageUrl: null },
+    });
+    return { ok: true, cardImageUrl: null };
   }
 }

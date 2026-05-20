@@ -316,6 +316,54 @@ export class HouseImageStorageService {
   /**
    * Imagem OG para partilha do link (1200×630, JPEG). Grava em R2 ou `uploads/share-links/og/`.
    */
+  /**
+   * Imagem do card em /relocation/servicos (4:3, JPEG). Grava em R2 ou `uploads/recommended-services/cards/`.
+   */
+  async processRecommendedServiceCardImage(file: Express.Multer.File): Promise<{
+    publicUrl: string;
+  }> {
+    const buf = await this.readBuffer(file);
+    if (!buf?.length) {
+      throw new Error('Imagem inválida (sem conteúdo).');
+    }
+    let jpeg: Buffer;
+    try {
+      jpeg = await sharp(buf)
+        .rotate()
+        .resize(960, 720, { fit: 'cover', position: 'centre' })
+        .jpeg({ quality: 88, mozjpeg: true })
+        .toBuffer();
+    } catch (e) {
+      this.logger.warn(`sharp recommended service card: ${e}`);
+      throw new Error('Não foi possível processar esta imagem.');
+    }
+    const publicUrl = await this.uploadRecommendedCardJpeg(jpeg);
+    return { publicUrl };
+  }
+
+  private async uploadRecommendedCardJpeg(jpeg: Buffer): Promise<string> {
+    const key = `recommended-services/cards/${Date.now()}-${randomBytes(8).toString('hex')}.jpg`;
+    const r2 = this.getR2Context();
+    if (r2) {
+      await r2.client.send(
+        new PutObjectCommand({
+          Bucket: r2.bucket,
+          Key: key,
+          Body: jpeg,
+          ContentType: 'image/jpeg',
+          CacheControl: 'public, max-age=31536000, immutable',
+        }),
+      );
+      return `${r2.publicBase}/${key}`;
+    }
+
+    const dir = join(process.cwd(), 'uploads', 'recommended-services', 'cards');
+    await mkdir(dir, { recursive: true });
+    const name = `${Date.now()}-${randomBytes(8).toString('hex')}.jpg`;
+    await writeFile(join(dir, name), jpeg);
+    return `/uploads/recommended-services/cards/${name}`;
+  }
+
   async processShareLinkOgImage(file: Express.Multer.File): Promise<{
     publicUrl: string;
   }> {
