@@ -643,9 +643,10 @@ export class PartnerController {
   async getPartnerEngagement(
     @Param('id') id: string,
     @Headers('authorization') authorization?: string,
+    @Headers('x-partner-device-id') deviceHeader?: string,
   ) {
     const userId = this.partnerService.getOptionalUserIdFromAuthHeader(authorization);
-    return this.partnerService.getPartnerEngagement(id, userId);
+    return this.partnerService.getPartnerEngagement(id, userId, deviceHeader);
   }
 
   @Public()
@@ -653,12 +654,13 @@ export class PartnerController {
   async listPartnerComments(
     @Param('id') id: string,
     @Query('take') takeStr?: string,
+    @Headers('x-partner-device-id') deviceHeader?: string,
   ) {
     const take = Math.min(
       2000,
       Math.max(1, Number.parseInt(takeStr ?? '500', 10) || 500),
     );
-    return this.partnerService.listPartnerComments(id, take);
+    return this.partnerService.listPartnerComments(id, take, deviceHeader);
   }
 
   @Public()
@@ -668,42 +670,53 @@ export class PartnerController {
     return this.partnerService.recordPartnerShare(id);
   }
 
+  @Public()
   @Put(':id/engagement/reaction')
   async setPartnerReaction(
     @Param('id') id: string,
-    @CurrentUser() user: { id: string },
     @Body() dto: SetPartnerReactionDto,
+    @Headers('authorization') authorization?: string,
+    @Headers('x-partner-device-id') deviceHeader?: string,
   ) {
-    return this.partnerService.setPartnerReaction(id, user.id, dto.type);
+    const userId = this.partnerService.getOptionalUserIdFromAuthHeader(authorization);
+    return this.partnerService.setPartnerReaction(id, userId, deviceHeader, dto.type);
   }
 
+  @Public()
   @Post(':id/comments')
   @HttpCode(201)
   async createPartnerComment(
     @Param('id') id: string,
-    @CurrentUser() user: { id: string },
     @Body() dto: CreatePartnerCommentDto,
+    @Headers('authorization') authorization?: string,
+    @Headers('x-partner-device-id') deviceHeader?: string,
   ) {
+    const userId = this.partnerService.getOptionalUserIdFromAuthHeader(authorization);
     return this.partnerService.createPartnerComment(
       id,
-      user.id,
+      userId,
       dto.body,
       dto.parentId,
+      dto.guestName,
+      deviceHeader,
     );
   }
 
+  @Public()
   @Delete(':id/comments/:commentId')
   @HttpCode(200)
   async deletePartnerComment(
     @Param('id') partnerId: string,
     @Param('commentId') commentId: string,
-    @CurrentUser() user: { id: string; role: Role },
+    @Headers('authorization') authorization?: string,
+    @Headers('x-partner-device-id') deviceHeader?: string,
   ) {
+    const authUser = await this.partnerService.getOptionalAuthUser(authorization);
     return this.partnerService.deletePartnerComment(
       partnerId,
       commentId,
-      user.id,
-      user.role,
+      authUser,
+      deviceHeader,
     );
   }
 

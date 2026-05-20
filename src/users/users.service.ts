@@ -215,17 +215,16 @@ export class UsersService {
       });
 
       if (role === Role.PARTNER) {
-        // Garante que todo usuário com role=PARTNER tenha um registro em Partner.
         await tx.partner.upsert({
           where: { userId: existing.id },
           create: {
             userId: existing.id,
-            name: existing.name,
+            name: existing.name?.trim() || 'Parceiro',
             whatsapp: existing.whatsapp,
+            publicSlug: null,
           },
           update: {
-            // Mantém os dados básicos sincronizados.
-            name: existing.name,
+            name: existing.name?.trim() || 'Parceiro',
             whatsapp: existing.whatsapp,
           },
         });

@@ -31,6 +31,7 @@ async function bootstrap() {
   app.enableCors({
     origin: getCorsOrigins(),
     credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Partner-Device-Id'],
   });
   // Servir arquivos estáticos de uploads
   app.useStaticAssets(join(process.cwd(), 'uploads'), {

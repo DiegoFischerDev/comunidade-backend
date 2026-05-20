@@ -43,6 +43,7 @@ import {
   expandRelocationCityFilter,
   normalizeRelocationCityForAdminStorage,
 } from './relocation-cities';
+import { requirePartnerDeviceId, tryPartnerDeviceId } from './partner-device-id';
 import { HouseImageStorageService } from './house-image-storage.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import {
@@ -56,14 +57,18 @@ import {
   isHousePubliclyVisible,
   nextPublishedUntil,
 } from './house-publication.constants';
-
-const SALT_ROUNDS = 10;
+import {
+  assertPartnerPublicSlugAllowed,
+  normalizePartnerPublicSlugInput,
+} from './partner-public-slug';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
 const RELOCATION_CATEGORY_SLUG = 'relocation';
+
+const SALT_ROUNDS = 10;
 
 @Injectable()
 export class PartnerService {
@@ -123,6 +128,7 @@ export class PartnerService {
         priority: true,
         createdAt: true,
         advertisingBalanceEurCents: true,
+        publicSlug: true,
         user: {
           select: {
             id: true,
@@ -143,13 +149,15 @@ export class PartnerService {
 
   async createPartner(dto: CreatePartnerDto) {
     const normalizedWhatsapp = this.normalizeWhatsapp(dto.whatsapp);
+    const emailTrim = dto.email?.trim();
+    const emailNormalized = emailTrim ? emailTrim.toLowerCase() : null;
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
 
     try {
       const user = await this.prisma.user.create({
         data: {
-          email: null,
+          email: emailNormalized,
           passwordHash,
           role: Role.PARTNER,
           name: dto.name,
@@ -167,6 +175,7 @@ export class PartnerService {
           fullDescription: dto.fullDescription,
           backgroundImageUrl: dto.backgroundImageUrl,
           rpmCommissionPercent: dto.rpmCommissionPercent,
+          publicSlug: null,
         },
       });
 
@@ -179,9 +188,11 @@ export class PartnerService {
         partner,
       };
     } catch (error: any) {
-      // WhatsApp é único em User. Se já existir, devolve uma mensagem clara.
+      // WhatsApp e e-mail são únicos em User.
       if (error?.code === 'P2002') {
-        throw new ConflictException('Já existe um usuário com este WhatsApp.');
+        throw new ConflictException(
+          'Já existe um utilizador com este WhatsApp ou com este e-mail.',
+        );
       }
       throw new InternalServerErrorException(
         'Erro ao criar parceiro. Tente novamente mais tarde.',
@@ -281,6 +292,7 @@ export class PartnerService {
         partners: {
           where: {
             categoryId: { not: null },
+            publicSlug: { not: null },
           },
           select: {
             id: true,
@@ -288,6 +300,7 @@ export class PartnerService {
             logoUrl: true,
             backgroundImageUrl: true,
             shortDescription: true,
+            publicSlug: true,
           },
         },
       },
@@ -386,7 +399,23 @@ export class PartnerService {
     }
   }
 
-  async getPartnerEngagement(partnerId: string, userId: string | null) {
+  async getOptionalAuthUser(
+    authorization?: string,
+  ): Promise<{ id: string; role: Role } | null> {
+    const id = this.getOptionalUserIdFromAuthHeader(authorization);
+    if (!id) return null;
+    const u = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, role: true },
+    });
+    return u ?? null;
+  }
+
+  async getPartnerEngagement(
+    partnerId: string,
+    userId: string | null,
+    deviceHeader?: string,
+  ) {
     const p = await this.prisma.partner.findUnique({
       where: { id: partnerId },
       select: { id: true, shareCount: true },
@@ -394,48 +423,97 @@ export class PartnerService {
     if (!p) {
       throw new NotFoundException('Parceiro não encontrado.');
     }
-    const [likeCount, dislikeCount, commentCount, myReaction] = await Promise.all([
-      this.prisma.partnerReaction.count({ where: { partnerId, type: 'LIKE' } }),
-      this.prisma.partnerReaction.count({ where: { partnerId, type: 'DISLIKE' } }),
-      this.prisma.partnerComment.count({ where: { partnerId } }),
-      userId
-        ? this.prisma.partnerReaction.findUnique({
-            where: { userId_partnerId: { userId, partnerId } },
-            select: { type: true },
-          })
-        : Promise.resolve(null),
-    ]);
+    const deviceId = tryPartnerDeviceId(deviceHeader);
+    const [likeCount, dislikeCount, commentCount, myReaction, hasDeviceComment] =
+      await Promise.all([
+        this.prisma.partnerReaction.count({ where: { partnerId, type: 'LIKE' } }),
+        this.prisma.partnerReaction.count({ where: { partnerId, type: 'DISLIKE' } }),
+        this.prisma.partnerComment.count({ where: { partnerId } }),
+        userId
+          ? this.prisma.partnerReaction.findFirst({
+              where: { userId, partnerId },
+              select: { type: true },
+            })
+          : deviceId
+            ? this.prisma.partnerReaction.findFirst({
+                where: { deviceId, partnerId },
+                select: { type: true },
+              })
+            : Promise.resolve(null),
+        deviceId
+          ? this.prisma.partnerComment.count({
+              where: { partnerId, deviceId },
+            })
+          : Promise.resolve(0),
+      ]);
     return {
       likeCount,
       dislikeCount,
       commentCount,
       shareCount: p.shareCount,
       myReaction: myReaction?.type ?? null,
+      hasDeviceComment: hasDeviceComment > 0,
     };
   }
 
   async setPartnerReaction(
     partnerId: string,
-    userId: string,
+    authUserId: string | null,
+    deviceHeader: string | undefined,
     type: PartnerReactionType | null,
   ) {
     await this.prisma.partner.findUniqueOrThrow({
       where: { id: partnerId },
       select: { id: true },
     });
-    if (type === null) {
-      await this.prisma.partnerReaction.deleteMany({ where: { userId, partnerId } });
-      return { myReaction: null as PartnerReactionType | null };
+
+    if (authUserId) {
+      const existing = await this.prisma.partnerReaction.findFirst({
+        where: { userId: authUserId, partnerId },
+        select: { id: true },
+      });
+      if (type === null) {
+        if (existing) {
+          await this.prisma.partnerReaction.delete({ where: { id: existing.id } });
+        }
+        return { myReaction: null as PartnerReactionType | null };
+      }
+      if (existing) {
+        await this.prisma.partnerReaction.update({
+          where: { id: existing.id },
+          data: { type },
+        });
+      } else {
+        await this.prisma.partnerReaction.create({
+          data: { userId: authUserId, partnerId, type },
+        });
+      }
+      return { myReaction: type };
     }
-    await this.prisma.partnerReaction.upsert({
-      where: { userId_partnerId: { userId, partnerId } },
-      create: { userId, partnerId, type },
-      update: { type },
+
+    const deviceId = requirePartnerDeviceId(deviceHeader);
+    const existing = await this.prisma.partnerReaction.findFirst({
+      where: { deviceId, partnerId },
+      select: { id: true, type: true },
     });
-    return { myReaction: type };
+    if (!existing) {
+      if (!type) {
+        return { myReaction: null as PartnerReactionType | null };
+      }
+      await this.prisma.partnerReaction.create({
+        data: { deviceId, partnerId, type },
+      });
+      return { myReaction: type };
+    }
+    if (!type || type !== existing.type) {
+      throw new ConflictException(
+        'Este dispositivo já registou a sua avaliação (gosto ou desgosto).',
+      );
+    }
+    return { myReaction: existing.type };
   }
 
-  async listPartnerComments(partnerId: string, take: number) {
+  async listPartnerComments(partnerId: string, take: number, deviceHeader?: string) {
     const exists = await this.prisma.partner.findUnique({
       where: { id: partnerId },
       select: { id: true },
@@ -444,6 +522,7 @@ export class PartnerService {
       throw new NotFoundException('Parceiro não encontrado.');
     }
     const takeN = Math.min(Math.max(take, 1), 2000);
+    const requestDeviceId = tryPartnerDeviceId(deviceHeader);
     const total = await this.prisma.partnerComment.count({ where: { partnerId } });
     const rows = await this.prisma.partnerComment.findMany({
       where: { partnerId },
@@ -458,6 +537,9 @@ export class PartnerService {
         createdAt: c.createdAt.toISOString(),
         parentId: c.parentId,
         user: c.user,
+        guestName: c.guestName,
+        ownedByRequestDevice:
+          !!requestDeviceId && !!c.deviceId && c.deviceId === requestDeviceId,
       })),
       hasMore: total > takeN,
       total,
@@ -466,9 +548,11 @@ export class PartnerService {
 
   async createPartnerComment(
     partnerId: string,
-    userId: string,
+    authUserId: string | null,
     body: string,
-    parentId?: string,
+    parentId: string | undefined,
+    guestNameRaw: string | undefined,
+    deviceHeader: string | undefined,
   ) {
     const exists = await this.prisma.partner.findUnique({
       where: { id: partnerId },
@@ -481,25 +565,65 @@ export class PartnerService {
     if (!text) {
       throw new BadRequestException('O comentário não pode ser vazio.');
     }
-    let parent: { id: string; partnerId: string } | null = null;
-    if (parentId?.trim()) {
-      parent = await this.prisma.partnerComment.findUnique({
-        where: { id: parentId.trim() },
-        select: { id: true, partnerId: true },
+
+    if (authUserId) {
+      let parent: { id: string; partnerId: string } | null = null;
+      if (parentId?.trim()) {
+        parent = await this.prisma.partnerComment.findUnique({
+          where: { id: parentId.trim() },
+          select: { id: true, partnerId: true },
+        });
+        if (!parent) {
+          throw new BadRequestException('Comentário a que responde não foi encontrado.');
+        }
+        if (parent.partnerId !== partnerId) {
+          throw new BadRequestException('Não podes responder a um comentário de outro parceiro.');
+        }
+      }
+      const c = await this.prisma.partnerComment.create({
+        data: {
+          partnerId,
+          userId: authUserId,
+          body: text,
+          parentId: parent?.id ?? null,
+        },
+        include: { user: { select: { id: true, name: true } } },
       });
-      if (!parent) {
-        throw new BadRequestException('Comentário a que responde não foi encontrado.');
-      }
-      if (parent.partnerId !== partnerId) {
-        throw new BadRequestException('Não podes responder a um comentário de outro parceiro.');
-      }
+      return {
+        id: c.id,
+        body: c.body,
+        createdAt: c.createdAt.toISOString(),
+        parentId: c.parentId,
+        user: c.user,
+        guestName: null as string | null,
+        ownedByRequestDevice: false as boolean,
+      };
     }
+
+    if (parentId?.trim()) {
+      throw new BadRequestException(
+        'Inicia sessão na Comunidade para responderes a comentários.',
+      );
+    }
+    const deviceId = requirePartnerDeviceId(deviceHeader);
+    const dup = await this.prisma.partnerComment.findFirst({
+      where: { partnerId, deviceId },
+      select: { id: true },
+    });
+    if (dup) {
+      throw new ConflictException(
+        'Este dispositivo já publicou um comentário neste perfil.',
+      );
+    }
+    const guestTrim = guestNameRaw?.trim() ?? '';
+    const guestName = guestTrim.length > 0 ? guestTrim.slice(0, 120) : null;
     const c = await this.prisma.partnerComment.create({
       data: {
         partnerId,
-        userId,
+        deviceId,
+        guestName,
         body: text,
-        parentId: parent?.id ?? null,
+        parentId: null,
       },
       include: { user: { select: { id: true, name: true } } },
     });
@@ -509,18 +633,20 @@ export class PartnerService {
       createdAt: c.createdAt.toISOString(),
       parentId: c.parentId,
       user: c.user,
+      guestName: c.guestName,
+      ownedByRequestDevice: true,
     };
   }
 
   async deletePartnerComment(
     partnerId: string,
     commentId: string,
-    userId: string,
-    role: Role,
+    authUser: { id: string; role: Role } | null,
+    deviceHeader: string | undefined,
   ) {
     const c = await this.prisma.partnerComment.findUnique({
       where: { id: commentId },
-      select: { id: true, partnerId: true, userId: true },
+      select: { id: true, partnerId: true, userId: true, deviceId: true },
     });
     if (!c) {
       throw new NotFoundException('Comentário não encontrado.');
@@ -528,11 +654,20 @@ export class PartnerService {
     if (c.partnerId !== partnerId) {
       throw new BadRequestException('Comentário não pertence a este parceiro.');
     }
-    if (role !== Role.ADMIN && c.userId !== userId) {
-      throw new ForbiddenException('Não tens permissão para eliminar este comentário.');
+    if (authUser?.role === Role.ADMIN) {
+      await this.prisma.partnerComment.delete({ where: { id: commentId } });
+      return { ok: true as const, partnerId: c.partnerId };
     }
-    await this.prisma.partnerComment.delete({ where: { id: commentId } });
-    return { ok: true as const, partnerId: c.partnerId };
+    if (c.userId && authUser && c.userId === authUser.id) {
+      await this.prisma.partnerComment.delete({ where: { id: commentId } });
+      return { ok: true as const, partnerId: c.partnerId };
+    }
+    const deviceId = tryPartnerDeviceId(deviceHeader);
+    if (c.deviceId && deviceId && c.deviceId === deviceId) {
+      await this.prisma.partnerComment.delete({ where: { id: commentId } });
+      return { ok: true as const, partnerId: c.partnerId };
+    }
+    throw new ForbiddenException('Não tens permissão para eliminar este comentário.');
   }
 
   async recordPartnerShare(partnerId: string) {
@@ -551,9 +686,17 @@ export class PartnerService {
     }
   }
 
-  async getPartnerPublic(id: string) {
-    const partner = await this.prisma.partner.findUnique({
-      where: { id },
+  async getPartnerPublic(lookup: string) {
+    const key = lookup.trim();
+    if (!key) {
+      throw new NotFoundException('Parceiro não encontrado.');
+    }
+    const lower = key.toLowerCase();
+    const partner = await this.prisma.partner.findFirst({
+      where: {
+        publicSlug: { not: null },
+        OR: [{ id: key }, { publicSlug: lower }],
+      },
       include: {
         user: {
           select: {
@@ -747,7 +890,36 @@ export class PartnerService {
       throw new BadRequestException('O nome da empresa não pode ser vazio.');
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    let publicSlugToSet: string | null | undefined = undefined;
+    if (Object.prototype.hasOwnProperty.call(dto, 'publicSlug')) {
+      const raw =
+        dto.publicSlug === null || dto.publicSlug === undefined
+          ? ''
+          : String(dto.publicSlug).trim();
+      if (!raw) {
+        publicSlugToSet = null;
+      } else {
+        const normalized = normalizePartnerPublicSlugInput(raw);
+        assertPartnerPublicSlugAllowed(normalized);
+        const current = partner.publicSlug ?? null;
+        if (normalized === current) {
+          publicSlugToSet = undefined;
+        } else {
+          const taken = await this.prisma.partner.findFirst({
+            where: { publicSlug: normalized, NOT: { id: partner.id } },
+            select: { id: true },
+          });
+          if (taken) {
+            throw new ConflictException('Este endereço público já está em uso.');
+          }
+          publicSlugToSet = normalized;
+        }
+      }
+    }
+
+    let updated;
+    try {
+      updated = await this.prisma.$transaction(async (tx) => {
       const userPatch: { whatsapp?: string; name?: string } = {};
       if (whatsappToSet !== undefined) userPatch.whatsapp = whatsappToSet;
       if (nameToSet !== undefined) userPatch.name = nameToSet;
@@ -784,12 +956,19 @@ export class PartnerService {
               ? dto.billingPostalCode
               : partner.billingPostalCode,
           ...(whatsappToSet !== undefined && { whatsapp: whatsappToSet }),
+          ...(publicSlugToSet !== undefined && { publicSlug: publicSlugToSet }),
         },
         include: {
           category: { select: { id: true, slug: true, name: true } },
         },
       });
     });
+    } catch (e: any) {
+      if (e?.code === 'P2002') {
+        throw new ConflictException('Este endereço público já está em uso.');
+      }
+      throw e;
+    }
 
     if (oldLogoToDelete) {
       await this.deleteUploadFileIfLocal(oldLogoToDelete);
@@ -926,6 +1105,7 @@ export class PartnerService {
           name: user.name?.trim() || 'Admin',
           whatsapp: user.whatsapp,
           categoryId: relocationCategory.id,
+          publicSlug: null,
         },
       });
     }

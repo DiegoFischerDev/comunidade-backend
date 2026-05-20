@@ -380,6 +380,8 @@ model Partner {
   priority             Int              @default(0) @map("priority")
   /// Saldo para publicação de imóveis (cêntimos EUR); controlado no backend.
   advertisingBalanceEurCents Int        @default(0) @map("advertising_balance_eur_cents")
+  /// URL pública curta (ex.: /maria-silva-a1b2c3). Null = página ainda não publicada. Única quando definida.
+  publicSlug           String?          @unique @map("public_slug")
   createdAt            DateTime         @default(now()) @map("created_at")
   updatedAt            DateTime         @updatedAt @map("updated_at")
 
@@ -395,15 +397,19 @@ model PartnerReaction {
   id        String              @id @default(cuid())
   partnerId String              @map("partner_id")
   partner   Partner             @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  userId    String              @map("user_id")
-  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Utilizador autenticado (exclusivo com `deviceId`).
+  userId    String?             @map("user_id")
+  user      User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Visitante: UUID persistente no browser (cabecalho `X-Partner-Device-Id`).
+  deviceId  String?             @map("device_id") @db.VarChar(64)
   type      PartnerReactionType
   createdAt DateTime            @default(now()) @map("created_at")
   updatedAt DateTime            @updatedAt @map("updated_at")
 
-  @@unique([userId, partnerId], map: "partner_reaction_user_partner_unique")
   @@index([partnerId])
   @@index([type])
+  @@index([partnerId, userId])
+  @@index([partnerId, deviceId])
   @@map("partner_reactions")
 }
 
@@ -411,8 +417,13 @@ model PartnerComment {
   id        String   @id @default(cuid())
   partnerId String   @map("partner_id")
   partner   Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Autor com conta (exclusivo com `deviceId` para comentários de visitante).
+  userId    String?  @map("user_id")
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Visitante: UUID do dispositivo (cabecalho `X-Partner-Device-Id`).
+  deviceId  String?  @map("device_id") @db.VarChar(64)
+  /// Nome opcional mostrado para comentários de visitante.
+  guestName String?  @map("guest_name") @db.VarChar(120)
   body      String
   /// Comentário pai, quando é resposta a outro (thread / cascata).
   parentId  String?  @map("parent_id")

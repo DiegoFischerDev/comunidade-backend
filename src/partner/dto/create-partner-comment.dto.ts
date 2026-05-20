@@ -11,4 +11,10 @@ export class CreatePartnerCommentDto {
   @IsString()
   @MaxLength(64)
   parentId?: string;
+
+  /** Nome opcional para visitantes (com autenticação o nome vem do perfil). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  guestName?: string;
 }

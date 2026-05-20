@@ -1,5 +1,5 @@
-import { Type } from 'class-transformer';
-import { IsNumber, IsOptional, IsString, MinLength } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsEmail, IsNumber, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreatePartnerDto {
   @IsString()
@@ -8,6 +8,16 @@ export class CreatePartnerDto {
 
   @IsString()
   name: string;
+
+  /** E-mail da conta (opcional). Se omitido ou vazio, o utilizador fica sem e-mail como nos fluxos só WhatsApp. */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === null || value === undefined) return undefined;
+    const s = String(value).trim();
+    return s === '' ? undefined : s.toLowerCase();
+  })
+  @IsEmail({}, { message: 'Indica um e-mail válido ou deixa o campo vazio.' })
+  email?: string;
 
   @IsString()
   whatsapp: string;

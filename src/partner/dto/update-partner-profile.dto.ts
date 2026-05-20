@@ -1,9 +1,11 @@
 import {
+  Allow,
   ArrayMaxSize,
   IsArray,
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
   MinLength,
   ValidateIf,
 } from 'class-validator';
@@ -66,5 +68,19 @@ export class UpdatePartnerProfileDto {
   @IsOptional()
   @IsString()
   billingPostalCode?: string;
+
+  /** Definir vazio ou null remove a página pública (deixa de estar acessível no site). */
+  @IsOptional()
+  @Allow()
+  @ValidateIf((_o, v) => v != null && String(v).trim() !== '')
+  @IsString()
+  @MinLength(4, {
+    message: 'O endereço público deve ter pelo menos 4 caracteres.',
+  })
+  @MaxLength(80)
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
+    message: 'O endereço público só pode usar letras minúsculas, números e hífens (sem espaços).',
+  })
+  publicSlug?: string | null;
 }
 
