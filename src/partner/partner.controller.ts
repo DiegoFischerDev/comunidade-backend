@@ -240,6 +240,12 @@ export class PartnerController {
     return this.partnerService.getCurrentPartner(user.id);
   }
 
+  @Get('me/contact-links')
+  @Roles(Role.PARTNER)
+  async myContactLinks(@CurrentUser() user: { id: string }) {
+    return this.partnerService.getMyContactLinks(user.id);
+  }
+
   @Patch('me')
   @Roles(Role.PARTNER)
   async updateMe(

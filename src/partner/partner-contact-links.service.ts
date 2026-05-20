@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
-
-const DEFAULT_ADMIN_CONTACT_DIGITS = '351936958429';
 
 function normalizeWhatsappDigits(raw: string): string {
   return String(raw ?? '')
@@ -38,12 +40,24 @@ export function partnerShareLinkRedirectPath(slug: string): string {
 
 @Injectable()
 export class PartnerContactLinksService {
-  private readonly adminDigits = normalizeWhatsappDigits(
-    process.env.PARTNER_CONTACT_WHATSAPP_DIGITS?.trim() ||
-      DEFAULT_ADMIN_CONTACT_DIGITS,
-  );
-
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Número de destino do wa.me — sempre o WhatsApp do parceiro (perfil). */
+  private partnerContactDigits(partner: {
+    name: string;
+    whatsapp: string;
+    user?: { whatsapp: string } | null;
+  }): string {
+    const raw =
+      partner.whatsapp?.trim() || partner.user?.whatsapp?.trim() || '';
+    const digits = normalizeWhatsappDigits(raw);
+    if (digits.length < 8) {
+      throw new BadRequestException(
+        `O parceiro «${partner.name}» precisa de um WhatsApp válido no perfil antes de gerar ou atualizar links de contacto.`,
+      );
+    }
+    return digits;
+  }
 
   private async uniqueSlug(baseTitle: string): Promise<string> {
     let base = slugifyTitle(baseTitle);
@@ -69,6 +83,7 @@ export class PartnerContactLinksService {
     existingId: string | null;
     title: string;
     phrase: string;
+    whatsappDigits: string;
   }): Promise<{ id: string; slug: string }> {
     if (params.existingId) {
       const updated = await this.prisma.partnerShareLink.update({
@@ -76,7 +91,7 @@ export class PartnerContactLinksService {
         data: {
           title: params.title,
           whatsappPhrase: params.phrase,
-          whatsappDigits: this.adminDigits,
+          whatsappDigits: params.whatsappDigits,
           destinationUrl: null,
         },
         select: { id: true, slug: true },
@@ -88,7 +103,7 @@ export class PartnerContactLinksService {
       data: {
         slug,
         title: params.title,
-        whatsappDigits: this.adminDigits,
+        whatsappDigits: params.whatsappDigits,
         whatsappPhrase: params.phrase,
         destinationUrl: null,
       },
@@ -101,6 +116,7 @@ export class PartnerContactLinksService {
     const partner = await this.prisma.partner.findUnique({
       where: { id: partnerId },
       include: {
+        user: { select: { whatsapp: true } },
         heroShareLink: { select: { id: true, slug: true } },
         services: {
           orderBy: { sortOrder: 'asc' },
@@ -117,10 +133,13 @@ export class PartnerContactLinksService {
       throw new NotFoundException('Parceiro não encontrado.');
     }
 
+    const contactDigits = this.partnerContactDigits(partner);
+
     const hero = await this.upsertShareLink({
       existingId: partner.heroShareLinkId,
       title: `Contacto hero — ${partner.name}`,
       phrase: partnerAtendimentoPhrase(partner.name),
+      whatsappDigits: contactDigits,
     });
     if (partner.heroShareLinkId !== hero.id) {
       await this.prisma.partner.update({
@@ -141,6 +160,7 @@ export class PartnerContactLinksService {
         existingId: svc.partnerShareLinkId,
         title: `Contacto serviço — ${partner.name} — ${svc.title}`,
         phrase: partnerServiceInterestPhrase(partner.name, svc.title),
+        whatsappDigits: contactDigits,
       });
       if (svc.partnerShareLinkId !== link.id) {
         await this.prisma.service.update({
@@ -240,14 +260,22 @@ export class PartnerContactLinksService {
   ) {
     const partner = await this.prisma.partner.findUnique({
       where: { id: partnerId },
-      select: { name: true, heroShareLinkId: true },
+      select: {
+        name: true,
+        whatsapp: true,
+        heroShareLinkId: true,
+        user: { select: { whatsapp: true } },
+      },
     });
     if (!partner?.heroShareLinkId) return;
+
+    const contactDigits = this.partnerContactDigits(partner);
 
     const link = await this.upsertShareLink({
       existingId: null,
       title: `Contacto serviço — ${partner.name} — ${serviceTitle}`,
       phrase: partnerServiceInterestPhrase(partner.name, serviceTitle),
+      whatsappDigits: contactDigits,
     });
     await this.prisma.service.update({
       where: { id: serviceId },

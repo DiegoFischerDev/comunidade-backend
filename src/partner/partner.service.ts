@@ -167,6 +167,11 @@ export class PartnerService {
     return this.partnerContactLinks.getPartnerContactLinksAdmin(partnerId);
   }
 
+  async getMyContactLinks(userId: string) {
+    const partner = await this.getPartnerForUserOrThrow(userId);
+    return this.partnerContactLinks.getPartnerContactLinksAdmin(partner.id);
+  }
+
   async createPartner(dto: CreatePartnerDto) {
     const normalizedWhatsapp = this.normalizeWhatsapp(dto.whatsapp);
     const emailTrim = dto.email?.trim();
