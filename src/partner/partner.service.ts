@@ -61,6 +61,7 @@ import {
   assertPartnerPublicSlugAllowed,
   normalizePartnerPublicSlugInput,
 } from './partner-public-slug';
+import { PartnerContactLinksService } from './partner-contact-links.service';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -81,6 +82,7 @@ export class PartnerService {
     private readonly houseImages: HouseImageStorageService,
     private readonly jwtService: JwtService,
     private readonly advertising: PartnerAdvertisingService,
+    private readonly partnerContactLinks: PartnerContactLinksService,
   ) {}
 
   private async deleteUploadFileIfLocal(url?: string | null) {
@@ -143,8 +145,26 @@ export class PartnerService {
             slug: true,
           },
         },
+        heroShareLink: {
+          select: {
+            id: true,
+            slug: true,
+            _count: { select: { clicks: true } },
+          },
+        },
+        services: {
+          select: { id: true, partnerShareLinkId: true },
+        },
       },
     });
+  }
+
+  setupPartnerContactLinks(partnerId: string) {
+    return this.partnerContactLinks.setupPartnerContactLinks(partnerId);
+  }
+
+  getPartnerContactLinksAdmin(partnerId: string) {
+    return this.partnerContactLinks.getPartnerContactLinksAdmin(partnerId);
   }
 
   async createPartner(dto: CreatePartnerDto) {
@@ -718,8 +738,10 @@ export class PartnerService {
             description: true,
             price: true,
             priceOnRequest: true,
+            partnerShareLink: { select: { slug: true } },
           },
         },
+        heroShareLink: { select: { slug: true } },
       },
     });
 
@@ -727,7 +749,12 @@ export class PartnerService {
       throw new NotFoundException('Parceiro não encontrado.');
     }
 
-    return partner;
+    const contact = this.partnerContactLinks.mapPublicContactFields(partner);
+    const { heroShareLink: _h, services: _s, ...rest } = partner;
+    return {
+      ...rest,
+      ...contact,
+    };
   }
 
   async createCategory(dto: CreateCategoryDto) {
@@ -1159,7 +1186,7 @@ export class PartnerService {
       );
     }
 
-    return this.prisma.service.create({
+    const created = await this.prisma.service.create({
       data: {
         partnerId: partner.id,
         title: dto.title,
@@ -1168,6 +1195,12 @@ export class PartnerService {
         priceOnRequest,
       },
     });
+    await this.partnerContactLinks.ensureServiceContactLinkForNewService(
+      partner.id,
+      created.id,
+      created.title,
+    );
+    return created;
   }
 
   async updateMyService(userId: string, id: string, dto: UpdateServiceDto) {

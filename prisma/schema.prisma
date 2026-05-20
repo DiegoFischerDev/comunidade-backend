@@ -391,6 +391,9 @@ model Partner {
   reactions                   PartnerReaction[]
   comments                    PartnerComment[]
   advertisingLedgerEntries    PartnerAdvertisingLedgerEntry[]
+  /// Link rastreado do botão «Entre em contato» na hero da página pública.
+  heroShareLinkId             String?           @unique @map("hero_share_link_id")
+  heroShareLink               PartnerShareLink? @relation("PartnerHeroShareLink", fields: [heroShareLinkId], references: [id], onDelete: SetNull)
 }
 
 model PartnerReaction {
@@ -522,6 +525,8 @@ model PartnerShareLink {
 
   clicks               RedirectClickEvent[]
   recommendedServices  RecommendedService[]
+  heroForPartner       Partner?             @relation("PartnerHeroShareLink")
+  serviceContact       Service?             @relation("ServiceContactShareLink")
 
   @@map("partner_share_links")
 }
@@ -623,6 +628,9 @@ model Service {
   sortOrder               Int              @default(0) @map("sort_order")
   createdAt               DateTime         @default(now()) @map("created_at")
   updatedAt               DateTime         @updatedAt @map("updated_at")
+  /// Link rastreado do botão «Contactar» no cartão do serviço.
+  partnerShareLinkId      String?          @unique @map("partner_share_link_id")
+  partnerShareLink        PartnerShareLink? @relation("ServiceContactShareLink", fields: [partnerShareLinkId], references: [id], onDelete: SetNull)
 
   sales PartnerSale[]
 

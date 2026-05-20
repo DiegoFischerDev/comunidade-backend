@@ -68,6 +68,19 @@ export class PartnerController {
     return this.partnerService.deletePartner(id);
   }
 
+  @Get('admin/:id/contact-links')
+  @Roles(Role.ADMIN)
+  async adminGetPartnerContactLinks(@Param('id') id: string) {
+    return this.partnerService.getPartnerContactLinksAdmin(id);
+  }
+
+  @Post('admin/:id/contact-links/setup')
+  @Roles(Role.ADMIN)
+  @HttpCode(200)
+  async adminSetupPartnerContactLinks(@Param('id') id: string) {
+    return this.partnerService.setupPartnerContactLinks(id);
+  }
+
   @Patch('admin/:id')
   @Roles(Role.ADMIN)
   async updateAdmin(

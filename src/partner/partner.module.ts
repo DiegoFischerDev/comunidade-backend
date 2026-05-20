@@ -9,6 +9,8 @@ import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { HouseImageStorageService } from './house-image-storage.service';
 import { PartnerAdvertisingService } from './partner-advertising.service';
 import { PartnerHousePublicationExpiryTask } from './partner-house-publication-expiry.task';
+import { PartnerContactLinksService } from './partner-contact-links.service';
+
 @Module({
   imports: [
     AuthModule,
@@ -26,8 +28,9 @@ import { PartnerHousePublicationExpiryTask } from './partner-house-publication-e
     HouseImageStorageService,
     PartnerAdvertisingService,
     PartnerHousePublicationExpiryTask,
+    PartnerContactLinksService,
   ],
-  exports: [HouseImageStorageService, PartnerAdvertisingService],
+  exports: [HouseImageStorageService, PartnerAdvertisingService, PartnerContactLinksService],
 })
 export class PartnerModule {}
 
