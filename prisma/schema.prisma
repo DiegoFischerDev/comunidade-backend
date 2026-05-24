@@ -155,6 +155,25 @@ model PendingMembershipSignup {
   @@map("pending_membership_signups")
 }
 
+/** Dados de registo guardados até confirmação do pagamento da taxa de agendamento (checkout convidado). */
+model PendingRafacallSignup {
+  id              String    @id @default(cuid())
+  name            String
+  email           String
+  whatsapp        String
+  passwordHash    String    @map("password_hash")
+  existingUserId  String?   @map("existing_user_id")
+  stripeSessionId String?   @unique @map("stripe_session_id")
+  expiresAt       DateTime  @map("expires_at")
+  consumedAt      DateTime? @map("consumed_at")
+  createdUserId   String?   @map("created_user_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@index([whatsapp])
+  @@index([expiresAt])
+  @@map("pending_rafacall_signups")
+}
+
 /** Troca única de JWT após pagamento no checkout convidado (session_id do Stripe). */
 model MembershipCheckoutHandoff {
   id              String    @id @default(cuid())
@@ -719,14 +738,16 @@ model AffiliateCommission {
 }
 
 model SupportTicket {
-  id         String             @id @default(cuid())
-  userId     String             @map("user_id")
-  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status     SupportTicketStatus @default(REGISTERED)
-  message    String
-  adminReply String?            @map("admin_reply")
-  createdAt  DateTime           @default(now()) @map("created_at")
-  updatedAt  DateTime           @updatedAt @map("updated_at")
+  id            String              @id @default(cuid())
+  userId        String?             @map("user_id")
+  user          User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guestName     String?             @map("guest_name") @db.VarChar(120)
+  guestWhatsapp String?             @map("guest_whatsapp") @db.VarChar(32)
+  status        SupportTicketStatus @default(REGISTERED)
+  message       String
+  adminReply    String?             @map("admin_reply")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
 
   @@index([userId])
   @@index([createdAt])

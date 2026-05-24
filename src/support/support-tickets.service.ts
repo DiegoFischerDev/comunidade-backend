@@ -2,9 +2,67 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { SupportTicketStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
+function ticketContactFromRow(t: {
+  user: { id: string; name: string; whatsapp: string } | null;
+  guestName: string | null;
+  guestWhatsapp: string | null;
+}): { id: string; name: string; whatsapp: string } {
+  if (t.user) {
+    return { id: t.user.id, name: t.user.name, whatsapp: t.user.whatsapp };
+  }
+  return {
+    id: '',
+    name: (t.guestName ?? '').trim() || 'Visitante',
+    whatsapp: (t.guestWhatsapp ?? '').trim(),
+  };
+}
+
 @Injectable()
 export class SupportTicketsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private normalizeGuestWhatsapp(raw: string): string {
+    return raw.replace(/\D/g, '');
+  }
+
+  async createGuestTicket(params: { name: string; whatsapp: string; message: string }) {
+    const name = (params.name || '').trim();
+    const whatsapp = this.normalizeGuestWhatsapp(params.whatsapp);
+    if (!name) throw new BadRequestException('Nome é obrigatório.');
+    if (name.length > 120) throw new BadRequestException('Nome muito longo.');
+    if (whatsapp.length < 8) throw new BadRequestException('WhatsApp inválido.');
+
+    const msg = (params.message || '').trim();
+    if (!msg) throw new BadRequestException('Mensagem é obrigatória.');
+    if (msg.length > 4000) throw new BadRequestException('Mensagem muito longa (máx 4000).');
+
+    const created = await this.prisma.supportTicket.create({
+      data: {
+        userId: null,
+        guestName: name,
+        guestWhatsapp: whatsapp,
+        status: SupportTicketStatus.REGISTERED,
+        message: msg,
+      },
+      select: {
+        id: true,
+        status: true,
+        message: true,
+        adminReply: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return {
+      id: created.id,
+      status: created.status,
+      message: created.message,
+      adminReply: created.adminReply,
+      createdAt: created.createdAt.toISOString(),
+      updatedAt: created.updatedAt.toISOString(),
+    };
+  }
 
   async createTicket(params: { userId: string; message: string }) {
     const msg = (params.message || '').trim();
@@ -52,6 +110,8 @@ export class SupportTicketsService {
         createdAt: true,
         updatedAt: true,
         user: { select: { id: true, name: true, whatsapp: true } },
+        guestName: true,
+        guestWhatsapp: true,
       },
     });
 
@@ -63,11 +123,7 @@ export class SupportTicketsService {
         status: t.status,
         message: t.message,
         adminReply: t.adminReply,
-        user: {
-          id: t.user.id,
-          name: t.user.name,
-          whatsapp: t.user.whatsapp,
-        },
+        user: ticketContactFromRow(t),
       })),
     };
   }

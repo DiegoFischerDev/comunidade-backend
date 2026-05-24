@@ -15,6 +15,7 @@ import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { AuthService } from '../auth/auth.service';
 import { isMembershipActive } from '../membership/membership-access.util';
 import { CreateGuestMembershipCheckoutDto } from './dto/create-guest-membership-checkout.dto';
+import { CreateGuestRafacallCheckoutDto } from './dto/create-guest-rafacall-checkout.dto';
 import { PartnerAdvertisingService } from '../partner/partner-advertising.service';
 import {
   ADVERTISING_TOPUP_MAX_EUR_CENTS,
@@ -905,6 +906,327 @@ export class StripeService {
     return { url: session.url };
   }
 
+  private async resolveGuestRafacallExistingUserId(
+    email: string,
+    whatsapp: string,
+  ): Promise<string | null> {
+    const existingByWhatsapp = await this.prisma.user.findUnique({
+      where: { whatsapp },
+      select: { id: true, rafaCallSchedulingUnlocked: true },
+    });
+    if (existingByWhatsapp?.rafaCallSchedulingUnlocked) {
+      throw new BadRequestException(
+        'Já tens acesso para agendar. Faça login e escolhe data e hora.',
+      );
+    }
+
+    const existingByEmail = await this.prisma.user.findFirst({
+      where: { email },
+      select: { id: true, rafaCallSchedulingUnlocked: true },
+    });
+    if (
+      existingByEmail &&
+      existingByEmail.id !== existingByWhatsapp?.id &&
+      existingByEmail.rafaCallSchedulingUnlocked
+    ) {
+      throw new BadRequestException(
+        'Já tens acesso para agendar. Faça login e escolhe data e hora.',
+      );
+    }
+
+    return existingByWhatsapp?.id ?? existingByEmail?.id ?? null;
+  }
+
+  async createGuestRafacallCheckout(
+    dto: CreateGuestRafacallCheckoutDto,
+  ): Promise<{ url: string }> {
+    if (dto.password !== dto.passwordConfirm) {
+      throw new BadRequestException('As senhas não coincidem.');
+    }
+
+    const whatsapp = this.normalizeSignupWhatsapp(dto.whatsapp);
+    if (whatsapp.length < 8) {
+      throw new BadRequestException('WhatsApp inválido.');
+    }
+
+    const email = dto.email.trim().toLowerCase();
+    const name = dto.name.trim();
+    if (!name) {
+      throw new BadRequestException('Nome é obrigatório.');
+    }
+
+    const existingUserId = await this.resolveGuestRafacallExistingUserId(email, whatsapp);
+    const passwordHash = await bcrypt.hash(dto.password, GUEST_SIGNUP_SALT_ROUNDS);
+    const pending = await this.prisma.pendingRafacallSignup.create({
+      data: {
+        name,
+        email,
+        whatsapp,
+        passwordHash,
+        existingUserId,
+        expiresAt: this.getGuestSignupExpiry(),
+      },
+    });
+
+    const successUrl = this.appendStripeSessionIdPlaceholder(dto.successUrl);
+    const cancelUrl = dto.cancelUrl;
+    const stripe = this.getClient();
+    const productName = 'Chamada de vídeo com a Rafa (30 min)';
+    const productDescription =
+      'Taxa de agendamento — após o pagamento escolhes data e hora no dashboard';
+
+    const metadata = {
+      checkoutType: 'rafacall_guest',
+      pendingRafacallSignupId: pending.id,
+      rafacallFeeEurCents: String(this.rafaCallEurCents),
+    };
+
+    let session: Stripe.Checkout.Session;
+
+    if (dto.paymentMethod === 'pix') {
+      session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer_email: email,
+        line_items: [
+          {
+            price_data: {
+              currency: 'brl',
+              unit_amount: this.rafaCallPixCentavos,
+              product_data: { name: productName, description: productDescription },
+            },
+            quantity: 1,
+          },
+        ],
+        payment_method_types: ['pix'],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        client_reference_id: pending.id,
+        metadata,
+        payment_method_options: {
+          pix: { expires_after_seconds: 30 * 60 },
+        },
+      });
+    } else if (dto.paymentMethod === 'mbway') {
+      session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer_email: email,
+        line_items: [
+          {
+            price_data: {
+              currency: 'eur',
+              unit_amount: this.rafaCallEurCents,
+              product_data: { name: productName, description: productDescription },
+            },
+            quantity: 1,
+          },
+        ],
+        payment_method_types: ['mb_way'],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        client_reference_id: pending.id,
+        metadata,
+      });
+    } else {
+      session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer_email: email,
+        line_items: [
+          {
+            price_data: {
+              currency: 'eur',
+              unit_amount: this.rafaCallEurCents,
+              product_data: { name: productName, description: productDescription },
+            },
+            quantity: 1,
+          },
+        ],
+        payment_method_types: ['card'],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        client_reference_id: pending.id,
+        metadata,
+      });
+    }
+
+    if (!session.url) {
+      throw new BadRequestException('Não foi possível criar a sessão de pagamento.');
+    }
+
+    await this.prisma.pendingRafacallSignup.update({
+      where: { id: pending.id },
+      data: { stripeSessionId: session.id },
+    });
+
+    return { url: session.url };
+  }
+
+  private async handleGuestRafacallCheckoutCompleted(
+    session: Stripe.Checkout.Session,
+  ): Promise<void> {
+    const sess = session as any;
+    const pendingSignupId =
+      (sess.metadata?.pendingRafacallSignupId as string | undefined) ||
+      (sess.client_reference_id as string | undefined);
+    if (!pendingSignupId) return;
+
+    const pending = await this.prisma.pendingRafacallSignup.findUnique({
+      where: { id: pendingSignupId },
+    });
+    if (!pending || pending.consumedAt) return;
+    if (pending.expiresAt < new Date()) return;
+
+    let userId = pending.existingUserId ?? pending.createdUserId ?? null;
+
+    if (!userId) {
+      const created = await this.prisma.user.create({
+        data: {
+          email: pending.email,
+          name: pending.name,
+          whatsapp: pending.whatsapp,
+          passwordHash: pending.passwordHash,
+          role: Role.USER,
+          tier: UserTier.MEMBER,
+          membershipExpiresAt: null,
+          emailVerifiedAt: new Date(),
+          registrationChannel: RegistrationChannel.EMAIL,
+          rafaCallSchedulingUnlocked: true,
+          rafaCallUnlockOrigin: 'USER_PAID',
+        } as any,
+      });
+      userId = created.id;
+    } else {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          name: pending.name,
+          email: pending.email,
+          passwordHash: pending.passwordHash,
+          emailVerifiedAt: new Date(),
+          rafaCallSchedulingUnlocked: true,
+          rafaCallUnlockOrigin: 'USER_PAID',
+        } as any,
+      });
+    }
+
+    await this.prisma.pendingRafacallSignup.update({
+      where: { id: pending.id },
+      data: {
+        consumedAt: new Date(),
+        createdUserId: userId,
+      },
+    });
+
+    await this.recordRafaCallUnlockPaymentFromCheckoutSession(userId, session);
+
+    const handoffExpires = new Date();
+    handoffExpires.setHours(handoffExpires.getHours() + 2);
+
+    await this.prisma.membershipCheckoutHandoff.upsert({
+      where: { stripeSessionId: sess.id as string },
+      create: {
+        stripeSessionId: sess.id as string,
+        userId,
+        expiresAt: handoffExpires,
+      },
+      update: {
+        userId,
+        expiresAt: handoffExpires,
+        consumedAt: null,
+      },
+    });
+
+    const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
+    const currency = ((sess.currency as string | undefined) ?? 'eur').toLowerCase();
+    const paidAt = new Date();
+    const methodLabel = this.formatPaymentMethodFromSession(session);
+    const amountLabel =
+      amountTotal != null && Number.isFinite(amountTotal)
+        ? this.formatMoney(amountTotal, currency)
+        : undefined;
+    await this.notifyAdminsNewPayment({
+      payerUserId: userId,
+      reason: 'Taxa de agendamento — chamada com a Rafa',
+      amountLabel,
+      paidAt,
+      methodLabel,
+    });
+  }
+
+  async claimGuestRafacallCheckout(sessionId: string) {
+    const trimmed = sessionId.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Sessão de pagamento em falta.');
+    }
+
+    const handoff = await this.prisma.membershipCheckoutHandoff.findUnique({
+      where: { stripeSessionId: trimmed },
+    });
+
+    if (handoff) {
+      if (handoff.consumedAt) {
+        return { status: 'consumed' as const };
+      }
+      if (handoff.expiresAt < new Date()) {
+        return { status: 'expired' as const };
+      }
+      const auth = await this.authService.issueAuthTokenForUserId(handoff.userId);
+      if (!auth) {
+        return { status: 'invalid' as const };
+      }
+      await this.prisma.membershipCheckoutHandoff.update({
+        where: { id: handoff.id },
+        data: { consumedAt: new Date() },
+      });
+      return {
+        status: 'ready' as const,
+        token: auth.token,
+        user: auth.user,
+      };
+    }
+
+    const stripe = this.getClient();
+    let session: Stripe.Checkout.Session;
+    try {
+      session = await stripe.checkout.sessions.retrieve(trimmed);
+    } catch {
+      return { status: 'invalid' as const };
+    }
+
+    if (!this.isCheckoutSessionSuccessfullyPaid(session)) {
+      return { status: 'pending' as const };
+    }
+
+    const checkoutType = session.metadata?.checkoutType;
+    if (checkoutType !== 'rafacall_guest') {
+      return { status: 'invalid' as const };
+    }
+
+    await this.handleGuestRafacallCheckoutCompleted(session);
+
+    const retryHandoff = await this.prisma.membershipCheckoutHandoff.findUnique({
+      where: { stripeSessionId: trimmed },
+    });
+    if (!retryHandoff || retryHandoff.consumedAt) {
+      return retryHandoff?.consumedAt
+        ? { status: 'consumed' as const }
+        : { status: 'pending' as const };
+    }
+
+    const auth = await this.authService.issueAuthTokenForUserId(retryHandoff.userId);
+    if (!auth) return { status: 'invalid' as const };
+
+    await this.prisma.membershipCheckoutHandoff.update({
+      where: { id: retryHandoff.id },
+      data: { consumedAt: new Date() },
+    });
+
+    return {
+      status: 'ready' as const,
+      token: auth.token,
+      user: auth.user,
+    };
+  }
+
   async claimGuestMembershipCheckout(sessionId: string) {
     const trimmed = sessionId.trim();
     if (!trimmed) {
@@ -1046,7 +1368,8 @@ export class StripeService {
       checkoutType === 'rafa_call_unlock' ||
       checkoutType === 'partner_sale_commission' ||
       checkoutType === 'partner_advertising_topup' ||
-      checkoutType === 'membership_guest'
+      checkoutType === 'membership_guest' ||
+      checkoutType === 'rafacall_guest'
     );
   }
 
@@ -1276,6 +1599,10 @@ export class StripeService {
     const checkoutTypeEarly = sess.metadata?.checkoutType as string | undefined;
     if (checkoutTypeEarly === 'membership_guest') {
       await this.handleGuestMembershipCheckoutCompleted(session);
+      return;
+    }
+    if (checkoutTypeEarly === 'rafacall_guest') {
+      await this.handleGuestRafacallCheckoutCompleted(session);
       return;
     }
 

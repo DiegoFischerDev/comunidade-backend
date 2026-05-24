@@ -1,0 +1,39 @@
+import {
+  IsEmail,
+  IsIn,
+  IsString,
+  IsUrl,
+  MinLength,
+} from 'class-validator';
+
+export class CreateGuestRafacallCheckoutDto {
+  @IsString()
+  @MinLength(2)
+  name!: string;
+
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @MinLength(8)
+  whatsapp!: string;
+
+  @IsString()
+  @MinLength(6)
+  password!: string;
+
+  @IsString()
+  @MinLength(6)
+  passwordConfirm!: string;
+
+  @IsString()
+  @IsUrl()
+  successUrl!: string;
+
+  @IsString()
+  @IsUrl()
+  cancelUrl!: string;
+
+  @IsIn(['card', 'mbway', 'pix'])
+  paymentMethod!: 'card' | 'mbway' | 'pix';
+}

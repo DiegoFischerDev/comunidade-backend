@@ -6,6 +6,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { CreateGuestMembershipCheckoutDto } from './dto/create-guest-membership-checkout.dto';
+import { CreateGuestRafacallCheckoutDto } from './dto/create-guest-rafacall-checkout.dto';
 
 @Controller('stripe')
 export class StripeController {
@@ -35,6 +36,20 @@ export class StripeController {
     const sessionId =
       typeof req.query?.session_id === 'string' ? req.query.session_id : '';
     return this.stripeService.claimGuestMembershipCheckout(sessionId);
+  }
+
+  @Public()
+  @Post('create-guest-rafacall-checkout')
+  async createGuestRafacallCheckout(@Body() dto: CreateGuestRafacallCheckoutDto) {
+    return this.stripeService.createGuestRafacallCheckout(dto);
+  }
+
+  @Public()
+  @Get('claim-guest-rafacall')
+  async claimGuestRafacall(@Req() req: { query?: Record<string, string | string[] | undefined> }) {
+    const sessionId =
+      typeof req.query?.session_id === 'string' ? req.query.session_id : '';
+    return this.stripeService.claimGuestRafacallCheckout(sessionId);
   }
 
   @Post('create-checkout-session')
