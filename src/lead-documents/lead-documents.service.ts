@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -50,22 +49,27 @@ export class LeadDocumentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Confirma que o WhatsApp introduzido coincide com o do lead. Devolve dados públicos da
-   * página (nome, email do lead + contactos do parceiro). Não devolve nada sensível antes da
-   * confirmação — o ID do lead já é o «segredo» partilhado, mas confirmar o WhatsApp evita
-   * que terceiros explorem URLs por força bruta.
+   * Localiza o lead mais recente registado para o WhatsApp indicado e devolve o contexto
+   * público da página (lead + parceiro atribuído + estado de envio anterior). O WhatsApp é
+   * normalizado para apenas dígitos e exigimos pelo menos 6 caracteres.
+   *
+   * Se o mesmo utilizador refizer o questionário, prevalece o lead mais recente — a
+   * submissão de documentos atualiza apenas esse lead (que é o que o parceiro vê no
+   * dashboard).
    */
-  async verifyByWhatsapp(
-    leadId: string,
-    whatsapp: string,
-  ): Promise<LeadDocumentsContext> {
-    const lead = await this.prisma.lead.findUnique({
-      where: { id: leadId },
+  async verifyByWhatsapp(whatsapp: string): Promise<LeadDocumentsContext> {
+    const provided = normalizeWhatsapp(whatsapp);
+    if (!provided || provided.length < 6) {
+      throw new BadRequestException('WhatsApp inválido.');
+    }
+
+    const lead = await this.prisma.lead.findFirst({
+      where: { whatsapp: provided },
+      orderBy: { createdAt: 'desc' },
       select: {
         id: true,
         name: true,
         email: true,
-        whatsapp: true,
         docsSentAt: true,
         partner: {
           select: {
@@ -79,26 +83,19 @@ export class LeadDocumentsService {
         },
       },
     });
-    if (!lead) throw new NotFoundException('Lead não encontrado.');
-
-    const provided = normalizeWhatsapp(whatsapp);
-    if (!provided || provided.length < 6) {
-      throw new BadRequestException('WhatsApp inválido.');
-    }
-
-    if (normalizeWhatsapp(lead.whatsapp) !== provided) {
-      throw new ForbiddenException(
-        'O número de WhatsApp não coincide com o registado para este lead.',
+    if (!lead) {
+      throw new NotFoundException(
+        'Não encontrámos nenhum pedido de financiamento para este número de WhatsApp. Confirma se introduziste o mesmo número que usaste no questionário.',
       );
     }
 
     const lastSubmission = await this.prisma.leadDocumentSubmission.findFirst({
-      where: { leadId },
+      where: { leadId: lead.id },
       orderBy: { submittedAt: 'desc' },
       select: { submittedAt: true },
     });
     const submissionsCount = await this.prisma.leadDocumentSubmission.count({
-      where: { leadId },
+      where: { leadId: lead.id },
     });
 
     return {
@@ -123,7 +120,6 @@ export class LeadDocumentsService {
    * `Lead.docsSentAt`.
    */
   async submit(input: {
-    leadId: string;
     whatsapp: string;
     mode: string;
     nome: string;
@@ -152,8 +148,8 @@ export class LeadDocumentsService {
     }
     const vinculo: VinculoLaboral = input.vinculoLaboral;
 
-    // Valida o WhatsApp e carrega dados do parceiro destinatário.
-    const ctx = await this.verifyByWhatsapp(input.leadId, input.whatsapp);
+    // Localiza o lead pelo WhatsApp e carrega dados do parceiro destinatário.
+    const ctx = await this.verifyByWhatsapp(input.whatsapp);
     const partnerEmail = (ctx.partner.email ?? '').trim();
     if (!partnerEmail) {
       throw new InternalServerErrorException(

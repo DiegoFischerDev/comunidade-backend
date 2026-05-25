@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  Param,
   Post,
   UploadedFiles,
   UseInterceptors,
@@ -16,9 +15,10 @@ import { MAX_DOC_FILE_BYTES } from './lead-documents.constants';
 /**
  * Endpoints públicos para o lead enviar documentos ao parceiro de financiamento atribuído.
  *
- * Autorização: o lead «autentica-se» enviando o WhatsApp registado no `Lead`. Como o `:id`
- * do lead já é um cuid (não enumerável), e o WhatsApp é obrigatório em todos os pedidos
- * sensíveis, mantemos o nível de segurança equivalente ao do guest checkout do RafaCall.
+ * Autorização: o lead «autentica-se» enviando o WhatsApp registado no `Lead`. O backend
+ * procura o lead mais recente para esse WhatsApp e devolve os dados do parceiro associado;
+ * não há `leadId` no path porque o WhatsApp é a chave estável (o utilizador pode aceder ao
+ * formulário a partir do banner em `/financiamento` sem ter de saber o ID do lead).
  */
 @Controller('lead-documents')
 export class LeadDocumentsController {
@@ -26,9 +26,9 @@ export class LeadDocumentsController {
 
   /** Confirma o WhatsApp do lead e devolve dados para a página de upload. */
   @Public()
-  @Post(':id/verify')
-  verify(@Param('id') id: string, @Body() dto: VerifyLeadDocumentsDto) {
-    return this.service.verifyByWhatsapp(id, dto.whatsapp);
+  @Post('verify')
+  verify(@Body() dto: VerifyLeadDocumentsDto) {
+    return this.service.verifyByWhatsapp(dto.whatsapp);
   }
 
   /**
@@ -37,7 +37,7 @@ export class LeadDocumentsController {
    * `cartao_residencia_ou_passaporte`); os campos de texto vão no `body`.
    */
   @Public()
-  @Post(':id/submit')
+  @Post('submit')
   @UseInterceptors(
     AnyFilesInterceptor({
       storage: memoryStorage(),
@@ -45,7 +45,6 @@ export class LeadDocumentsController {
     }),
   )
   async submit(
-    @Param('id') id: string,
     @UploadedFiles() rawFiles: Express.Multer.File[] | undefined,
     @Body() body: Record<string, string | string[] | undefined>,
   ) {
@@ -79,7 +78,6 @@ export class LeadDocumentsController {
     }));
 
     return this.service.submit({
-      leadId: id,
       whatsapp,
       mode,
       nome,
