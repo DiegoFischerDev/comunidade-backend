@@ -98,6 +98,9 @@ export function buildLeadDocumentsEmailHtml(input: {
   leadName: string;
   leadEmail: string;
   leadWhatsapp: string;
+  partnerName: string;
+  partnerEmail: string;
+  partnerWhatsapp: string;
   estadoCivil: string;
   numDependentes: string;
   anosEmprego: string;
@@ -116,6 +119,7 @@ export function buildLeadDocumentsEmailHtml(input: {
         : 'Primeiro envio';
 
   const wa = digitsOnly(input.leadWhatsapp);
+  const partnerWa = digitsOnly(input.partnerWhatsapp);
 
   const declaredBlock = buildDeclaredFieldsHtml({
     estadoCivil: input.estadoCivil,
@@ -145,19 +149,33 @@ export function buildLeadDocumentsEmailHtml(input: {
         <h1 style="margin:6px 0 0;color:#fff;font-size:22px;font-weight:700;">Documentos recebidos do lead</h1>
       </div>
       <div style="border:1px solid ${BORDER};border-top:0;border-radius:0 0 16px 16px;padding:24px 22px;background:#fff;">
-        <div style="background:${SOFT_BG};border-left:4px solid ${PRIMARY};border-radius:6px;padding:14px 16px;margin:0 0 18px;">
-          <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:${TEXT_DARK};">${escapeHtml(input.leadName || 'Lead sem nome')}</p>
-          ${input.leadEmail ? `<p style="margin:0;font-size:13px;color:${TEXT_DARK};"><a href="mailto:${escapeHtml(input.leadEmail)}" style="color:${TEXT_DARK};text-decoration:underline;">${escapeHtml(input.leadEmail)}</a></p>` : ''}
-          ${wa ? `<p style="margin:2px 0 0;font-size:13px;color:${TEXT_DARK};"><a href="https://wa.me/${wa}" style="color:${TEXT_DARK};text-decoration:underline;">+${escapeHtml(wa)}</a></p>` : ''}
-        </div>
+        <table role="presentation" style="border-collapse:separate;border-spacing:0;width:100%;margin:0 0 18px;">
+          <tr>
+            <td style="vertical-align:top;width:50%;padding-right:6px;">
+              <p style="margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:${TEXT_MUTED};font-weight:600;">Enviado por (lead)</p>
+              <div style="background:${SOFT_BG};border-left:4px solid ${PRIMARY};border-radius:6px;padding:14px 16px;">
+                <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:${TEXT_DARK};">${escapeHtml(input.leadName || 'Lead sem nome')}</p>
+                ${input.leadEmail ? `<p style="margin:0;font-size:13px;color:${TEXT_DARK};"><a href="mailto:${escapeHtml(input.leadEmail)}" style="color:${TEXT_DARK};text-decoration:underline;">${escapeHtml(input.leadEmail)}</a></p>` : ''}
+                ${wa ? `<p style="margin:2px 0 0;font-size:13px;color:${TEXT_DARK};"><a href="https://wa.me/${wa}" style="color:${TEXT_DARK};text-decoration:underline;">+${escapeHtml(wa)}</a></p>` : ''}
+              </div>
+            </td>
+            <td style="vertical-align:top;width:50%;padding-left:6px;">
+              <p style="margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:${TEXT_MUTED};font-weight:600;">Recebido por (gestora)</p>
+              <div style="background:#ecfdf5;border-left:4px solid #10b981;border-radius:6px;padding:14px 16px;">
+                <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:${TEXT_DARK};">${escapeHtml(input.partnerName || 'Gestora atribuída')}</p>
+                ${input.partnerEmail ? `<p style="margin:0;font-size:13px;color:${TEXT_DARK};"><a href="mailto:${escapeHtml(input.partnerEmail)}" style="color:${TEXT_DARK};text-decoration:underline;">${escapeHtml(input.partnerEmail)}</a></p>` : ''}
+                ${partnerWa ? `<p style="margin:2px 0 0;font-size:13px;color:${TEXT_DARK};"><a href="https://wa.me/${partnerWa}" style="color:${TEXT_DARK};text-decoration:underline;">+${escapeHtml(partnerWa)}</a></p>` : ''}
+              </div>
+            </td>
+          </tr>
+        </table>
 
         ${declaredBlock}
         ${fileListHtml}
 
         <hr style="border:0;border-top:1px solid ${BORDER};margin:22px 0 16px;" />
         <p style="margin:0;font-size:12px;color:${TEXT_MUTED};line-height:1.5;">
-          Este email foi gerado automaticamente quando o lead concluiu o envio de documentos na Comunidade Rafa Portugal. Podes responder diretamente a este email — o lead recebe a tua resposta no seu próprio endereço.
-        </p>
+          Este email foi gerado automaticamente quando concluiu o envio de documentos na Comunidade Rafa Portugal. Apenas a gestora de crédito tem acesso aos documentos.       </p>
       </div>
     </div>
   `;
@@ -169,6 +187,9 @@ export function buildLeadDocumentsEmailText(input: {
   leadName: string;
   leadEmail: string;
   leadWhatsapp: string;
+  partnerName: string;
+  partnerEmail: string;
+  partnerWhatsapp: string;
   estadoCivil: string;
   numDependentes: string;
   anosEmprego: string;
@@ -187,11 +208,18 @@ export function buildLeadDocumentsEmailText(input: {
         : 'Primeiro envio';
 
   const lines: string[] = [
-    'Documentos recebidos do lead — Comunidade Rafa Portugal',
+    'Documentos recebidos — Comunidade Rafa Portugal',
     '',
-    `Lead: ${input.leadName || '—'}`,
-    `Email: ${input.leadEmail || '—'}`,
-    `WhatsApp: ${input.leadWhatsapp ? `+${digitsOnly(input.leadWhatsapp)}` : '—'}`,
+    'Enviado por (lead):',
+    `- Nome: ${input.leadName || '—'}`,
+    `- Email: ${input.leadEmail || '—'}`,
+    `- WhatsApp: ${input.leadWhatsapp ? `+${digitsOnly(input.leadWhatsapp)}` : '—'}`,
+    '',
+    'Recebido por (gestora):',
+    `- Nome: ${input.partnerName || '—'}`,
+    `- Email: ${input.partnerEmail || '—'}`,
+    `- WhatsApp: ${input.partnerWhatsapp ? `+${digitsOnly(input.partnerWhatsapp)}` : '—'}`,
+    '',
     `Tipo de envio: ${modeLabel}`,
     '',
     'Dados declarados:',
@@ -231,7 +259,9 @@ export function buildLeadDocumentsEmailText(input: {
 /** Envia o email ao parceiro com os ficheiros do lead em anexo. CC para o lead. */
 export async function sendLeadDocumentsEmail(input: {
   mode: LeadDocumentSubmissionMode;
+  partnerName: string;
   partnerEmail: string;
+  partnerWhatsapp: string;
   leadName: string;
   leadEmail: string;
   leadWhatsapp: string;

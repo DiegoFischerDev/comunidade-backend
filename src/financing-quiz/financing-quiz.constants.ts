@@ -305,7 +305,8 @@ Casa: 200 000 €
 Financiamento: 100%
 Prazo: 35 anos
 Prestação com seguros: 750 €
-Custos no dia da escritura: 2 200 €
+
+Custos no dia da escritura:
 • Imposto sobre o crédito: 1 200 €
 • Escritura: 1 000 €`;
 
@@ -315,7 +316,8 @@ Casa: 200 000 €
 Financiamento: 90%
 Prazo: 35 anos
 Prestação com seguros: 723 €
-Custos no dia da escritura: 27 000 €
+
+Custos no dia da escritura:
 • Entrada: 20 000 €
 • IMT: 3 540 €
 • Imposto sobre o crédito: 1 100 €

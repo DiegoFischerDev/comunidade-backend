@@ -51,6 +51,7 @@ export class LeadDocumentsController {
     const whatsapp = String(body.whatsapp ?? '');
     const mode = String(body.mode ?? 'main');
     const nome = String(body.nome ?? '');
+    const email = String(body.email ?? '');
     const estadoCivil = String(body.estado_civil ?? '');
     const numDependentes = String(body.num_dependentes ?? '');
     const anosEmprego = String(body.anos_emprego_atual ?? '');
@@ -81,6 +82,7 @@ export class LeadDocumentsController {
       whatsapp,
       mode,
       nome,
+      email,
       estadoCivil,
       numDependentes,
       anosEmprego,

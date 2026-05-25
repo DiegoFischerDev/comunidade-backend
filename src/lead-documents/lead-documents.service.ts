@@ -123,6 +123,7 @@ export class LeadDocumentsService {
     whatsapp: string;
     mode: string;
     nome: string;
+    email: string;
     estadoCivil: string;
     numDependentes: string;
     anosEmprego: string;
@@ -206,12 +207,21 @@ export class LeadDocumentsService {
 
     // Envia o email ao parceiro (com CC para o lead) — se falhar, abortamos antes de
     // persistir a submissão para não criar lixo na DB.
+    // Aceitamos override de nome/email feitos pelo lead na própria página de upload (caso
+    // tenha digitado errado no quiz). Se vier vazio ou inválido, mantemos o que está em DB.
+    const submittedEmail = input.email.trim().toLowerCase();
+    const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(submittedEmail);
+    const effectiveLeadEmail = isEmailValid ? submittedEmail : ctx.lead.email;
+    const effectiveLeadName = input.nome.trim() || ctx.lead.name;
+
     try {
       await sendLeadDocumentsEmail({
         mode,
+        partnerName: ctx.partner.name,
         partnerEmail,
-        leadName: input.nome.trim() || ctx.lead.name,
-        leadEmail: ctx.lead.email,
+        partnerWhatsapp: ctx.partner.whatsapp ?? '',
+        leadName: effectiveLeadName,
+        leadEmail: effectiveLeadEmail,
         leadWhatsapp: input.whatsapp,
         estadoCivil: input.estadoCivil.trim(),
         numDependentes: input.numDependentes.trim(),
