@@ -317,7 +317,7 @@ export class HouseImageStorageService {
    * Imagem OG para partilha do link (1200×630, JPEG). Grava em R2 ou `uploads/share-links/og/`.
    */
   /**
-   * Imagem do card em /relocation/servicos (4:3, JPEG). Grava em R2 ou `uploads/recommended-services/cards/`.
+   * Imagem do card em /servicos (4:3, JPEG). Grava em R2 ou `uploads/recommended-services/cards/`.
    */
   async processRecommendedServiceCardImage(file: Express.Multer.File): Promise<{
     publicUrl: string;
