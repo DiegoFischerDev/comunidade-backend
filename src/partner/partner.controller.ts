@@ -25,8 +25,6 @@ import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
-import { CreateCategoryDto } from './dto/create-category.dto';
-import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Public } from '../auth/public.decorator';
 import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { UpdateServiceCommissionDto } from './dto/update-service-commission.dto';
@@ -127,33 +125,6 @@ export class PartnerController {
     );
   }
 
-  @Get('admin/categories')
-  @Roles(Role.ADMIN)
-  async listCategories() {
-    return this.partnerService.listCategories();
-  }
-
-  @Post('admin/categories')
-  @Roles(Role.ADMIN)
-  async createCategory(@Body() dto: CreateCategoryDto) {
-    return this.partnerService.createCategory(dto);
-  }
-
-  @Patch('admin/categories/:id')
-  @Roles(Role.ADMIN)
-  async updateCategory(
-    @Param('id') id: string,
-    @Body() dto: UpdateCategoryDto,
-  ) {
-    return this.partnerService.updateCategory(id, dto);
-  }
-
-  @Delete('admin/categories/:id')
-  @Roles(Role.ADMIN)
-  async deleteCategory(@Param('id') id: string) {
-    return this.partnerService.deleteCategory(id);
-  }
-
   @Get('admin/services')
   @Roles(Role.ADMIN)
   async adminListServices() {
@@ -170,12 +141,6 @@ export class PartnerController {
       id,
       dto.rpmCommissionEur,
     );
-  }
-
-  @Public()
-  @Get('categories-with-partners')
-  async listCategoriesWithPartners() {
-    return this.partnerService.listCategoriesWithPartners();
   }
 
   /** Imóveis públicos (parceiros relocation, disponíveis). Deve ficar antes de rotas `:id`. */
@@ -201,13 +166,6 @@ export class PartnerController {
       page: page || undefined,
       pageSize: pageSize || undefined,
     });
-  }
-
-  /** Categoria Relocation (nome, slug, imagem de capa para hero). */
-  @Public()
-  @Get('relocation/category')
-  async getRelocationCategoryPublic() {
-    return this.partnerService.getRelocationCategoryPublic();
   }
 
   /** Página pública do anúncio (detalhes + parceiro relocation). */

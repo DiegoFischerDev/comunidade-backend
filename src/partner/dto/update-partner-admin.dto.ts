@@ -1,10 +1,13 @@
-import { IsOptional, IsString } from 'class-validator';
-import { IsInt, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class UpdatePartnerAdminDto {
+  /**
+   * Slug da categoria do parceiro (constante do projeto). Aceita um dos valores definidos em
+   * `partner-categories.ts` (`relocation`, `financiamento`, `outras`) ou `null` para limpar.
+   */
   @IsOptional()
   @IsString()
-  categoryId?: string | null;
+  categorySlug?: string | null;
 
   @IsOptional()
   @IsInt()
@@ -12,4 +15,3 @@ export class UpdatePartnerAdminDto {
   @Max(10)
   priority?: number;
 }
-

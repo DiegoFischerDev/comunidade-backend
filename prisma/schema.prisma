@@ -106,7 +106,9 @@ enum PartnerReactionType {
 model WhatsappRegistrationRequest {
   id                    String   @id @default(cuid())
   code                  String   @unique
-  /** Token opaco devolvido ao browser para polling após confirmação no WhatsApp */
+  /**
+   * Token opaco devolvido ao browser para polling após confirmação no WhatsApp
+   */
   browserSessionToken   String   @unique @map("browser_session_token")
   name                  String
   passwordHash          String   @map("password_hash")
@@ -120,20 +122,24 @@ model WhatsappRegistrationRequest {
   @@map("whatsapp_registration_requests")
 }
 
-/** Ligação temporária browser ↔ utilizador após confirmação WA (troca única por JWT) */
+/**
+ * Ligação temporária browser ↔ utilizador após confirmação WA (troca única por JWT)
+ */
 model WhatsappRegistrationBrowserHandoff {
-  id            String    @id @default(cuid())
-  sessionToken  String    @unique @map("session_token")
-  userId        String    @map("user_id")
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt     DateTime  @map("expires_at")
-  consumedAt    DateTime? @map("consumed_at")
+  id           String    @id @default(cuid())
+  sessionToken String    @unique @map("session_token")
+  userId       String    @map("user_id")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt    DateTime  @map("expires_at")
+  consumedAt   DateTime? @map("consumed_at")
 
   @@index([expiresAt])
   @@map("whatsapp_registration_browser_handoffs")
 }
 
-/** Dados de registo guardados até confirmação do pagamento da anuidade (checkout convidado). */
+/**
+ * Dados de registo guardados até confirmação do pagamento da anuidade (checkout convidado).
+ */
 model PendingMembershipSignup {
   id                    String    @id @default(cuid())
   name                  String
@@ -155,7 +161,9 @@ model PendingMembershipSignup {
   @@map("pending_membership_signups")
 }
 
-/** Dados de registo guardados até confirmação do pagamento da taxa de agendamento (checkout convidado). */
+/**
+ * Dados de registo guardados até confirmação do pagamento da taxa de agendamento (checkout convidado).
+ */
 model PendingRafacallSignup {
   id              String    @id @default(cuid())
   name            String
@@ -174,7 +182,9 @@ model PendingRafacallSignup {
   @@map("pending_rafacall_signups")
 }
 
-/** Troca única de JWT após pagamento no checkout convidado (session_id do Stripe). */
+/**
+ * Troca única de JWT após pagamento no checkout convidado (session_id do Stripe).
+ */
 model MembershipCheckoutHandoff {
   id              String    @id @default(cuid())
   stripeSessionId String    @unique @map("stripe_session_id")
@@ -188,79 +198,93 @@ model MembershipCheckoutHandoff {
 }
 
 model User {
-  id                         String    @id @default(cuid())
-  email                      String?   @unique
-  passwordHash               String    @map("password_hash")
-  role                       Role      @default(USER)
-  tier                       UserTier  @default(MEMBER) @map("tier")
-  membershipExpiresAt        DateTime? @map("membership_expires_at")
-  name                       String
-  whatsapp                   String    @unique @map("whatsapp")
-  instagram                  String?   @map("instagram")
-  profileImageUrl            String?   @map("profile_image_url")
-  emailVerifiedAt            DateTime? @map("email_verified_at")
-  emailVerificationCode      String?   @map("email_verification_code")
-  emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
-  registrationChannel        RegistrationChannel @default(EMAIL) @map("registration_channel")
-  whatsappVerificationCode      String?   @map("whatsapp_verification_code")
-  whatsappVerificationExpiresAt DateTime? @map("whatsapp_verification_expires_at")
-  resetPasswordCode          String?   @map("reset_password_code")
-  resetPasswordExpiresAt     DateTime? @map("reset_password_expires_at")
-  referredByAffiliateId      String?   @map("referred_by_affiliate_id")
-  referredAt                 DateTime? @map("referred_at")
-  referredByCodeSnapshot     String?   @map("referred_by_code_snapshot")
-  indicadoPor                String?   @map("indicado_por")
-  /** Pode abrir Cal.com para marcar/reagendar (1º acesso com membro ou após pagar taxa). */
-  rafaCallSchedulingUnlocked Boolean   @default(false) @map("rafa_call_scheduling_unlocked")
-  /** Origem do desbloqueio atual do agendamento (pago vs afiliado). */
-  rafaCallUnlockOrigin       RafaCallBookingOrigin? @map("rafa_call_unlock_origin")
-  /** Início da chamada agendada (webhook Calendly). */
-  rafaCallSlotStartsAt       DateTime? @map("rafa_call_slot_starts_at")
-  /** Fim da janela da chamada agendada (webhook Calendly); após isto o direito consome-se. */
-  rafaCallSlotEndsAt         DateTime? @map("rafa_call_slot_ends_at")
-  createdAt                  DateTime  @default(now()) @map("created_at")
-  updatedAt                  DateTime  @updatedAt @map("updated_at")
+  id                            String                 @id @default(cuid())
+  email                         String?                @unique
+  passwordHash                  String                 @map("password_hash")
+  role                          Role                   @default(USER)
+  tier                          UserTier               @default(MEMBER) @map("tier")
+  membershipExpiresAt           DateTime?              @map("membership_expires_at")
+  name                          String
+  whatsapp                      String                 @unique @map("whatsapp")
+  instagram                     String?                @map("instagram")
+  profileImageUrl               String?                @map("profile_image_url")
+  emailVerifiedAt               DateTime?              @map("email_verified_at")
+  emailVerificationCode         String?                @map("email_verification_code")
+  emailVerificationExpiresAt    DateTime?              @map("email_verification_expires_at")
+  registrationChannel           RegistrationChannel    @default(EMAIL) @map("registration_channel")
+  whatsappVerificationCode      String?                @map("whatsapp_verification_code")
+  whatsappVerificationExpiresAt DateTime?              @map("whatsapp_verification_expires_at")
+  resetPasswordCode             String?                @map("reset_password_code")
+  resetPasswordExpiresAt        DateTime?              @map("reset_password_expires_at")
+  referredByAffiliateId         String?                @map("referred_by_affiliate_id")
+  referredAt                    DateTime?              @map("referred_at")
+  referredByCodeSnapshot        String?                @map("referred_by_code_snapshot")
+  indicadoPor                   String?                @map("indicado_por")
+  /**
+   * Pode abrir Cal.com para marcar/reagendar (1º acesso com membro ou após pagar taxa).
+   */
+  rafaCallSchedulingUnlocked    Boolean                @default(false) @map("rafa_call_scheduling_unlocked")
+  /**
+   * Origem do desbloqueio atual do agendamento (pago vs afiliado).
+   */
+  rafaCallUnlockOrigin          RafaCallBookingOrigin? @map("rafa_call_unlock_origin")
+  /**
+   * Início da chamada agendada (webhook Calendly).
+   */
+  rafaCallSlotStartsAt          DateTime?              @map("rafa_call_slot_starts_at")
+  /**
+   * Fim da janela da chamada agendada (webhook Calendly); após isto o direito consome-se.
+   */
+  rafaCallSlotEndsAt            DateTime?              @map("rafa_call_slot_ends_at")
+  createdAt                     DateTime               @default(now()) @map("created_at")
+  updatedAt                     DateTime               @updatedAt @map("updated_at")
 
-  rafaCallBookings      RafaCallBooking[]
+  rafaCallBookings            RafaCallBooking[]
   rafaCallBlockedSlotsCreated RafaCallBlockedSlot[] @relation("RafaCallBlockedSlotsCreated")
 
-  subscription       Subscription?
-  membershipPayments MembershipPayment[]
-  rafaCallUnlockPayments RafaCallUnlockPayment[]
-  partner            Partner?
-  affiliateProfile AffiliateProfile?
-  referredByAffiliate AffiliateProfile? @relation("AffiliateReferrals", fields: [referredByAffiliateId], references: [id], onDelete: SetNull)
-  affiliateCommissionsFromReferrals AffiliateCommission[] @relation("AffiliateCommissionReferredUser")
-  partnerSales PartnerSale[]
+  subscription                        Subscription?
+  membershipPayments                  MembershipPayment[]
+  rafaCallUnlockPayments              RafaCallUnlockPayment[]
+  partner                             Partner?
+  affiliateProfile                    AffiliateProfile?
+  referredByAffiliate                 AffiliateProfile?                    @relation("AffiliateReferrals", fields: [referredByAffiliateId], references: [id], onDelete: SetNull)
+  affiliateCommissionsFromReferrals   AffiliateCommission[]                @relation("AffiliateCommissionReferredUser")
+  partnerSales                        PartnerSale[]
   whatsappRegistrationBrowserHandoffs WhatsappRegistrationBrowserHandoff[]
-  membershipCheckoutHandoffs        MembershipCheckoutHandoff[]
-  supportTickets SupportTicket[]
-  immigrationChecklist ImmigrationChecklist?
-  partnerReactions   PartnerReaction[]
-  partnerComments    PartnerComment[]
-  grupoTesteMessages GrupoTesteMessage[]
+  membershipCheckoutHandoffs          MembershipCheckoutHandoff[]
+  supportTickets                      SupportTicket[]
+  immigrationChecklist                ImmigrationChecklist?
+  partnerReactions                    PartnerReaction[]
+  partnerComments                     PartnerComment[]
+  grupoTesteMessages                  GrupoTesteMessage[]
 }
 
-/** Mensagens guardadas pelo admin para testar envio Evolution → grupo WhatsApp. */
+/**
+ * Mensagens guardadas pelo admin para testar envio Evolution → grupo WhatsApp.
+ */
 model GrupoTesteMessage {
-  id              String                   @id @default(cuid())
-  description     String                   @db.Text
-  imageUrls       String[]                 @map("image_urls")
-  videoUrl        String?                  @map("video_url")
-  /** JID opcional guardado no registo (o envio usa o JID indicado no pedido «Enviar»). */
-  targetGroupJid  String?                  @map("target_group_jid") @db.VarChar(160)
-  status          GrupoTesteMessageStatus  @default(PENDING)
-  sentAt          DateTime?                @map("sent_at")
-  whatsappError   String?                  @map("whatsapp_error") @db.Text
-  createdById     String                   @map("created_by_id")
-  createdBy       User                     @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt       DateTime                 @default(now()) @map("created_at")
+  id             String                  @id @default(cuid())
+  description    String                  @db.Text
+  imageUrls      String[]                @map("image_urls")
+  videoUrl       String?                 @map("video_url")
+  /**
+   * JID opcional guardado no registo (o envio usa o JID indicado no pedido «Enviar»).
+   */
+  targetGroupJid String?                 @map("target_group_jid") @db.VarChar(160)
+  status         GrupoTesteMessageStatus @default(PENDING)
+  sentAt         DateTime?               @map("sent_at")
+  whatsappError  String?                 @map("whatsapp_error") @db.Text
+  createdById    String                  @map("created_by_id")
+  createdBy      User                    @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt      DateTime                @default(now()) @map("created_at")
 
   @@index([createdAt])
   @@map("grupo_teste_messages")
 }
 
-/** Contacto WhatsApp sem conta na plataforma (legado; pode ser reutilizado no futuro). */
+/**
+ * Contacto WhatsApp sem conta na plataforma (legado; pode ser reutilizado no futuro).
+ */
 model Visitor {
   id        String   @id @default(cuid())
   whatsapp  String   @unique @map("whatsapp")
@@ -273,9 +297,13 @@ model ImmigrationChecklist {
   id        String   @id @default(cuid())
   userId    String   @unique @map("user_id")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  /** JSON com o estado do checklist (checkboxes, selects, datas, notas, etc.) */
+  /**
+   * JSON com o estado do checklist (checkboxes, selects, datas, notas, etc.)
+   */
   data      Json     @default("{}")
-  /** versão do template de checklist (para migrações futuras) */
+  /**
+   * versão do template de checklist (para migrações futuras)
+   */
   version   Int      @default(1)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -284,30 +312,44 @@ model ImmigrationChecklist {
 }
 
 model RafaCallBooking {
-  id                     String               @id @default(cuid())
-  /** Utilizador autenticado (legacy/admin). Nos novos fluxos guest, fica null. */
-  userId                 String?              @map("user_id")
-  user                   User?                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  /** Nome fornecido pelo guest no checkout. */
-  guestName              String?              @map("guest_name")
-  /** WhatsApp normalizado (só dígitos, com indicativo) — identidade do guest. */
-  guestWhatsapp          String?              @map("guest_whatsapp")
-  status                 RafaCallBookingStatus @default(SCHEDULED)
-  origin                 RafaCallBookingOrigin @default(USER_PAID)
-  /** UTC. */
-  startsAt               DateTime             @map("starts_at")
-  /** UTC. */
-  endsAt                 DateTime             @map("ends_at")
-  /** Timezone do utilizador no momento do agendamento (ex.: America/Sao_Paulo). */
-  timezone               String
-  /** Cadeia de histórico de reagendamentos (booking anterior). */
-  rescheduledFromBookingId String?            @map("rescheduled_from_booking_id")
-  rescheduledFromBooking   RafaCallBooking?   @relation("RafaCallRescheduleChain", fields: [rescheduledFromBookingId], references: [id], onDelete: SetNull)
-  reschedulesTo            RafaCallBooking[]  @relation("RafaCallRescheduleChain")
-  cancelledAt             DateTime?           @map("cancelled_at")
-  cancelReason            String?             @map("cancel_reason")
-  createdAt               DateTime            @default(now()) @map("created_at")
-  updatedAt               DateTime            @updatedAt @map("updated_at")
+  id                       String                @id @default(cuid())
+  /**
+   * Utilizador autenticado (legacy/admin). Nos novos fluxos guest, fica null.
+   */
+  userId                   String?               @map("user_id")
+  user                     User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /**
+   * Nome fornecido pelo guest no checkout.
+   */
+  guestName                String?               @map("guest_name")
+  /**
+   * WhatsApp normalizado (só dígitos, com indicativo) — identidade do guest.
+   */
+  guestWhatsapp            String?               @map("guest_whatsapp")
+  status                   RafaCallBookingStatus @default(SCHEDULED)
+  origin                   RafaCallBookingOrigin @default(USER_PAID)
+  /**
+   * UTC.
+   */
+  startsAt                 DateTime              @map("starts_at")
+  /**
+   * UTC.
+   */
+  endsAt                   DateTime              @map("ends_at")
+  /**
+   * Timezone do utilizador no momento do agendamento (ex.: America/Sao_Paulo).
+   */
+  timezone                 String
+  /**
+   * Cadeia de histórico de reagendamentos (booking anterior).
+   */
+  rescheduledFromBookingId String?               @map("rescheduled_from_booking_id")
+  rescheduledFromBooking   RafaCallBooking?      @relation("RafaCallRescheduleChain", fields: [rescheduledFromBookingId], references: [id], onDelete: SetNull)
+  reschedulesTo            RafaCallBooking[]     @relation("RafaCallRescheduleChain")
+  cancelledAt              DateTime?             @map("cancelled_at")
+  cancelReason             String?               @map("cancel_reason")
+  createdAt                DateTime              @default(now()) @map("created_at")
+  updatedAt                DateTime              @updatedAt @map("updated_at")
 
   @@index([userId, status])
   @@index([guestWhatsapp, status])
@@ -322,21 +364,31 @@ model RafaCallBooking {
  * Ao criar o booking, o unlock é marcado como consumido.
  */
 model RafaCallGuestUnlock {
-  id                     String   @id @default(cuid())
-  name                   String
-  /** WhatsApp normalizado (dígitos com indicativo). */
-  whatsapp               String
-  stripeCheckoutSessionId String? @unique @map("stripe_checkout_session_id")
-  /** Confirmado quando o webhook do Stripe confirma o pagamento. */
-  paidAt                 DateTime? @map("paid_at")
-  /** Marcado quando o guest cria o booking. */
-  consumedAt             DateTime? @map("consumed_at")
-  /** Booking criado a partir deste unlock (auditoria). */
-  consumedBookingId      String?   @map("consumed_booking_id")
-  /** Após esta data o unlock deixa de ser válido (caso o user não agende). */
-  expiresAt              DateTime  @map("expires_at")
-  createdAt              DateTime  @default(now()) @map("created_at")
-  updatedAt              DateTime  @updatedAt @map("updated_at")
+  id                      String    @id @default(cuid())
+  name                    String
+  /**
+   * WhatsApp normalizado (dígitos com indicativo).
+   */
+  whatsapp                String
+  stripeCheckoutSessionId String?   @unique @map("stripe_checkout_session_id")
+  /**
+   * Confirmado quando o webhook do Stripe confirma o pagamento.
+   */
+  paidAt                  DateTime? @map("paid_at")
+  /**
+   * Marcado quando o guest cria o booking.
+   */
+  consumedAt              DateTime? @map("consumed_at")
+  /**
+   * Booking criado a partir deste unlock (auditoria).
+   */
+  consumedBookingId       String?   @map("consumed_booking_id")
+  /**
+   * Após esta data o unlock deixa de ser válido (caso o user não agende).
+   */
+  expiresAt               DateTime  @map("expires_at")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
 
   @@index([whatsapp])
   @@index([paidAt])
@@ -345,13 +397,21 @@ model RafaCallGuestUnlock {
 
 model RafaCallBlockedSlot {
   id              String   @id @default(cuid())
-  /** Intervalo em UTC. */
+  /**
+   * Intervalo em UTC.
+   */
   startsAt        DateTime @map("starts_at")
-  /** Intervalo em UTC. */
+  /**
+   * Intervalo em UTC.
+   */
   endsAt          DateTime @map("ends_at")
-  /** Motivo opcional (ex.: "férias", "indisponível"). */
+  /**
+   * Motivo opcional (ex.: "férias", "indisponível").
+   */
   reason          String?  @map("reason")
-  /** Quem bloqueou (admin). */
+  /**
+   * Quem bloqueou (admin).
+   */
   createdByUserId String   @map("created_by_user_id")
   createdByUser   User     @relation("RafaCallBlockedSlotsCreated", fields: [createdByUserId], references: [id], onDelete: Cascade)
   createdAt       DateTime @default(now()) @map("created_at")
@@ -405,47 +465,49 @@ model RafaCallUnlockPayment {
 }
 
 model Partner {
-  id                   String           @id @default(cuid())
-  userId               String           @unique @map("user_id")
-  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name                 String
-  whatsapp             String
-  logoUrl              String?          @map("logo_url")
-  shortDescription     String?          @map("short_description")
-  fullDescription      String?          @map("full_description")
-  rpmCommissionPercent Float?           @map("rpm_commission_percent")
-  backgroundImageUrl   String?          @map("background_image_url")
-  catalogImageUrls     String[]         @default([]) @map("catalog_image_urls")
+  id                         String   @id @default(cuid())
+  userId                     String   @unique @map("user_id")
+  user                       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                       String
+  whatsapp                   String
+  logoUrl                    String?  @map("logo_url")
+  shortDescription           String?  @map("short_description")
+  fullDescription            String?  @map("full_description")
+  rpmCommissionPercent       Float?   @map("rpm_commission_percent")
+  backgroundImageUrl         String?  @map("background_image_url")
+  catalogImageUrls           String[] @default([]) @map("catalog_image_urls")
   /// Vídeo único exibido na página pública antes do carrossel de imagens (URL absoluta ou `/uploads/...`).
-  catalogVideoUrl      String?          @map("catalog_video_url")
-  instagram            String?          @map("instagram")
+  catalogVideoUrl            String?  @map("catalog_video_url")
+  instagram                  String?  @map("instagram")
   /// Dados de faturação (para emissão de fatura da comissão em Portugal)
-  billingName          String?          @map("billing_name")
-  billingNif           String?          @map("billing_nif")
-  billingAddress       String?          @map("billing_address")
-  billingPostalCode    String?          @map("billing_postal_code")
-  categoryId           String?          @map("category_id")
-  category             ProductCategory? @relation(fields: [categoryId], references: [id])
+  billingName                String?  @map("billing_name")
+  billingNif                 String?  @map("billing_nif")
+  billingAddress             String?  @map("billing_address")
+  billingPostalCode          String?  @map("billing_postal_code")
+  /// Slug da categoria do parceiro (constante do projeto: `relocation`, `financiamento` ou
+  /// `outras`). Substitui a antiga FK `categoryId` para `ProductCategory`. Validado no
+  /// app layer (`isPartnerCategorySlug`).
+  categorySlug               String?  @map("category_slug")
   /// Contador de ações "partilhar" (abrir o fluxo e registar partilha).
-  shareCount           Int              @default(0) @map("share_count")
+  shareCount                 Int      @default(0) @map("share_count")
   /// Prioridade do parceiro dentro da categoria (admin). Maior = mais prioritário.
-  priority             Int              @default(0) @map("priority")
+  priority                   Int      @default(0) @map("priority")
   /// Saldo para publicação de imóveis (cêntimos EUR); controlado no backend.
-  advertisingBalanceEurCents Int        @default(0) @map("advertising_balance_eur_cents")
+  advertisingBalanceEurCents Int      @default(0) @map("advertising_balance_eur_cents")
   /// URL pública curta (ex.: /maria-silva-a1b2c3). Null = página ainda não publicada. Única quando definida.
-  publicSlug           String?          @unique @map("public_slug")
-  createdAt            DateTime         @default(now()) @map("created_at")
-  updatedAt            DateTime         @updatedAt @map("updated_at")
+  publicSlug                 String?  @unique @map("public_slug")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
 
-  services                    Service[]
-  sales                       PartnerSale[]
-  houses                      PartnerHouse[]
-  reactions                   PartnerReaction[]
-  comments                    PartnerComment[]
-  advertisingLedgerEntries    PartnerAdvertisingLedgerEntry[]
+  services                 Service[]
+  sales                    PartnerSale[]
+  houses                   PartnerHouse[]
+  reactions                PartnerReaction[]
+  comments                 PartnerComment[]
+  advertisingLedgerEntries PartnerAdvertisingLedgerEntry[]
   /// Link rastreado do botão «Entre em contato» na hero da página pública.
-  heroShareLinkId             String?           @unique @map("hero_share_link_id")
-  heroShareLink               PartnerShareLink? @relation("PartnerHeroShareLink", fields: [heroShareLinkId], references: [id], onDelete: SetNull)
+  heroShareLinkId          String?                         @unique @map("hero_share_link_id")
+  heroShareLink            PartnerShareLink?               @relation("PartnerHeroShareLink", fields: [heroShareLinkId], references: [id], onDelete: SetNull)
 }
 
 model PartnerReaction {
@@ -469,23 +531,23 @@ model PartnerReaction {
 }
 
 model PartnerComment {
-  id        String   @id @default(cuid())
-  partnerId String   @map("partner_id")
-  partner   Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  id        String           @id @default(cuid())
+  partnerId String           @map("partner_id")
+  partner   Partner          @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   /// Autor com conta (exclusivo com `deviceId` para comentários de visitante).
-  userId    String?  @map("user_id")
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String?          @map("user_id")
+  user      User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Visitante: UUID do dispositivo (cabecalho `X-Partner-Device-Id`).
-  deviceId  String?  @map("device_id") @db.VarChar(64)
+  deviceId  String?          @map("device_id") @db.VarChar(64)
   /// Nome opcional mostrado para comentários de visitante.
-  guestName String?  @map("guest_name") @db.VarChar(120)
+  guestName String?          @map("guest_name") @db.VarChar(120)
   body      String
   /// Comentário pai, quando é resposta a outro (thread / cascata).
-  parentId  String?  @map("parent_id")
+  parentId  String?          @map("parent_id")
   parent    PartnerComment?  @relation("PartnerCommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
   replies   PartnerComment[] @relation("PartnerCommentReplies")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
 
   @@index([partnerId, createdAt])
   @@index([userId])
@@ -494,47 +556,47 @@ model PartnerComment {
 }
 
 model PartnerHouse {
-  id            String            @id @default(cuid())
+  id                 String                        @id @default(cuid())
   /// Número sequencial para controlo e referência (listagens, WhatsApp: «Id: …»).
-  houseId       Int               @unique @default(autoincrement()) @map("house_id")
-  partnerId     String            @map("partner_id")
-  partner       Partner           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  title         String
-  description   String
-  businessType  PartnerHouseBusinessType @default(RENT) @map("business_type")
-  typology      PartnerHouseTypology @map("typology")
-  city          String
-  availableFrom DateTime          @map("available_from")
-  priceEur      String            @map("price_eur")
+  houseId            Int                           @unique @default(autoincrement()) @map("house_id")
+  partnerId          String                        @map("partner_id")
+  partner            Partner                       @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  title              String
+  description        String
+  businessType       PartnerHouseBusinessType      @default(RENT) @map("business_type")
+  typology           PartnerHouseTypology          @map("typology")
+  city               String
+  availableFrom      DateTime                      @map("available_from")
+  priceEur           String                        @map("price_eur")
   /// Valor em euros (texto livre, ex. "500" ou "500,00")
-  relocationFeeEur String         @map("relocation_fee_eur")
+  relocationFeeEur   String                        @map("relocation_fee_eur")
   /// Número de cauções exigidas para entrada (0–12)
-  caucoesCount  Int               @default(0) @map("caucoes_count")
+  caucoesCount       Int                           @default(0) @map("caucoes_count")
   /// Número de rendas antecipadas exigidas para entrada (0–12)
-  rendasEntradaCount Int          @default(0) @map("rendas_entrada_count")
+  rendasEntradaCount Int                           @default(0) @map("rendas_entrada_count")
   /// Imóvel mobilado (sim/não)
-  furnished     Boolean           @default(false) @map("furnished")
+  furnished          Boolean                       @default(false) @map("furnished")
   // URLs públicas (WebP), ex. R2 ou /uploads/houses/
-  imageUrls     String[]          @default([]) @map("image_urls")
+  imageUrls          String[]                      @default([]) @map("image_urls")
   /// Foto principal (preview OG / cartões); deve existir em imageUrls. Opcional — usa-se a 1.ª imagem.
-  coverImageUrl String?           @map("cover_image_url")
+  coverImageUrl      String?                       @map("cover_image_url")
   /// Vídeo opcional na página pública; envio aos grupos WhatsApp é manual (admin).
-  videoUrl      String?           @map("video_url")
+  videoUrl           String?                       @map("video_url")
   /// Thumbnail (poster) gerada do vídeo (para preview consistente em iOS/mobile).
-  videoPosterUrl String?          @map("video_poster_url")
+  videoPosterUrl     String?                       @map("video_poster_url")
   /// Destaque manual pelo admin. Imóveis em destaque aparecem primeiro em /relocation/imoveis.
-  featured           Boolean                        @default(false) @map("featured")
-  publicationStatus  PartnerHousePublicationStatus  @default(HIDDEN) @map("publication_status")
-  publishedUntil     DateTime?                      @map("published_until")
-  lastPublishedAt    DateTime?                      @map("last_published_at")
-  whatsappSentAt     DateTime?                      @map("whatsapp_sent_at")
-  whatsappError      String?                        @map("whatsapp_error")
-  createdAt          DateTime                       @default(now()) @map("created_at")
-  updatedAt          DateTime                       @updatedAt @map("updated_at")
+  featured           Boolean                       @default(false) @map("featured")
+  publicationStatus  PartnerHousePublicationStatus @default(HIDDEN) @map("publication_status")
+  publishedUntil     DateTime?                     @map("published_until")
+  lastPublishedAt    DateTime?                     @map("last_published_at")
+  whatsappSentAt     DateTime?                     @map("whatsapp_sent_at")
+  whatsappError      String?                       @map("whatsapp_error")
+  createdAt          DateTime                      @default(now()) @map("created_at")
+  updatedAt          DateTime                      @updatedAt @map("updated_at")
 
-  whatsappSends              PartnerHouseWhatsappSend[]
-  redirectClicks             RedirectClickEvent[]
-  advertisingLedgerEntries   PartnerAdvertisingLedgerEntry[]
+  whatsappSends            PartnerHouseWhatsappSend[]
+  redirectClicks           RedirectClickEvent[]
+  advertisingLedgerEntries PartnerAdvertisingLedgerEntry[]
 
   @@index([partnerId, publicationStatus])
   @@index([publicationStatus, publishedUntil])
@@ -543,51 +605,63 @@ model PartnerHouse {
 }
 
 model PartnerAdvertisingLedgerEntry {
-  id                     String                       @id @default(cuid())
-  partnerId              String                       @map("partner_id")
-  partner                Partner                      @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  type                   PartnerAdvertisingLedgerType
-  amountEurCents         Int                          @map("amount_eur_cents")
-  balanceAfterEurCents   Int                          @map("balance_after_eur_cents")
-  partnerHouseId         String?                      @map("partner_house_id")
-  partnerHouse           PartnerHouse?                @relation(fields: [partnerHouseId], references: [id], onDelete: SetNull)
-  stripeCheckoutSessionId String?                     @unique @map("stripe_checkout_session_id")
-  adminUserId            String?                      @map("admin_user_id")
-  note                   String?
-  createdAt              DateTime                     @default(now()) @map("created_at")
+  id                      String                       @id @default(cuid())
+  partnerId               String                       @map("partner_id")
+  partner                 Partner                      @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  type                    PartnerAdvertisingLedgerType
+  amountEurCents          Int                          @map("amount_eur_cents")
+  balanceAfterEurCents    Int                          @map("balance_after_eur_cents")
+  partnerHouseId          String?                      @map("partner_house_id")
+  partnerHouse            PartnerHouse?                @relation(fields: [partnerHouseId], references: [id], onDelete: SetNull)
+  stripeCheckoutSessionId String?                      @unique @map("stripe_checkout_session_id")
+  adminUserId             String?                      @map("admin_user_id")
+  note                    String?
+  createdAt               DateTime                     @default(now()) @map("created_at")
 
   @@index([partnerId, createdAt])
   @@map("partner_advertising_ledger_entries")
 }
 
-/** Link curto criado pelo admin: WhatsApp com mensagem fixa (tracking em RedirectClickEvent). */
+/**
+ * Link curto criado pelo admin: WhatsApp com mensagem fixa (tracking em RedirectClickEvent).
+ */
 model PartnerShareLink {
   id             String   @id @default(cuid())
-  /** Segmento da URL de entrada: /whatsapp?t=<slug> */
+  /**
+   * Segmento da URL de entrada: /whatsapp?t=<slug>
+   */
   slug           String   @unique
   title          String
   whatsappDigits String   @map("whatsapp_digits")
   whatsappPhrase String   @map("whatsapp_phrase") @db.Text
-  /** Quando definido, o clique redireciona para esta URL em vez de wa.me. */
+  /**
+   * Quando definido, o clique redireciona para esta URL em vez de wa.me.
+   */
   destinationUrl String?  @map("destination_url") @db.VarChar(2048)
-  /** URL pública da imagem OG (partilha WhatsApp); R2 ou `/uploads/...`. */
+  /**
+   * URL pública da imagem OG (partilha WhatsApp); R2 ou `/uploads/...`.
+   */
   ogImageUrl     String?  @map("og_image_url") @db.VarChar(2048)
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  clicks               RedirectClickEvent[]
-  recommendedServices  RecommendedService[]
-  heroForPartner       Partner?             @relation("PartnerHeroShareLink")
-  serviceContact       Service?             @relation("ServiceContactShareLink")
+  clicks              RedirectClickEvent[]
+  recommendedServices RecommendedService[]
+  heroForPartner      Partner?             @relation("PartnerHeroShareLink")
+  serviceContact      Service?             @relation("ServiceContactShareLink")
 
   @@map("partner_share_links")
 }
 
-/** Serviço em destaque no dashboard (título + link de redirecionamento WhatsApp). */
+/**
+ * Serviço em destaque no dashboard (título + link de redirecionamento WhatsApp).
+ */
 model RecommendedService {
   id                 String           @id @default(cuid())
   title              String
-  /** Imagem do card na página /servicos (R2 ou `/uploads/...`). */
+  /**
+   * Imagem do card na página /servicos (R2 ou `/uploads/...`).
+   */
   cardImageUrl       String?          @map("card_image_url") @db.VarChar(2048)
   partnerShareLinkId String           @map("partner_share_link_id")
   partnerShareLink   PartnerShareLink @relation(fields: [partnerShareLinkId], references: [id], onDelete: Cascade)
@@ -606,13 +680,17 @@ model RedirectClickEvent {
   kind      RedirectClickKind
   clickedAt DateTime          @default(now()) @map("clicked_at")
 
-  /** Cookie HttpOnly `rd_vid` (UUID) no domínio da API — um contador por visitante por link. */
+  /**
+   * Cookie HttpOnly `rd_vid` (UUID) no domínio da API — um contador por visitante por link.
+   */
   visitorKey String? @map("visitor_key") @db.VarChar(128)
 
-  /** ISO 3166-1 alpha-2 (ex.: PT); cabeçalhos CF/Vercel ou GeoIP por IP. */
+  /**
+   * ISO 3166-1 alpha-2 (ex.: PT); cabeçalhos CF/Vercel ou GeoIP por IP.
+   */
   visitorCountryCode String? @map("visitor_country_code") @db.VarChar(2)
 
-  partnerShareLinkId String?         @map("partner_share_link_id")
+  partnerShareLinkId String?           @map("partner_share_link_id")
   partnerShareLink   PartnerShareLink? @relation(fields: [partnerShareLinkId], references: [id], onDelete: Cascade)
 
   partnerHouseId String?       @map("partner_house_id")
@@ -626,10 +704,10 @@ model RedirectClickEvent {
 
 /// Histórico de envios do anúncio para grupos WhatsApp (admin).
 model PartnerHouseWhatsappSend {
-  id        String      @id @default(cuid())
-  houseId   String      @map("house_id")
-  house     PartnerHouse @relation(fields: [houseId], references: [id], onDelete: Cascade)
-  sentAt    DateTime    @default(now()) @map("sent_at")
+  id      String       @id @default(cuid())
+  houseId String       @map("house_id")
+  house   PartnerHouse @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  sentAt  DateTime     @default(now()) @map("sent_at")
 
   @@index([houseId, sentAt])
   @@map("partner_house_whatsapp_sends")
@@ -637,58 +715,43 @@ model PartnerHouseWhatsappSend {
 
 /// Grupos WhatsApp para envio manual de anúncios relocation (admin).
 model HouseRelocationWhatsappGroup {
-  id        String   @id @default(cuid())
-  name      String
-  groupJid  String   @unique @map("group_jid")
+  id           String                   @id @default(cuid())
+  name         String
+  groupJid     String                   @unique @map("group_jid")
   /// Só recebe envios de imóveis com a mesma finalidade (RENT = arrendamento, SALE = venda).
   businessType PartnerHouseBusinessType @default(RENT) @map("business_type")
-  active    Boolean  @default(true)
-  sortOrder Int      @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  active       Boolean                  @default(true)
+  sortOrder    Int                      @default(0) @map("sort_order")
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  updatedAt    DateTime                 @updatedAt @map("updated_at")
 
   @@index([active, businessType, sortOrder])
   @@map("house_relocation_whatsapp_groups")
 }
 
-model ProductCategory {
-  id                 String   @id @default(cuid())
-  slug               String   @unique
-  name               String
-  shortDescription   String?  @map("description")
-  fullDescription    String?  @map("full_description")
-  backgroundImageUrl String?  @map("background_image_url")
-  sortOrder          Int      @default(0) @map("sort_order")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
-
-  services Service[]
-  partners Partner[]
-}
-
+/// Serviços oferecidos por um parceiro. A antiga FK `categoryId` (para `ProductCategory`)
+/// foi removida porque as categorias passaram a ser constantes do projeto e nunca eram
+/// gravadas em `Service` no código.
 model Service {
-  id                      String           @id @default(cuid())
-  partnerId               String           @map("partner_id")
-  partner                 Partner          @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  categoryId              String?          @map("category_id")
-  category                ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  id                      String            @id @default(cuid())
+  partnerId               String            @map("partner_id")
+  partner                 Partner           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   title                   String
   description             String?
-  imageUrl                String?          @map("image_url")
+  imageUrl                String?           @map("image_url")
   price                   String?
-  priceOnRequest          Boolean          @default(false) @map("price_on_request")
-  rpmCommissionEur        String?          @map("rpm_commission_eur")
-  whatsappMessageTemplate String?          @map("whatsapp_message_template")
-  sortOrder               Int              @default(0) @map("sort_order")
-  createdAt               DateTime         @default(now()) @map("created_at")
-  updatedAt               DateTime         @updatedAt @map("updated_at")
+  priceOnRequest          Boolean           @default(false) @map("price_on_request")
+  rpmCommissionEur        String?           @map("rpm_commission_eur")
+  whatsappMessageTemplate String?           @map("whatsapp_message_template")
+  sortOrder               Int               @default(0) @map("sort_order")
+  createdAt               DateTime          @default(now()) @map("created_at")
+  updatedAt               DateTime          @updatedAt @map("updated_at")
   /// Link rastreado do botão «Contactar» no cartão do serviço.
-  partnerShareLinkId      String?          @unique @map("partner_share_link_id")
+  partnerShareLinkId      String?           @unique @map("partner_share_link_id")
   partnerShareLink        PartnerShareLink? @relation("ServiceContactShareLink", fields: [partnerShareLinkId], references: [id], onDelete: SetNull)
 
   sales PartnerSale[]
 
-  @@index([categoryId])
   @@index([partnerId])
 }
 
@@ -698,33 +761,33 @@ enum PartnerSaleCommissionPaymentStatus {
 }
 
 model PartnerSale {
-  id                 String   @id @default(cuid())
-  partnerId           String   @map("partner_id")
-  partner             Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  userId              String   @map("user_id")
-  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  serviceId           String   @map("service_id")
-  service             Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  id        String  @id @default(cuid())
+  partnerId String  @map("partner_id")
+  partner   Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  userId    String  @map("user_id")
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serviceId String  @map("service_id")
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
-  amountEur           String   @map("amount_eur")
+  amountEur String @map("amount_eur")
 
   commissionPaymentStatus PartnerSaleCommissionPaymentStatus @default(PENDING) @map("commission_payment_status")
-  commissionSuggestedEur  String?  @map("commission_suggested_eur")
-  commissionPaidEur       String?  @map("commission_paid_eur")
+  commissionSuggestedEur  String?                            @map("commission_suggested_eur")
+  commissionPaidEur       String?                            @map("commission_paid_eur")
 
-  wantsInvoice       Boolean  @default(false) @map("wants_invoice")
-  invoiceName        String?  @map("invoice_name")
-  invoiceNif         String?  @map("invoice_nif")
-  invoiceAddress     String?  @map("invoice_address")
-  invoicePostalCode  String?  @map("invoice_postal_code")
+  wantsInvoice       Boolean   @default(false) @map("wants_invoice")
+  invoiceName        String?   @map("invoice_name")
+  invoiceNif         String?   @map("invoice_nif")
+  invoiceAddress     String?   @map("invoice_address")
+  invoicePostalCode  String?   @map("invoice_postal_code")
   invoiceRequestedAt DateTime? @map("invoice_requested_at")
 
-  stripeCheckoutSessionId String? @unique @map("stripe_checkout_session_id")
-  stripePaymentIntentId   String? @unique @map("stripe_payment_intent_id")
-  paidAt                 DateTime? @map("paid_at")
+  stripeCheckoutSessionId String?   @unique @map("stripe_checkout_session_id")
+  stripePaymentIntentId   String?   @unique @map("stripe_payment_intent_id")
+  paidAt                  DateTime? @map("paid_at")
 
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([partnerId])
   @@index([userId])
@@ -734,38 +797,38 @@ model PartnerSale {
 }
 
 model AffiliateProfile {
-  id               String               @id @default(cuid())
-  userId           String               @unique @map("user_id")
-  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  instagramHandle  String               @map("instagram_handle")
-  affiliateCode    String               @unique @map("affiliate_code")
-  payoutMethod     CashbackPayoutMethod @default(MBWAY) @map("payout_method")
-  mbwayNumber      String?              @map("mbway_number")
-  mbwayName        String?              @map("mbway_name")
-  pixKey           String?              @map("pix_key")
-  pixName          String?              @map("pix_name")
-  termsAcceptedAt  DateTime             @map("terms_accepted_at")
-  isActive         Boolean              @default(true) @map("is_active")
-  createdAt        DateTime             @default(now()) @map("created_at")
-  updatedAt        DateTime             @updatedAt @map("updated_at")
+  id              String               @id @default(cuid())
+  userId          String               @unique @map("user_id")
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instagramHandle String               @map("instagram_handle")
+  affiliateCode   String               @unique @map("affiliate_code")
+  payoutMethod    CashbackPayoutMethod @default(MBWAY) @map("payout_method")
+  mbwayNumber     String?              @map("mbway_number")
+  mbwayName       String?              @map("mbway_name")
+  pixKey          String?              @map("pix_key")
+  pixName         String?              @map("pix_name")
+  termsAcceptedAt DateTime             @map("terms_accepted_at")
+  isActive        Boolean              @default(true) @map("is_active")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
 
-  referredUsers User[] @relation("AffiliateReferrals")
-  commissions  AffiliateCommission[]
+  referredUsers User[]                @relation("AffiliateReferrals")
+  commissions   AffiliateCommission[]
 }
 
 model AffiliateCommission {
-  id             String                    @id @default(cuid())
-  affiliateId    String                    @map("affiliate_id")
-  affiliate      AffiliateProfile          @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
-  referredUserId String                    @unique @map("referred_user_id")
-  referredUser   User                      @relation("AffiliateCommissionReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
-  amount         Float
-  currency       AffiliateCommissionCurrency
-  status         AffiliateCommissionStatus @default(PENDING)
-  paymentProofUrl String?                  @map("payment_proof_url")
-  paidAt         DateTime?                 @map("paid_at")
-  createdAt      DateTime                  @default(now()) @map("created_at")
-  updatedAt      DateTime                  @updatedAt @map("updated_at")
+  id              String                      @id @default(cuid())
+  affiliateId     String                      @map("affiliate_id")
+  affiliate       AffiliateProfile            @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  referredUserId  String                      @unique @map("referred_user_id")
+  referredUser    User                        @relation("AffiliateCommissionReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
+  amount          Float
+  currency        AffiliateCommissionCurrency
+  status          AffiliateCommissionStatus   @default(PENDING)
+  paymentProofUrl String?                     @map("payment_proof_url")
+  paidAt          DateTime?                   @map("paid_at")
+  createdAt       DateTime                    @default(now()) @map("created_at")
+  updatedAt       DateTime                    @updatedAt @map("updated_at")
 
   @@index([affiliateId, status])
 }
@@ -787,4 +850,3 @@ model SupportTicket {
   @@index([status])
   @@map("support_tickets")
 }
-

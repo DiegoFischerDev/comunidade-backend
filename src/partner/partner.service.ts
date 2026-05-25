@@ -16,8 +16,6 @@ import { UpdatePartnerProfileDto } from './dto/update-partner-profile.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
-import { CreateCategoryDto } from './dto/create-category.dto';
-import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import {
   PartnerHouse,
@@ -62,12 +60,14 @@ import {
   normalizePartnerPublicSlugInput,
 } from './partner-public-slug';
 import { PartnerContactLinksService } from './partner-contact-links.service';
+import {
+  isPartnerCategorySlug,
+  RELOCATION_CATEGORY_SLUG,
+} from './partner-categories';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
-
-const RELOCATION_CATEGORY_SLUG = 'relocation';
 
 const SALT_ROUNDS = 10;
 
@@ -138,13 +138,7 @@ export class PartnerService {
             role: true,
           },
         },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
+        categorySlug: true,
         heroShareLink: {
           select: {
             id: true,
@@ -249,14 +243,22 @@ export class PartnerService {
       throw new NotFoundException('Parceiro não encontrado.');
     }
 
+    // Valida o slug recebido (apenas os slugs constantes são aceites; `null` limpa).
+    let nextCategorySlug: string | null | undefined = undefined;
+    if (Object.prototype.hasOwnProperty.call(dto, 'categorySlug')) {
+      if (dto.categorySlug === null || dto.categorySlug === undefined || dto.categorySlug === '') {
+        nextCategorySlug = null;
+      } else if (isPartnerCategorySlug(dto.categorySlug)) {
+        nextCategorySlug = dto.categorySlug;
+      } else {
+        throw new BadRequestException('Categoria inválida.');
+      }
+    }
+
     return this.prisma.partner.update({
       where: { id },
       data: {
-        // `null` deve remover a categoria; só mantém valor atual quando campo não é enviado.
-        categoryId:
-          Object.prototype.hasOwnProperty.call(dto, 'categoryId')
-            ? dto.categoryId
-            : partner.categoryId,
+        ...(nextCategorySlug !== undefined ? { categorySlug: nextCategorySlug } : {}),
         priority:
           Object.prototype.hasOwnProperty.call(dto, 'priority') && typeof dto.priority === 'number'
             ? dto.priority
@@ -270,34 +272,13 @@ export class PartnerService {
             role: true,
           },
         },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
       },
     });
   }
 
-  listCategories() {
-    return this.prisma.productCategory.findMany({
-      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-    });
-  }
-
   async adminListRelocationHouseCities(): Promise<{ cities: string[] }> {
-    const relocationCategory = await this.prisma.productCategory.findUnique({
-      where: { slug: RELOCATION_CATEGORY_SLUG },
-      select: { id: true },
-    });
-    if (!relocationCategory) {
-      throw new BadRequestException('Categoria relocation não encontrada.');
-    }
-
     const rows = await this.prisma.partnerHouse.findMany({
-      where: { partner: { categoryId: relocationCategory.id } },
+      where: { partner: { categorySlug: RELOCATION_CATEGORY_SLUG } },
       select: { city: true },
       distinct: ['city'] as any,
     });
@@ -308,45 +289,6 @@ export class PartnerService {
       .sort((a, b) => a.localeCompare(b, 'pt-PT'));
 
     return { cities };
-  }
-
-  async listCategoriesWithPartners() {
-    const categories = await this.prisma.productCategory.findMany({
-      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-      include: {
-        partners: {
-          where: {
-            categoryId: { not: null },
-            publicSlug: { not: null },
-          },
-          select: {
-            id: true,
-            name: true,
-            logoUrl: true,
-            backgroundImageUrl: true,
-            shortDescription: true,
-            publicSlug: true,
-          },
-        },
-      },
-    });
-
-    const withPartners = categories.filter((c) => c.partners.length > 0);
-    const partnerIds = withPartners.flatMap((c) => c.partners.map((p) => p.id));
-    const engagement = await this.getEngagementSummariesForPartnerIds(partnerIds);
-
-    return withPartners.map((category) => ({
-      ...category,
-      partners: category.partners.map((p) => ({
-        ...p,
-        engagement: engagement.get(p.id) ?? {
-          likeCount: 0,
-          dislikeCount: 0,
-          commentCount: 0,
-          shareCount: 0,
-        },
-      })),
-    }));
   }
 
   private async getEngagementSummariesForPartnerIds(
@@ -728,13 +670,6 @@ export class PartnerService {
             email: true,
           },
         },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
         services: {
           orderBy: { sortOrder: 'asc' },
           select: {
@@ -762,98 +697,9 @@ export class PartnerService {
     };
   }
 
-  async createCategory(dto: CreateCategoryDto) {
-    try {
-      return await this.prisma.productCategory.create({
-        data: {
-          slug: dto.slug,
-          name: dto.name,
-          shortDescription: dto.shortDescription,
-          fullDescription: dto.fullDescription,
-          backgroundImageUrl: dto.backgroundImageUrl,
-          sortOrder: dto.sortOrder ?? 0,
-        },
-      });
-    } catch (error: any) {
-      if (error.code === 'P2002') {
-        throw new ConflictException('Já existe uma categoria com este slug.');
-      }
-      throw new InternalServerErrorException(
-        'Erro ao criar categoria. Tente novamente mais tarde.',
-      );
-    }
-  }
-
-  async updateCategory(id: string, dto: UpdateCategoryDto) {
-    const existing = await this.prisma.productCategory.findUnique({
-      where: { id },
-    });
-
-    if (!existing) {
-      throw new NotFoundException('Categoria não encontrada.');
-    }
-
-    let oldBackgroundToDelete: string | null = null;
-    if (
-      dto.backgroundImageUrl &&
-      dto.backgroundImageUrl !== existing.backgroundImageUrl
-    ) {
-      oldBackgroundToDelete = existing.backgroundImageUrl;
-    }
-
-    try {
-      const updated = await this.prisma.productCategory.update({
-        where: { id },
-        data: {
-          slug: dto.slug ?? existing.slug,
-          name: dto.name ?? existing.name,
-          shortDescription: dto.shortDescription ?? existing.shortDescription,
-          fullDescription: dto.fullDescription ?? existing.fullDescription,
-          backgroundImageUrl:
-            dto.backgroundImageUrl ?? existing.backgroundImageUrl,
-          sortOrder: dto.sortOrder ?? existing.sortOrder,
-        },
-      });
-
-      if (oldBackgroundToDelete) {
-        await this.deleteUploadFileIfLocal(oldBackgroundToDelete);
-      }
-
-      return updated;
-    } catch (error: any) {
-      if (error.code === 'P2002') {
-        throw new ConflictException('Já existe uma categoria com este slug.');
-      }
-      throw new InternalServerErrorException(
-        'Erro ao atualizar categoria. Tente novamente mais tarde.',
-      );
-    }
-  }
-
-  async deleteCategory(id: string) {
-    try {
-      await this.prisma.productCategory.delete({
-        where: { id },
-      });
-      return { success: true };
-    } catch (error: any) {
-      if (error.code === 'P2003') {
-        throw new BadRequestException(
-          'Não é possível remover a categoria porque existem parceiros ou serviços associados.',
-        );
-      }
-      throw new InternalServerErrorException(
-        'Erro ao remover categoria. Tente novamente mais tarde.',
-      );
-    }
-  }
-
   async getCurrentPartner(userId: string) {
     const partner = await this.prisma.partner.findUnique({
       where: { userId },
-      include: {
-        category: { select: { id: true, slug: true, name: true } },
-      },
     });
 
     if (!partner) {
@@ -990,9 +836,6 @@ export class PartnerService {
           ...(whatsappToSet !== undefined && { whatsapp: whatsappToSet }),
           ...(publicSlugToSet !== undefined && { publicSlug: publicSlugToSet }),
         },
-        include: {
-          category: { select: { id: true, slug: true, name: true } },
-        },
       });
     });
     } catch (e: any) {
@@ -1052,9 +895,6 @@ export class PartnerService {
     const updated = await this.prisma.partner.update({
       where: { id: partner.id },
       data: { catalogVideoUrl: publicUrl },
-      include: {
-        category: { select: { id: true, slug: true, name: true } },
-      },
     });
 
     if (oldUrl && oldUrl !== publicUrl) {
@@ -1080,14 +920,13 @@ export class PartnerService {
   private async getRelocationPartnerOrThrow(userId: string) {
     const partner = await this.prisma.partner.findUnique({
       where: { userId },
-      include: { category: { select: { id: true, slug: true, name: true } } },
     });
 
     if (!partner) {
       throw new NotFoundException('Parceiro não encontrado para este usuário.');
     }
 
-    if (partner.category?.slug !== RELOCATION_CATEGORY_SLUG) {
+    if (partner.categorySlug !== RELOCATION_CATEGORY_SLUG) {
       throw new ForbiddenException(
         'Apenas parceiros na categoria Relocation podem gerir anúncios de imóveis.',
       );
@@ -1109,7 +948,7 @@ export class PartnerService {
             id: true,
             name: true,
             whatsapp: true,
-            categoryId: true,
+            categorySlug: true,
           },
         },
       },
@@ -1122,35 +961,27 @@ export class PartnerService {
       throw new ForbiddenException('Apenas administradores podem criar anúncios nesta área.');
     }
 
-    const relocationCategory = await this.prisma.productCategory.findUnique({
-      where: { slug: RELOCATION_CATEGORY_SLUG },
-      select: { id: true },
-    });
-    if (!relocationCategory) {
-      throw new BadRequestException('Categoria relocation não encontrada.');
-    }
-
     if (!user.partner) {
       return this.prisma.partner.create({
         data: {
           userId: user.id,
           name: user.name?.trim() || 'Admin',
           whatsapp: user.whatsapp,
-          categoryId: relocationCategory.id,
+          categorySlug: RELOCATION_CATEGORY_SLUG,
           publicSlug: null,
         },
       });
     }
 
     if (
-      user.partner.categoryId !== relocationCategory.id ||
+      user.partner.categorySlug !== RELOCATION_CATEGORY_SLUG ||
       user.partner.whatsapp !== user.whatsapp ||
       user.partner.name !== user.name
     ) {
       return this.prisma.partner.update({
         where: { id: user.partner.id },
         data: {
-          categoryId: relocationCategory.id,
+          categorySlug: RELOCATION_CATEGORY_SLUG,
           whatsapp: user.whatsapp,
           ...(user.name ? { name: user.name } : {}),
         },
@@ -1469,26 +1300,16 @@ export class PartnerService {
         whatsapp: true,
         logoUrl: true,
         shortDescription: true,
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
+        categorySlug: true,
       },
     },
   } as const;
 
   /** Resolve imóvel relocation por UUID (`id`) ou identificador numérico (`houseId`). */
   private async findRelocationHouseByPublicKey(houseKey: string) {
-    const cat = await this.prisma.productCategory.findUnique({
-      where: { slug: RELOCATION_CATEGORY_SLUG },
-      select: { id: true },
-    });
-    if (!cat) return null;
-
-    const baseWhere = { partner: { categoryId: cat.id } } as const;
+    const baseWhere = {
+      partner: { categorySlug: RELOCATION_CATEGORY_SLUG },
+    } as const;
     const include = this.relocationHousePublicInclude;
 
     const byId = await this.prisma.partnerHouse.findFirst({
@@ -1901,15 +1722,11 @@ export class PartnerService {
     let partnerId: string;
 
     if (requestedPartnerId) {
-      const relocationCategory = await this.prisma.productCategory.findUnique({
-        where: { slug: RELOCATION_CATEGORY_SLUG },
-        select: { id: true },
-      });
-      if (!relocationCategory) {
-        throw new BadRequestException('Categoria relocation não encontrada.');
-      }
       const assigned = await this.prisma.partner.findFirst({
-        where: { id: requestedPartnerId, categoryId: relocationCategory.id },
+        where: {
+          id: requestedPartnerId,
+          categorySlug: RELOCATION_CATEGORY_SLUG,
+        },
         select: { id: true },
       });
       if (!assigned) {
@@ -1986,7 +1803,7 @@ export class PartnerService {
           select: {
             id: true,
             name: true,
-            category: { select: { slug: true, name: true } },
+            categorySlug: true,
           },
         },
       },
@@ -2015,15 +1832,11 @@ export class PartnerService {
     if (dto.partnerId !== undefined) {
       const requestedPartnerId = (dto.partnerId ?? '').trim();
       if (requestedPartnerId) {
-        const relocationCategory = await this.prisma.productCategory.findUnique({
-          where: { slug: RELOCATION_CATEGORY_SLUG },
-          select: { id: true },
-        });
-        if (!relocationCategory) {
-          throw new BadRequestException('Categoria relocation não encontrada.');
-        }
         const assigned = await this.prisma.partner.findFirst({
-          where: { id: requestedPartnerId, categoryId: relocationCategory.id },
+          where: {
+            id: requestedPartnerId,
+            categorySlug: RELOCATION_CATEGORY_SLUG,
+          },
           select: { id: true },
         });
         if (!assigned) {
@@ -2255,14 +2068,6 @@ export class PartnerService {
       return Number.isFinite(n) ? n : null;
     };
 
-    const cat = await this.prisma.productCategory.findUnique({
-      where: { slug: RELOCATION_CATEGORY_SLUG },
-      select: { id: true },
-    });
-    if (!cat) {
-      return [];
-    }
-
     const partnerId = filters?.partnerId?.trim() || undefined;
     const city = filters?.city?.trim() || undefined;
     const rawTyp = filters?.typology?.trim();
@@ -2294,7 +2099,7 @@ export class PartnerService {
     const now = new Date();
     const rows = (await this.prisma.partnerHouse.findMany({
       where: {
-        partner: { categoryId: cat.id },
+        partner: { categorySlug: RELOCATION_CATEGORY_SLUG },
         publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
         publishedUntil: { gt: now },
         ...(partnerId ? { partnerId } : {}),
@@ -2364,22 +2169,6 @@ export class PartnerService {
     const start = (page - 1) * pageSize;
     const items = filteredByPrice.slice(start, start + pageSize);
     return { items, total, page, pageSize };
-  }
-
-  /** Dados públicos da categoria Relocation (hero do dashboard: imagem de capa). */
-  async getRelocationCategoryPublic() {
-    const row = await this.prisma.productCategory.findUnique({
-      where: { slug: RELOCATION_CATEGORY_SLUG },
-      select: { slug: true, name: true, backgroundImageUrl: true },
-    });
-    if (!row) {
-      return {
-        slug: RELOCATION_CATEGORY_SLUG,
-        name: 'Relocation',
-        backgroundImageUrl: null as string | null,
-      };
-    }
-    return row;
   }
 
   async adminListHouseRelocationWhatsappGroups() {
@@ -2466,18 +2255,10 @@ export class PartnerService {
     houseId: string,
     options: { chargePartner: boolean },
   ) {
-    const relocationCategory = await this.prisma.productCategory.findUnique({
-      where: { slug: RELOCATION_CATEGORY_SLUG },
-      select: { id: true },
-    });
-    if (!relocationCategory) {
-      throw new BadRequestException('Categoria relocation não encontrada.');
-    }
-
     const house = await this.prisma.partnerHouse.findFirst({
       where: {
         id: houseId,
-        partner: { categoryId: relocationCategory.id },
+        partner: { categorySlug: RELOCATION_CATEGORY_SLUG },
       },
       select: {
         id: true,
@@ -2538,18 +2319,10 @@ export class PartnerService {
    * Envia o anúncio aos grupos ativos: imagens (ordem), vídeo, texto (formato existente).
    */
   private async sendHouseToRelocationWhatsappGroups(houseId: string) {
-    const relocationCategory = await this.prisma.productCategory.findUnique({
-      where: { slug: RELOCATION_CATEGORY_SLUG },
-      select: { id: true },
-    });
-    if (!relocationCategory) {
-      throw new BadRequestException('Categoria relocation não encontrada.');
-    }
-
     const house = await this.prisma.partnerHouse.findFirst({
       where: {
         id: houseId,
-        partner: { categoryId: relocationCategory.id },
+        partner: { categorySlug: RELOCATION_CATEGORY_SLUG },
       },
       include: { partner: { select: { name: true, whatsapp: true } } },
     });
@@ -2677,7 +2450,7 @@ export class PartnerService {
           select: {
             id: true,
             name: true,
-            category: { select: { slug: true, name: true } },
+            categorySlug: true,
           },
         },
         whatsappSends: {
