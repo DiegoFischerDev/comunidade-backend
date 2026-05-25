@@ -81,6 +81,8 @@ export class RafacallAdminService {
         endsAt: true,
         timezone: true,
         origin: true,
+        guestName: true,
+        guestWhatsapp: true,
         user: {
           select: {
             id: true,
@@ -109,14 +111,14 @@ export class RafacallAdminService {
           status: b.status,
           startsAt: b.startsAt.toISOString(),
           endsAt: b.endsAt.toISOString(),
-          userId: b.user.id,
-          userName: b.user.name,
-          whatsappDigits: waDigits(b.user.whatsapp),
+          userId: b.user?.id ?? null,
+          userName: b.user?.name ?? b.guestName ?? null,
+          whatsappDigits: waDigits(b.user?.whatsapp ?? b.guestWhatsapp ?? ''),
           bookingTimezone: b.timezone,
           bookingOrigin: b.origin,
           affiliateInstagram:
             b.origin === 'AFFILIATE_FREE'
-              ? b.user.affiliateProfile?.instagramHandle ?? null
+              ? b.user?.affiliateProfile?.instagramHandle ?? null
               : null,
         })),
       }));
@@ -222,7 +224,15 @@ export class RafacallAdminService {
   async cancelBooking(params: { bookingId: string; adminUserId: string; reason?: string | null }) {
     const booking = await this.prisma.rafaCallBooking.findFirst({
       where: { id: params.bookingId, status: RafaCallBookingStatus.SCHEDULED },
-      select: { id: true, userId: true, startsAt: true, endsAt: true, timezone: true },
+      select: {
+        id: true,
+        userId: true,
+        guestName: true,
+        guestWhatsapp: true,
+        startsAt: true,
+        endsAt: true,
+        timezone: true,
+      },
     });
     if (!booking) throw new BadRequestException('Agendamento não encontrado.');
 
@@ -236,16 +246,22 @@ export class RafacallAdminService {
       select: { id: true, status: true },
     });
 
-    // Se era o booking atual (fonte legacy em User), limpa.
-    await this.prisma.user.update({
-      where: { id: booking.userId },
-      data: { rafaCallSlotStartsAt: null, rafaCallSlotEndsAt: null },
-    });
-
-    void this.sendAdminCancelMessage({
-      userId: booking.userId,
-      booking: { startsAt: booking.startsAt, endsAt: booking.endsAt, timezone: booking.timezone },
-    });
+    if (booking.userId) {
+      await this.prisma.user.update({
+        where: { id: booking.userId },
+        data: { rafaCallSlotStartsAt: null, rafaCallSlotEndsAt: null },
+      });
+      void this.sendAdminCancelMessage({
+        userId: booking.userId,
+        booking: { startsAt: booking.startsAt, endsAt: booking.endsAt, timezone: booking.timezone },
+      });
+    } else if (booking.guestWhatsapp) {
+      void this.sendAdminCancelGuestMessage({
+        name: booking.guestName,
+        whatsapp: booking.guestWhatsapp,
+        booking: { startsAt: booking.startsAt, endsAt: booking.endsAt, timezone: booking.timezone },
+      });
+    }
 
     return updated;
   }
@@ -265,17 +281,43 @@ export class RafacallAdminService {
       select: { id: true, status: true },
     });
 
-    // Ao realizar, bloqueia novo agendamento até novo pagamento.
-    await this.prisma.user.update({
-      where: { id: booking.userId },
-      data: {
-        rafaCallSchedulingUnlocked: false,
-        rafaCallSlotStartsAt: null,
-        rafaCallSlotEndsAt: null,
-      },
-    });
+    if (booking.userId) {
+      await this.prisma.user.update({
+        where: { id: booking.userId },
+        data: {
+          rafaCallSchedulingUnlocked: false,
+          rafaCallSlotStartsAt: null,
+          rafaCallSlotEndsAt: null,
+        },
+      });
+    }
 
     return updated;
+  }
+
+  private async sendAdminCancelGuestMessage(params: {
+    name: string | null;
+    whatsapp: string;
+    booking: { startsAt: Date; endsAt: Date; timezone: string };
+  }) {
+    const wa = (params.whatsapp ?? '').replace(/\D/g, '');
+    if (!wa) return;
+    const startLocal = params.booking.startsAt.toLocaleString('pt-PT', {
+      timeZone: params.booking.timezone,
+      weekday: 'long',
+      day: '2-digit',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const endLocal = params.booking.endsAt.toLocaleTimeString('pt-PT', {
+      timeZone: params.booking.timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const who = params.name?.trim() || 'Olá';
+    const msg = `🗑️ ${who}, a tua chamada com a Rafa foi cancelada.\n\nEstava marcada para: ${startLocal} (até ${endLocal})`;
+    await this.wa.sendText(wa, msg);
   }
 }
 

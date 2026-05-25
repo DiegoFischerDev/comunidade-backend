@@ -285,8 +285,13 @@ model ImmigrationChecklist {
 
 model RafaCallBooking {
   id                     String               @id @default(cuid())
-  userId                 String               @map("user_id")
-  user                   User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /** Utilizador autenticado (legacy/admin). Nos novos fluxos guest, fica null. */
+  userId                 String?              @map("user_id")
+  user                   User?                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /** Nome fornecido pelo guest no checkout. */
+  guestName              String?              @map("guest_name")
+  /** WhatsApp normalizado (só dígitos, com indicativo) — identidade do guest. */
+  guestWhatsapp          String?              @map("guest_whatsapp")
   status                 RafaCallBookingStatus @default(SCHEDULED)
   origin                 RafaCallBookingOrigin @default(USER_PAID)
   /** UTC. */
@@ -305,9 +310,37 @@ model RafaCallBooking {
   updatedAt               DateTime            @updatedAt @map("updated_at")
 
   @@index([userId, status])
+  @@index([guestWhatsapp, status])
   @@index([startsAt])
   @@index([endsAt])
   @@map("rafa_call_bookings")
+}
+
+/**
+ * Token criado quando um guest paga a taxa de agendamento mas ainda não escolheu data/hora.
+ * Após pagar, o success URL recebe o id do unlock e o utilizador escolhe o slot.
+ * Ao criar o booking, o unlock é marcado como consumido.
+ */
+model RafaCallGuestUnlock {
+  id                     String   @id @default(cuid())
+  name                   String
+  /** WhatsApp normalizado (dígitos com indicativo). */
+  whatsapp               String
+  stripeCheckoutSessionId String? @unique @map("stripe_checkout_session_id")
+  /** Confirmado quando o webhook do Stripe confirma o pagamento. */
+  paidAt                 DateTime? @map("paid_at")
+  /** Marcado quando o guest cria o booking. */
+  consumedAt             DateTime? @map("consumed_at")
+  /** Booking criado a partir deste unlock (auditoria). */
+  consumedBookingId      String?   @map("consumed_booking_id")
+  /** Após esta data o unlock deixa de ser válido (caso o user não agende). */
+  expiresAt              DateTime  @map("expires_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  @@index([whatsapp])
+  @@index([paidAt])
+  @@map("rafa_call_guest_unlocks")
 }
 
 model RafaCallBlockedSlot {

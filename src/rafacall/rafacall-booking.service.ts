@@ -163,7 +163,53 @@ export class RafacallBookingService {
     });
   }
 
-  async getAvailability(params: { userId: string; from: string; to: string; tz: string }): Promise<{ tz: string; days: DayAvailability[] }> {
+  /** Helper para normalizar WhatsApp (só dígitos com indicativo). */
+  private normalizeWhatsapp(raw: string): string {
+    return String(raw ?? '').replace(/\D/g, '');
+  }
+
+  /** Procura booking guest ativo (futuro, SCHEDULED) pelo WhatsApp normalizado. */
+  async getCurrentBookingByWhatsapp(whatsapp: string) {
+    const wa = this.normalizeWhatsapp(whatsapp);
+    if (wa.length < 8) return null;
+    const now = new Date();
+    return this.prisma.rafaCallBooking.findFirst({
+      where: {
+        status: RafaCallBookingStatus.SCHEDULED,
+        endsAt: { gt: now },
+        OR: [{ guestWhatsapp: wa }, { user: { whatsapp: wa } }],
+      },
+      orderBy: { startsAt: 'asc' },
+    });
+  }
+
+  /** Verifica se um WhatsApp tem permissão para mexer num booking (guest ou user). */
+  async assertWhatsappCanAccessBooking(bookingId: string, whatsapp: string) {
+    const wa = this.normalizeWhatsapp(whatsapp);
+    if (wa.length < 8) {
+      throw new BadRequestException('WhatsApp inválido para confirmação.');
+    }
+    const booking = await this.prisma.rafaCallBooking.findUnique({
+      where: { id: bookingId },
+      include: { user: { select: { whatsapp: true } } },
+    });
+    if (!booking) throw new BadRequestException('Agendamento não encontrado.');
+    const bookingWa = booking.guestWhatsapp ?? booking.user?.whatsapp ?? '';
+    if (this.normalizeWhatsapp(bookingWa) !== wa) {
+      throw new BadRequestException(
+        'WhatsApp não corresponde a este agendamento.',
+      );
+    }
+    return booking;
+  }
+
+  async getAvailability(params: {
+    userId?: string | null;
+    excludeBookingId?: string | null;
+    from: string;
+    to: string;
+    tz: string;
+  }): Promise<{ tz: string; days: DayAvailability[] }> {
     const { userId, from, to, tz } = params;
     const fromYmd = parseYmd(from);
     const toYmd = parseYmd(to);
@@ -171,9 +217,12 @@ export class RafacallBookingService {
     const todayYmd = ymdInTz(tz, new Date());
 
     // Para reagendamento, precisamos devolver availability mesmo com booking ativo.
-    // Importante: excluir o booking atual do cálculo de conflitos, senão o buffer “come” slots adjacentes.
-    const existing = await this.getCurrentBooking(userId);
-    const excludeBookingId = existing?.id;
+    // Importante: excluir o booking atual do cálculo de conflitos, senão o buffer "come" slots adjacentes.
+    let excludeBookingId: string | undefined = params.excludeBookingId ?? undefined;
+    if (!excludeBookingId && userId) {
+      const existing = await this.getCurrentBooking(userId);
+      excludeBookingId = existing?.id;
+    }
 
     const duration = this.durationMinutes;
     const buffer = this.bufferMinutes;
@@ -311,12 +360,13 @@ export class RafacallBookingService {
     }
   }
 
-  private async sendBookingMessage(userId: string, kind: 'booked' | 'rescheduled' | 'cancelled', booking: { startsAt: Date; endsAt: Date; timezone: string }) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true, whatsapp: true },
-    });
-    if (!user) return;
+  private async sendBookingMessage(
+    target: { name?: string | null; whatsapp: string; bookingId: string },
+    kind: 'booked' | 'rescheduled' | 'cancelled',
+    booking: { startsAt: Date; endsAt: Date; timezone: string },
+  ) {
+    const whatsapp = (target.whatsapp ?? '').replace(/\D/g, '');
+    if (!whatsapp) return;
     const startLocal = booking.startsAt.toLocaleString('pt-PT', {
       timeZone: booking.timezone,
       weekday: 'long',
@@ -330,24 +380,24 @@ export class RafacallBookingService {
       hour: '2-digit',
       minute: '2-digit',
     });
-    const who = user.name?.trim() || 'Olá';
+    const who = target.name?.trim() || 'Olá';
     const base =
       kind === 'booked'
         ? `✅ ${who}, a tua chamada com a Rafa foi agendada!`
         : kind === 'rescheduled'
           ? `🔁 ${who}, a tua chamada com a Rafa foi reagendada!`
           : `🗑️ ${who}, a tua chamada com a Rafa foi cancelada.`;
-    const reschedUrl = getFrontendBaseUrl();
+    const manageUrl = `${getFrontendBaseUrl().replace(/\/$/, '')}/agendamento/${target.bookingId}`;
     const followup =
       kind === 'cancelled'
         ? ''
-        : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?\n\nSe precisar reagendar, acesse: ${reschedUrl}`;
+        : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?\n\nPara reagendar ou cancelar, acede: ${manageUrl}`;
     const tzLine = `Fuso horário: ${timezoneLabelPt(booking.timezone)} (${booking.timezone})`;
     const when =
       kind === 'cancelled'
         ? `\n\nEstava marcada para: ${startLocal} (até ${endLocal})\n${tzLine}`
         : `\n\nData e hora: ${startLocal} (até ${endLocal})\n${tzLine}`;
-    await this.wa.sendText(user.whatsapp, `${base}${when}${followup}`);
+    await this.wa.sendText(whatsapp, `${base}${when}${followup}`);
   }
 
   async book(userId: string, input: { startsAtUtcIso: string; tz: string }) {
@@ -412,7 +462,17 @@ export class RafacallBookingService {
       data: { rafaCallSlotStartsAt: startsAt, rafaCallSlotEndsAt: endsAt },
     });
 
-    void this.sendBookingMessage(userId, 'booked', { startsAt, endsAt, timezone: tz });
+    const userInfo = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, whatsapp: true },
+    });
+    if (userInfo?.whatsapp) {
+      void this.sendBookingMessage(
+        { name: userInfo.name, whatsapp: userInfo.whatsapp, bookingId: created.id },
+        'booked',
+        { startsAt, endsAt, timezone: tz },
+      );
+    }
     return created;
   }
 
@@ -485,7 +545,17 @@ export class RafacallBookingService {
       data: { rafaCallSlotStartsAt: startsAt, rafaCallSlotEndsAt: endsAt },
     });
 
-    void this.sendBookingMessage(userId, 'rescheduled', { startsAt, endsAt, timezone: tz });
+    const userInfo = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, whatsapp: true },
+    });
+    if (userInfo?.whatsapp) {
+      void this.sendBookingMessage(
+        { name: userInfo.name, whatsapp: userInfo.whatsapp, bookingId: created.id },
+        'rescheduled',
+        { startsAt, endsAt, timezone: tz },
+      );
+    }
     this.logger.log(`RafaCall reagendado ${cancelled.id} -> ${created.id}`);
     return created;
   }
@@ -510,12 +580,236 @@ export class RafacallBookingService {
       data: { rafaCallSlotStartsAt: null, rafaCallSlotEndsAt: null },
     });
 
-    void this.sendBookingMessage(userId, 'cancelled', {
-      startsAt: current.startsAt,
-      endsAt: current.endsAt,
-      timezone: current.timezone,
+    const userInfo = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, whatsapp: true },
     });
+    if (userInfo?.whatsapp) {
+      void this.sendBookingMessage(
+        { name: userInfo.name, whatsapp: userInfo.whatsapp, bookingId: current.id },
+        'cancelled',
+        {
+          startsAt: current.startsAt,
+          endsAt: current.endsAt,
+          timezone: current.timezone,
+        },
+      );
+    }
     return updated;
+  }
+
+  // ===== FLUXO GUEST =====
+
+  /** Cria um booking guest a partir de um `RafaCallGuestUnlock` pago. */
+  async bookGuest(input: { unlockId: string; startsAtUtcIso: string; tz: string }) {
+    const startsAt = new Date(input.startsAtUtcIso);
+    if (Number.isNaN(startsAt.getTime())) throw new BadRequestException('startsAt inválido.');
+    const tz = input.tz.trim();
+    if (!tz) throw new BadRequestException('tz é obrigatório.');
+    if (ymdInTz(tz, startsAt) === ymdInTz(tz, new Date())) {
+      throw new BadRequestException('Só é possível agendar a partir do dia seguinte.');
+    }
+
+    const unlock = await this.prisma.rafaCallGuestUnlock.findUnique({
+      where: { id: input.unlockId },
+    });
+    if (!unlock) throw new BadRequestException('Pagamento não encontrado.');
+    if (unlock.consumedAt) throw new BadRequestException('Este pagamento já foi usado num agendamento.');
+    if (!unlock.paidAt) throw new BadRequestException('Pagamento ainda não confirmado. Tenta novamente em instantes.');
+    if (unlock.expiresAt < new Date()) throw new BadRequestException('Este pagamento expirou.');
+
+    // Bloqueia novo agendamento se já houver outro ativo para o mesmo WhatsApp.
+    const existing = await this.getCurrentBookingByWhatsapp(unlock.whatsapp);
+    if (existing) {
+      throw new BadRequestException(
+        'Este número de WhatsApp já tem um agendamento ativo. Use o link enviado para gerir o seu agendamento.',
+      );
+    }
+
+    const duration = this.durationMinutes;
+    const endsAt = new Date(startsAt.getTime() + duration * 60000);
+    const buffer = this.bufferMinutes;
+
+    const candidates = await this.prisma.rafaCallBooking.findMany({
+      where: {
+        status: RafaCallBookingStatus.SCHEDULED,
+        startsAt: { lt: new Date(endsAt.getTime() + buffer * 60000) },
+        endsAt: { gt: new Date(startsAt.getTime() - duration * 60000) },
+      },
+      select: { id: true, startsAt: true, endsAt: true },
+      take: 20,
+    });
+    const newEndGap = new Date(endsAt.getTime() + buffer * 60000);
+    if (
+      candidates.some((b) => {
+        const bEndGap = new Date(b.endsAt.getTime() + buffer * 60000);
+        return startsAt < bEndGap && newEndGap > b.startsAt;
+      })
+    ) {
+      throw new BadRequestException('Este horário já não está disponível.');
+    }
+
+    await this.assertNotBlockedByAdmin(startsAt, endsAt);
+
+    const created = await this.prisma.rafaCallBooking.create({
+      data: {
+        userId: null,
+        guestName: unlock.name,
+        guestWhatsapp: unlock.whatsapp,
+        status: RafaCallBookingStatus.SCHEDULED,
+        origin: 'USER_PAID',
+        startsAt,
+        endsAt,
+        timezone: tz,
+      },
+    });
+
+    await this.prisma.rafaCallGuestUnlock.update({
+      where: { id: unlock.id },
+      data: { consumedAt: new Date(), consumedBookingId: created.id },
+    });
+
+    void this.sendBookingMessage(
+      { name: unlock.name, whatsapp: unlock.whatsapp, bookingId: created.id },
+      'booked',
+      { startsAt, endsAt, timezone: tz },
+    );
+
+    return created;
+  }
+
+  /** Devolve booking + dados visíveis (sem expor user_id) após confirmação por WhatsApp. */
+  async getGuestBooking(bookingId: string, whatsapp: string) {
+    const booking = await this.assertWhatsappCanAccessBooking(bookingId, whatsapp);
+    return {
+      id: booking.id,
+      status: booking.status,
+      startsAt: booking.startsAt.toISOString(),
+      endsAt: booking.endsAt.toISOString(),
+      timezone: booking.timezone,
+      name: booking.guestName ?? null,
+      whatsapp: booking.guestWhatsapp ?? null,
+    };
+  }
+
+  /** Reagenda um booking (guest) — exige confirmação por WhatsApp. */
+  async rescheduleGuest(input: {
+    bookingId: string;
+    whatsapp: string;
+    newStartsAtUtcIso: string;
+    tz: string;
+  }) {
+    const current = await this.assertWhatsappCanAccessBooking(input.bookingId, input.whatsapp);
+    if (current.status !== RafaCallBookingStatus.SCHEDULED) {
+      throw new BadRequestException('Este agendamento já não está ativo.');
+    }
+
+    const startsAt = new Date(input.newStartsAtUtcIso);
+    if (Number.isNaN(startsAt.getTime())) throw new BadRequestException('newStartsAt inválido.');
+    const tz = input.tz.trim();
+    if (!tz) throw new BadRequestException('tz é obrigatório.');
+    if (ymdInTz(tz, startsAt) === ymdInTz(tz, new Date())) {
+      throw new BadRequestException('Só é possível reagendar a partir do dia seguinte.');
+    }
+
+    const duration = this.durationMinutes;
+    const endsAt = new Date(startsAt.getTime() + duration * 60000);
+    const buffer = this.bufferMinutes;
+
+    const candidates = await this.prisma.rafaCallBooking.findMany({
+      where: {
+        id: { not: current.id },
+        status: RafaCallBookingStatus.SCHEDULED,
+        startsAt: { lt: new Date(endsAt.getTime() + buffer * 60000) },
+        endsAt: { gt: new Date(startsAt.getTime() - duration * 60000) },
+      },
+      select: { id: true, startsAt: true, endsAt: true },
+      take: 20,
+    });
+    const newEndGap = new Date(endsAt.getTime() + buffer * 60000);
+    if (
+      candidates.some((b) => {
+        const bEndGap = new Date(b.endsAt.getTime() + buffer * 60000);
+        return startsAt < bEndGap && newEndGap > b.startsAt;
+      })
+    ) {
+      throw new BadRequestException('Este horário já não está disponível.');
+    }
+
+    await this.assertNotBlockedByAdmin(startsAt, endsAt);
+
+    const [, created] = await this.prisma.$transaction([
+      this.prisma.rafaCallBooking.update({
+        where: { id: current.id },
+        data: {
+          status: RafaCallBookingStatus.CANCELLED,
+          cancelledAt: new Date(),
+          cancelReason: 'reschedule',
+        },
+      }),
+      this.prisma.rafaCallBooking.create({
+        data: {
+          userId: current.userId,
+          guestName: current.guestName,
+          guestWhatsapp: current.guestWhatsapp,
+          status: RafaCallBookingStatus.SCHEDULED,
+          origin: current.origin,
+          startsAt,
+          endsAt,
+          timezone: tz,
+          rescheduledFromBookingId: current.id,
+        },
+      }),
+    ]);
+
+    const name = current.guestName ?? null;
+    const wa = current.guestWhatsapp ?? '';
+    if (wa) {
+      void this.sendBookingMessage(
+        { name, whatsapp: wa, bookingId: created.id },
+        'rescheduled',
+        { startsAt, endsAt, timezone: tz },
+      );
+    }
+    this.logger.log(`RafaCall guest reagendado ${current.id} -> ${created.id}`);
+    return {
+      id: created.id,
+      status: created.status,
+      startsAt: created.startsAt.toISOString(),
+      endsAt: created.endsAt.toISOString(),
+      timezone: created.timezone,
+      name,
+      whatsapp: wa || null,
+    };
+  }
+
+  /** Cancela um booking (guest) — exige confirmação por WhatsApp. */
+  async cancelGuest(input: { bookingId: string; whatsapp: string; reason?: string | null }) {
+    const current = await this.assertWhatsappCanAccessBooking(input.bookingId, input.whatsapp);
+    if (current.status !== RafaCallBookingStatus.SCHEDULED) {
+      throw new BadRequestException('Este agendamento já não está ativo.');
+    }
+    const updated = await this.prisma.rafaCallBooking.update({
+      where: { id: current.id },
+      data: {
+        status: RafaCallBookingStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancelReason: input.reason?.trim() || 'user_cancel',
+      },
+    });
+    const wa = current.guestWhatsapp ?? '';
+    if (wa) {
+      void this.sendBookingMessage(
+        { name: current.guestName, whatsapp: wa, bookingId: current.id },
+        'cancelled',
+        {
+          startsAt: current.startsAt,
+          endsAt: current.endsAt,
+          timezone: current.timezone,
+        },
+      );
+    }
+    return { id: updated.id, status: updated.status };
   }
 }
 

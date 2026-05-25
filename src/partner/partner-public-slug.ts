@@ -20,6 +20,7 @@ export const RESERVED_PARTNER_PUBLIC_SLUGS = new Set(
     'plano-de-imigracao',
     'relocation',
     'servicos',
+    'agendamento',
     'favicon.ico',
     'robots.txt',
     'sitemap.xml',

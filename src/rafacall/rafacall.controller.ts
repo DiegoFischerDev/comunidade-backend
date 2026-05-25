@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { RafacallService } from './rafacall.service';
@@ -9,6 +10,7 @@ export class RafacallController {
   constructor(
     private readonly rafacallService: RafacallService,
     private readonly bookingService: RafacallBookingService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -77,5 +79,79 @@ export class RafacallController {
     @Body() body: { bookingId: string; reason?: string | null },
   ) {
     return this.bookingService.cancel(user.id, body);
+  }
+
+  // ===== Endpoints públicos para o fluxo guest =====
+
+  /** Verifica um unlock pago e devolve nome/whatsapp para o frontend pré-preencher o picker. */
+  @Public()
+  @Get('guest/unlock/:id')
+  async getGuestUnlock(@Param('id') id: string) {
+    const unlock = await this.prisma.rafaCallGuestUnlock.findUnique({
+      where: { id: id.trim() },
+    });
+    if (!unlock) throw new BadRequestException('Pagamento não encontrado.');
+    return {
+      id: unlock.id,
+      name: unlock.name,
+      whatsapp: unlock.whatsapp,
+      paid: Boolean(unlock.paidAt),
+      consumed: Boolean(unlock.consumedAt),
+      expired: unlock.expiresAt < new Date(),
+      consumedBookingId: unlock.consumedBookingId ?? null,
+    };
+  }
+
+  /** Availability pública (sem auth) — usada no fluxo guest após pagamento. */
+  @Public()
+  @Get('guest/availability')
+  async guestAvailability(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('tz') tz?: string,
+    @Query('excludeBookingId') excludeBookingId?: string,
+  ) {
+    return this.bookingService.getAvailability({
+      from: from ?? '',
+      to: to ?? '',
+      tz: tz ?? 'Europe/Lisbon',
+      excludeBookingId: excludeBookingId?.trim() || null,
+    });
+  }
+
+  /** Cria um booking a partir de um unlock pago. */
+  @Public()
+  @Post('guest/book')
+  async guestBook(
+    @Body() body: { unlockId: string; startsAtUtcIso: string; tz: string },
+  ) {
+    return this.bookingService.bookGuest(body);
+  }
+
+  /** Devolve dados do booking depois de confirmar o WhatsApp do dono. */
+  @Public()
+  @Get('guest/booking/:id')
+  async guestBooking(
+    @Param('id') id: string,
+    @Query('whatsapp') whatsapp?: string,
+  ) {
+    if (!whatsapp) throw new BadRequestException('WhatsApp é obrigatório.');
+    return this.bookingService.getGuestBooking(id, whatsapp);
+  }
+
+  @Public()
+  @Post('guest/reschedule')
+  async guestReschedule(
+    @Body() body: { bookingId: string; whatsapp: string; newStartsAtUtcIso: string; tz: string },
+  ) {
+    return this.bookingService.rescheduleGuest(body);
+  }
+
+  @Public()
+  @Post('guest/cancel')
+  async guestCancel(
+    @Body() body: { bookingId: string; whatsapp: string; reason?: string | null },
+  ) {
+    return this.bookingService.cancelGuest(body);
   }
 }
