@@ -21,6 +21,7 @@ export const RESERVED_PARTNER_PUBLIC_SLUGS = new Set(
     'relocation',
     'servicos',
     'agendamento',
+    'financiamento',
     'favicon.ico',
     'robots.txt',
     'sitemap.xml',

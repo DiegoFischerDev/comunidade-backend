@@ -19,6 +19,7 @@ import { ChecklistModule } from './checklist/checklist.module';
 import { GrupoTesteModule } from './grupo-teste/grupo-teste.module';
 import { RedirectLinksModule } from './redirect-links/redirect-links.module';
 import { RecommendedServicesModule } from './recommended-services/recommended-services.module';
+import { FinancingQuizModule } from './financing-quiz/financing-quiz.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { RecommendedServicesModule } from './recommended-services/recommended-se
     GrupoTesteModule,
     RedirectLinksModule,
     RecommendedServicesModule,
+    FinancingQuizModule,
   ],
   controllers: [AppController],
   providers: [

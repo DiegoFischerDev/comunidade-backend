@@ -52,6 +52,7 @@ Copia `backend/.env.example` para `backend/.env` e preenche os valores.
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_AMOUNT_EUR_CENTS`, `STRIPE_PIX_AMOUNT_BRL` | Stripe. |
 | `STRIPE_RAFA_CALL_EUR_CENTS`, `STRIPE_RAFA_CALL_PIX_BRL`, `RAFA_CALL_*` | Rafa Call (preços e horários em JSON). |
 | `RAFA_CALL_WORKING_HOURS_TIMEZONE` | Fuso em que `RAFA_CALL_WORKING_HOURS_JSON` é interpretado (omissão: `Europe/Lisboa`). Os horários mostram-se convertidos para o fuso de cada utilizador. |
+| `IA_APP_BASE_URL`, `IA_APP_INTEGRATION_SECRET` | Integração com a `ia-app` (fonte de leads e atribuição de gestoras). Usado pelo dashboard público `/financiamento`. |
 
 **R2 (opcional):** `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_BASE_URL` — sem isto, media fica em `uploads/houses/` no disco
 
