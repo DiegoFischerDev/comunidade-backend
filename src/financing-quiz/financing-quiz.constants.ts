@@ -65,7 +65,9 @@ export function computeRequiredCapitalPercent(
  */
 export type QuizAnswerBreakdownItem = { question: string; answer: string };
 
-export function buildAnswersBreakdown(answers: FinancingQuizAnswers): QuizAnswerBreakdownItem[] {
+export function buildAnswersBreakdown(
+  answers: FinancingQuizAnswers,
+): QuizAnswerBreakdownItem[] {
   const isCasado = answers.mode === 'casado';
   const possessivoTem = isCasado ? 'Pelo menos um dos dois' : 'Você';
   const possessivoTeria = isCasado ? 'Vocês teriam' : 'Você teria';
@@ -74,7 +76,10 @@ export function buildAnswersBreakdown(answers: FinancingQuizAnswers): QuizAnswer
   if (answers.residencePt) {
     out.push({
       question: 'Você já mora em Portugal?',
-      answer: answers.residencePt === 'SIM' ? 'Sim, já moro em Portugal' : 'Ainda não moro',
+      answer:
+        answers.residencePt === 'SIM'
+          ? 'Sim, já moro em Portugal'
+          : 'Ainda não moro',
     });
   }
   if (answers.mode) {
@@ -90,7 +95,10 @@ export function buildAnswersBreakdown(answers: FinancingQuizAnswers): QuizAnswer
         question: `${possessivoTem} ${
           isCasado ? 'possuem' : 'possui'
         } Contrato de Trabalho Efetivo?`,
-        answer: answers.foreignCtef === 'SIM' ? 'Sim' : 'Não / Recibos verdes / Termo',
+        answer:
+          answers.foreignCtef === 'SIM'
+            ? 'Sim'
+            : 'Não / Recibos verdes / Termo',
       });
     }
     if (answers.foreignCapital) {
@@ -128,7 +136,9 @@ export function buildAnswersBreakdown(answers: FinancingQuizAnswers): QuizAnswer
   }
   if (answers.q5) {
     out.push({
-      question: isCasado ? 'Ambos têm menos de 35 anos?' : 'Tem menos de 35 anos?',
+      question: isCasado
+        ? 'Ambos têm menos de 35 anos?'
+        : 'Tem menos de 35 anos?',
       answer: answers.q5 === 'SIM' ? 'Sim' : 'Não',
     });
   }
@@ -150,9 +160,14 @@ export function buildAnswersBreakdown(answers: FinancingQuizAnswers): QuizAnswer
 export function buildQuizSummary(answers: FinancingQuizAnswers): string {
   const a = answers;
   const modeLabel =
-    a.mode === 'casado' ? 'Casado' : a.mode === 'solteiro' ? 'Solteiro' : 'Indefinido';
+    a.mode === 'casado'
+      ? 'Casado'
+      : a.mode === 'solteiro'
+        ? 'Solteiro'
+        : 'Indefinido';
   const parts: string[] = [];
-  if (a.residencePt) parts.push(a.residencePt === 'SIM' ? 'mora em PT' : 'não mora em PT');
+  if (a.residencePt)
+    parts.push(a.residencePt === 'SIM' ? 'mora em PT' : 'não mora em PT');
   parts.push(modeLabel);
   if (a.q2) parts.push(a.q2 === 'SIM' ? 'tem AR/CC' : 'sem AR/CC');
   if (a.q3 || a.foreignCtef) {
@@ -183,47 +198,42 @@ export function classifyFinancingAnswers(
     return {
       key: 'inviavel',
       comment: 'Sem viabilidade identificada no questionário',
-      body:
-        'Resultado inviável:\n❌ Infelizmente com recibos verdes ou contrato temporário fica muito difícil conseguir aprovação de crédito. Talvez ainda não seja o momento de tentar. Ter um contrato de trabalho efetivo é o principal fator para a aprovação dos créditos.',
+      body: 'Resultado inviável:\n❌ Infelizmente com recibos verdes ou contrato temporário fica muito difícil conseguir aprovação de crédito. Talvez ainda não seja o momento de tentar. Ter um contrato de trabalho efetivo é o principal fator para a aprovação dos créditos.',
     };
   }
   if (q3 === 'NAO' && q7 === 'SIM') {
     return {
       key: 'indef-sem-ctef-10',
-      comment: 'Possível viabilidade a confirmar (sem CTEF, com ~10% de entrada)',
-      body:
-        'Resultado indefinido:\n✅ Sem contrato de trabalho efetivo, os bancos tendem a ser mais exigentes; ao indicar que dispõe de cerca de 10% em capitais próprios para entrada, o seu caso deixa de ser automaticamente inviável e pode haver margem para analisar soluções com um gestor de crédito. Não é garantia de aprovação, mas vale reunir a documentação e pedir uma avaliação personalizada.',
+      comment:
+        'Possível viabilidade a confirmar (sem CTEF, com ~10% de entrada)',
+      body: 'Resultado indefinido:\n✅ Sem contrato de trabalho efetivo, os bancos tendem a ser mais exigentes; ao indicar que dispõe de cerca de 10% em capitais próprios para entrada, o seu caso deixa de ser automaticamente inviável e pode haver margem para analisar soluções com um gestor de crédito. Não é garantia de aprovação, mas vale reunir a documentação e pedir uma avaliação personalizada.',
     };
   }
   if (q2 === 'SIM' && q3 === 'SIM' && q5 === 'SIM') {
     return {
       key: '100',
       comment: 'Possível viabilidade de 100%',
-      body:
-        'Resultado 100%:\n✅ Em termos gerais, você tem viabilidade para aprovação de financiamento de 100% do valor da casa!',
+      body: 'Resultado 100%:\n✅ Em termos gerais, você tem viabilidade para aprovação de financiamento de 100% do valor da casa!',
     };
   }
   if (q2 === 'NAO' && q3 === 'SIM') {
     return {
       key: '80',
       comment: 'Possível viabilidade de 80%',
-      body:
-        'Resultado 80%:\n✅ Em termos gerais, você tem viabilidade para aprovação de financiamento de cerca de 80% do valor da casa. Nesse cenário costuma ser necessário cerca de 20% de entrada com capitais próprios (regra habitual quando ainda não há cartão de residência no formato de cartão).',
+      body: 'Resultado 80%:\n✅ Em termos gerais, você tem viabilidade para aprovação de financiamento de cerca de 80% do valor da casa. Nesse cenário costuma ser necessário cerca de 20% de entrada com capitais próprios (regra habitual quando ainda não há cartão de residência no formato de cartão).',
     };
   }
   if (q2 === 'SIM' && q3 === 'SIM' && q5 === 'NAO') {
     return {
       key: '90',
       comment: 'Possível viabilidade de 90%',
-      body:
-        'Resultado 90%:\n✅ Em termos gerais, você tem viabilidade para aprovação de financiamento de 90% do valor da casa. E aí teria de dar 10% de entrada com capitais próprios.',
+      body: 'Resultado 90%:\n✅ Em termos gerais, você tem viabilidade para aprovação de financiamento de 90% do valor da casa. E aí teria de dar 10% de entrada com capitais próprios.',
     };
   }
   return {
     key: 'fallback',
     comment: 'Possível viabilidade a confirmar (caso com particularidades)',
-    body:
-      'Resultado indefinido:\n✅ Em termos gerais o seu caso tem particularidades. Vale a pena tentar e falar com um gestor de crédito para analisar o seu caso em detalhe.',
+    body: 'Resultado indefinido:\n✅ Em termos gerais o seu caso tem particularidades. Vale a pena tentar e falar com um gestor de crédito para analisar o seu caso em detalhe.',
   };
 }
 
@@ -235,37 +245,43 @@ export function classifyForeignInvestorAnswers(
     return {
       key: 'inviavel',
       comment: 'Sem viabilidade (não reside em PT, sem CTEF)',
-      body:
-        'Resultado inviável:\n❌ Sem contrato de trabalho efetivo, é muito difícil obter aprovação. Os bancos em Portugal costumam exigir estabilidade profissional demonstrável.',
+      body: 'Resultado inviável:\n❌ Sem contrato de trabalho efetivo, é muito difícil obter aprovação. Os bancos em Portugal costumam exigir estabilidade profissional demonstrável.',
     };
   }
   if (capitalOk === 'NAO') {
     return {
       key: 'inviavel',
       comment: 'Sem viabilidade (não reside em PT, sem 20% entrada)',
-      body:
-        'Resultado inviável:\n❌ Como regra, para investidores estrangeiros os bancos em Portugal financiam em muitos casos cerca de 80% do valor do imóvel — ou seja, é habitual precisar de cerca de 20% em capitais próprios. Sem essa entrada, fica muito difícil avançar.',
+      body: 'Resultado inviável:\n❌ Como regra, para investidores estrangeiros os bancos em Portugal financiam em muitos casos cerca de 80% do valor do imóvel — ou seja, é habitual precisar de cerca de 20% em capitais próprios. Sem essa entrada, fica muito difícil avançar.',
     };
   }
   return {
     key: 'foreign-80',
     comment: 'Possível viabilidade ~80% (não reside em PT)',
-    body:
-      'Resultado (investidor estrangeiro):\n✅ Em termos gerais, com contrato de trabalho efetivo e cerca de 20% em capitais próprios para entrada, o seu caso alinha-se com o que muitos bancos em Portugal costumam pedir (financiamento na ordem dos 80% do valor do imóvel). Não é garantia de aprovação — vale confirmar com um gestor de crédito.',
+    body: 'Resultado (investidor estrangeiro):\n✅ Em termos gerais, com contrato de trabalho efetivo e cerca de 20% em capitais próprios para entrada, o seu caso alinha-se com o que muitos bancos em Portugal costumam pedir (financiamento na ordem dos 80% do valor do imóvel). Não é garantia de aprovação — vale confirmar com um gestor de crédito.',
   };
 }
 
 /** Classifica em função da árvore completa (a partir de answers serializadas). */
-export function classifyAnswers(answers: FinancingQuizAnswers): FinancingOutcome {
+export function classifyAnswers(
+  answers: FinancingQuizAnswers,
+): FinancingOutcome {
   if (resolveTrack(answers.residencePt) === 'foreign') {
-    return classifyForeignInvestorAnswers(answers.foreignCtef, answers.foreignCapital);
+    return classifyForeignInvestorAnswers(
+      answers.foreignCtef,
+      answers.foreignCapital,
+    );
   }
   // Trilha residente: garantir capitalOk quando aplicável (consistência com receiver).
-  let q5 = answers.q5;
+  const q5 = answers.q5;
   let capitalOk = answers.capitalOk;
   // q7 só existe quando q3=NAO.
   if (answers.q3 === 'SIM') {
-    const requiredPct = computeRequiredCapitalPercent(answers.q2, answers.q3, q5);
+    const requiredPct = computeRequiredCapitalPercent(
+      answers.q2,
+      answers.q3,
+      q5,
+    );
     if (requiredPct !== null && capitalOk === undefined) {
       // O caller não enviou capitalOk para um caso que o exige — tratamos como inviável.
       capitalOk = 'NAO';
@@ -335,6 +351,8 @@ export function financingPracticalExampleForOutcome(
 }
 
 /** Apenas outcomes não inviáveis podem solicitar atendimento da gestora. */
-export function outcomeIsEligibleForAtendimento(key: FinancingOutcomeKey): boolean {
+export function outcomeIsEligibleForAtendimento(
+  key: FinancingOutcomeKey,
+): boolean {
   return key !== 'inviavel';
 }

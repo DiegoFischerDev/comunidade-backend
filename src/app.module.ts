@@ -20,6 +20,8 @@ import { GrupoTesteModule } from './grupo-teste/grupo-teste.module';
 import { RedirectLinksModule } from './redirect-links/redirect-links.module';
 import { RecommendedServicesModule } from './recommended-services/recommended-services.module';
 import { FinancingQuizModule } from './financing-quiz/financing-quiz.module';
+import { LeadsModule } from './leads/leads.module';
+import { LeadDocumentsModule } from './lead-documents/lead-documents.module';
 
 @Module({
   imports: [
@@ -38,6 +40,8 @@ import { FinancingQuizModule } from './financing-quiz/financing-quiz.module';
     GrupoTesteModule,
     RedirectLinksModule,
     RecommendedServicesModule,
+    LeadsModule,
+    LeadDocumentsModule,
     FinancingQuizModule,
   ],
   controllers: [AppController],

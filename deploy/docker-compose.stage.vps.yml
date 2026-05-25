@@ -34,9 +34,6 @@ services:
       RAFA_CALL_BUFFER_MINUTES: ${RAFA_CALL_BUFFER_MINUTES:-10}
       RAFA_CALL_WINDOW_DAYS: ${RAFA_CALL_WINDOW_DAYS:-14}
       RAFA_CALL_WORKING_HOURS_JSON: ${RAFA_CALL_WORKING_HOURS_JSON:-}
-      # ia-app: leads + atribuição de gestoras (usado pelo /financing-quiz/*)
-      IA_APP_BASE_URL: ${IA_APP_BASE_URL:-https://ia.rafaapelomundo.com/}
-      IA_APP_INTEGRATION_SECRET: ${IA_APP_INTEGRATION_SECRET}
     depends_on:
       postgres:
         condition: service_healthy

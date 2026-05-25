@@ -1,6 +1,16 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { IaAppService } from './ia-app.service';
-import { sendGestoraKitEmail } from './financing-quiz-email';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { LeadsService } from '../leads/leads.service';
+import { getFrontendBaseUrl } from '../config/frontend-base-url';
+import {
+  sendPartnerKitEmail,
+  type PartnerForLeadEmail,
+} from './financing-quiz-email';
 import {
   buildAnswersBreakdown,
   buildQuizSummary,
@@ -10,15 +20,23 @@ import {
   type FinancingQuizAnswers,
 } from './financing-quiz.constants';
 
+/** Normaliza um WhatsApp para apenas dígitos (mantém prefixos internacionais como `351...`). */
+function normalizeWhatsapp(input: string): string {
+  return String(input ?? '').replace(/\D+/g, '');
+}
+
 @Injectable()
 export class FinancingQuizService {
   private readonly logger = new Logger(FinancingQuizService.name);
 
-  constructor(private readonly iaApp: IaAppService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly leadsService: LeadsService,
+  ) {}
 
   /**
    * Classifica o quiz e devolve outcome + exemplo + resumo + flag de elegibilidade.
-   * Não persiste nada nem chama a ia-app — só responde ao frontend para mostrar o resultado.
+   * Não persiste nada — só responde ao frontend para mostrar o resultado.
    */
   submit(input: { answers: FinancingQuizAnswers }) {
     const outcome = classifyAnswers(input.answers);
@@ -37,9 +55,10 @@ export class FinancingQuizService {
   }
 
   /**
-   * Solicita atendimento: cria o lead na ia-app (se ainda não existir), pede a atribuição
-   * de gestora, e envia ao lead um email com a foto + dados da gestora + link de upload
-   * de documentos. Não devolve os dados sensíveis ao frontend — entrega tudo por email.
+   * Solicita atendimento: cria o lead na DB, atribui ao parceiro de `financiamento` com menos
+   * leads no total, e envia ao lead um email com os contactos do parceiro + resumo do quiz +
+   * resultado + exemplos + respostas detalhadas. Tudo é entregue por email — o frontend
+   * recebe apenas `{ ok: true }`.
    */
   async requestAtendimento(input: {
     name: string;
@@ -53,7 +72,7 @@ export class FinancingQuizService {
     const email = input.email.trim().toLowerCase();
     if (!email) throw new BadRequestException('Email é obrigatório.');
 
-    const wa = IaAppService.normalizeWhatsapp(input.whatsapp);
+    const wa = normalizeWhatsapp(input.whatsapp);
     if (wa.length < 8) throw new BadRequestException('WhatsApp inválido.');
 
     const outcome = classifyAnswers(input.answers);
@@ -61,8 +80,8 @@ export class FinancingQuizService {
     const breakdown = buildAnswersBreakdown(input.answers);
     const example = financingPracticalExampleForOutcome(outcome.key);
 
-    // Comentário do lead na ia-app — texto completo, legível para gestoras e admins.
-    const comentarioLinhas: string[] = [
+    // Comentário guardado no lead — texto completo, legível para o parceiro no dashboard.
+    const commentLines: string[] = [
       'Lead via questionário público da Comunidade Rafa Portugal.',
       `Email do lead: ${email}.`,
       '',
@@ -72,54 +91,67 @@ export class FinancingQuizService {
       'Respostas detalhadas:',
       ...breakdown.map((b, i) => `${i + 1}. ${b.question}\n   → ${b.answer}`),
     ];
-    const comentario = comentarioLinhas.join('\n');
+    const comment = commentLines.join('\n');
 
-    // 1) Garante o lead na ia-app (idempotente).
-    //    Nota: se o lead já existir, a ia-app NÃO atualiza o comentário (apenas devolve o id
-    //    e o upload_url). Por isso, depois disparamos PATCH /comment para forçar o comentário
-    //    atual a refletir o último quiz respondido.
-    const lead = await this.iaApp.createLead({
+    // 1) Cria o lead na DB e atribui ao parceiro `financiamento` com menos leads no total.
+    const { lead, partnerId } = await this.leadsService.createForFinancingQuiz({
+      name,
       whatsapp: wa,
-      nome: name,
-      comentario,
+      email,
+      comment,
+      outcomeKey: outcome.key,
     });
-    const uploadUrl = String(lead.upload_url ?? '').trim();
 
-    try {
-      await this.iaApp.patchLeadComment({ whatsapp: wa, comentario });
-    } catch (e) {
-      this.logger.warn(
-        `patchLeadComment falhou para ${wa}: ${(e as Error).message} — seguimos com o lead criado.`,
+    // URL pública da página de upload de documentos do lead (gate por WhatsApp).
+    const uploadUrl = `${getFrontendBaseUrl()}/leads/${lead.id}/documentos`;
+
+    // 2) Carrega os dados do parceiro atribuído para preencher o email do lead.
+    const partner = await this.prisma.partner.findUnique({
+      where: { id: partnerId },
+      select: {
+        id: true,
+        name: true,
+        whatsapp: true,
+        logoUrl: true,
+        shortDescription: true,
+        user: { select: { email: true } },
+      },
+    });
+    if (!partner) {
+      // Praticamente impossível (acabámos de criar o lead apontando para este partnerId),
+      // mas mantemos a guarda para evitar crashes silenciosos em race conditions.
+      throw new InternalServerErrorException(
+        'Parceiro atribuído não foi encontrado. Tenta novamente em instantes.',
       );
     }
 
-    // 2) Pede atribuição de gestora. Se ainda assim devolver `leadNotFound`, falha clara.
-    const atendimento = await this.iaApp.requestAtendimento(wa);
-    if ('leadNotFound' in atendimento) {
-      throw new BadRequestException(
-        'Não foi possível atribuir uma gestora. Tenta novamente em instantes.',
-      );
-    }
+    const partnerForEmail: PartnerForLeadEmail = {
+      name: partner.name,
+      whatsapp: partner.whatsapp,
+      logoUrl: partner.logoUrl,
+      shortDescription: partner.shortDescription,
+      email: partner.user?.email ?? null,
+    };
 
-    // 3) Envia email ao lead com o kit da gestora + resumo do quiz + resultado + exemplo.
-    //    Falha do email não devolve a gestora ao cliente — preferimos avisar o utilizador
-    //    para tentar novamente, porque o objetivo deste fluxo é entregar tudo por email.
+    // 3) Envia email ao lead com os contactos do parceiro + resumo do quiz.
+    //    Se o email falhar, retornamos um erro 400 com mensagem amigável — o lead já foi
+    //    persistido (o parceiro pode contactar manualmente, mesmo sem o email do nosso lado).
     try {
-      await sendGestoraKitEmail({
+      await sendPartnerKitEmail({
         to: email,
         leadName: name,
-        gestora: atendimento.gestora,
-        uploadUrl,
+        partner: partnerForEmail,
         outcomeBody: outcome.body,
         example,
         breakdown,
+        uploadUrl,
       });
     } catch (e) {
       this.logger.error(
-        `Falha ao enviar email da gestora para ${email}: ${(e as Error).message}`,
+        `Falha ao enviar email do parceiro para ${email} (partnerId=${partnerId}): ${(e as Error).message}`,
       );
       throw new BadRequestException(
-        'Não conseguimos enviar o email com os dados da gestora. Tenta de novo dentro de instantes — se persistir, escreve-nos pelo WhatsApp do suporte.',
+        'Não conseguimos enviar o email com os dados do parceiro. Tenta de novo dentro de instantes — se persistir, escreve-nos pelo WhatsApp do suporte.',
       );
     }
 

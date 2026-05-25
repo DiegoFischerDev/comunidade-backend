@@ -505,9 +505,63 @@ model Partner {
   reactions                PartnerReaction[]
   comments                 PartnerComment[]
   advertisingLedgerEntries PartnerAdvertisingLedgerEntry[]
+  /// Leads atribuídos a este parceiro (round-robin total-time entre parceiros da categoria
+  /// `financiamento`). Ver `LeadsService.createForFinancingQuiz`.
+  leads                    Lead[]
   /// Link rastreado do botão «Entre em contato» na hero da página pública.
   heroShareLinkId          String?                         @unique @map("hero_share_link_id")
   heroShareLink            PartnerShareLink?               @relation("PartnerHeroShareLink", fields: [heroShareLinkId], references: [id], onDelete: SetNull)
+}
+
+/// Lead capturado pelo questionário público `/financiamento`. Atribuído a um parceiro da
+/// categoria `financiamento` via round-robin (parceiro com menos leads no total ganha o
+/// próximo lead). O lead pode enviar documentos diretamente para o email do parceiro via
+/// `/leads/{id}/documentos` (ver `LeadDocumentSubmission`). Sem máquina de estados —
+/// listagem cronológica simples no dashboard do parceiro.
+model Lead {
+  id          String                    @id @default(cuid())
+  name        String
+  whatsapp    String
+  email       String
+  /// Conteúdo completo (resumo do quiz + classificação + respostas detalhadas) usado no email
+  /// enviado ao parceiro e ao lead.
+  comment     String?                   @db.Text
+  /// Chave da classificação retornada pelo motor do quiz (ex.: `outcomeOk`, `notNow`, ...).
+  outcomeKey  String?                   @map("outcome_key")
+  partnerId   String                    @map("partner_id")
+  partner     Partner                   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  /// Timestamp do primeiro envio de documentos (qualquer modo). `null` = ainda não enviou.
+  /// Usamos isto para destacar no dashboard «Meus leads» quem já entregou docs.
+  docsSentAt  DateTime?                 @map("docs_sent_at")
+  createdAt   DateTime                  @default(now()) @map("created_at")
+  submissions LeadDocumentSubmission[]
+
+  @@index([partnerId, createdAt])
+  @@map("leads")
+}
+
+/// Histórico de envios de documentos por um lead. Cada submit do formulário de upload cria
+/// uma linha (modo principal, cônjuge ou envio extra). Não guardamos os ficheiros — vão
+/// direto para o email do parceiro como attachments e ficam apenas no IndexedDB do
+/// dispositivo do lead até serem enviados.
+model LeadDocumentSubmission {
+  id             String   @id @default(cuid())
+  leadId         String   @map("lead_id")
+  lead           Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  /// `main` = primeiro envio do próprio lead. `spouse` = envio dos documentos do cônjuge.
+  /// `extra` = envios adicionais (correções, anexos em falta) após o `main`.
+  mode           String
+  /// Número de ficheiros anexados ao email enviado ao parceiro.
+  documentCount  Int      @map("document_count")
+  /// Vínculo laboral declarado neste envio (ex.: «Contrato Efetivo», «Contrato temporário»,
+  /// «Recibos verdes»). Guardado para auditoria — não é mostrado ao parceiro no dashboard.
+  vinculoLaboral String?  @map("vinculo_laboral")
+  /// Estado civil declarado neste envio. Igual ao vínculo: meramente para auditoria.
+  estadoCivil    String?  @map("estado_civil")
+  submittedAt    DateTime @default(now()) @map("submitted_at")
+
+  @@index([leadId, submittedAt])
+  @@map("lead_document_submissions")
 }
 
 model PartnerReaction {

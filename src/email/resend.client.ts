@@ -13,6 +13,10 @@ export function getResendClient() {
 
 export async function sendEmailBase(params: {
   to: string | string[];
+  /** Recebem cópia (CC). Útil quando queremos que o lead também receba o anexo enviado ao parceiro. */
+  cc?: string | string[];
+  /** Endereço de resposta — quem clicar «Responder» fala diretamente com este email. */
+  replyTo?: string;
   subject: string;
   text?: string;
   html?: string;
@@ -24,18 +28,23 @@ export async function sendEmailBase(params: {
     throw new Error('Envio de email não está configurado (Resend).');
   }
 
-  const fromFormatted = 'Comunidade Rafa Portugal <noreply@ia.rafaapelomundo.com>';
+  const fromFormatted =
+    'Comunidade Rafa Portugal <noreply@ia.rafaapelomundo.com>';
 
-  return await resend.emails.send(
-    {
-      from: fromFormatted,
-      to: Array.isArray(params.to) ? params.to : [params.to],
-      subject: params.subject,
-      text: params.text,
-      html: params.html,
-      attachments: params.attachments,
-    } as any,
-  );
+  return await resend.emails.send({
+    from: fromFormatted,
+    to: Array.isArray(params.to) ? params.to : [params.to],
+    cc: params.cc
+      ? Array.isArray(params.cc)
+        ? params.cc
+        : [params.cc]
+      : undefined,
+    replyTo: params.replyTo,
+    subject: params.subject,
+    text: params.text,
+    html: params.html,
+    attachments: params.attachments,
+  } as any);
 }
 
 export async function sendEmailWithPdfAttachment(params: {
@@ -53,8 +62,11 @@ export async function sendEmailWithPdfAttachment(params: {
     text: params.text,
     html: params.html,
     attachments: [
-      { filename: params.filename, content: buf, contentType: 'application/pdf' },
+      {
+        filename: params.filename,
+        content: buf,
+        contentType: 'application/pdf',
+      },
     ],
   });
 }
-
