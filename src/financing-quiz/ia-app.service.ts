@@ -1,5 +1,24 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
+/** Estrutura mínima conhecida do objeto `gestora` devolvido pela ia-app. */
+export type GestoraShape = {
+  id?: number;
+  nome?: string | null;
+  email?: string | null;
+  email_para_leads?: string | null;
+  whatsapp?: string | null;
+  foto_perfil?: string | null;
+  boas_vindas?: string | null;
+};
+
+/** Estrutura mínima conhecida do objeto `lead` devolvido pela ia-app. */
+export type GestoraLeadShape = {
+  id?: number;
+  whatsapp_number?: string | null;
+  nome?: string | null;
+  upload_url?: string | null;
+};
+
 /**
  * Wrapper para a integração HTTP com a `ia-app` (https://ia.rafaapelomundo.com), que é a fonte
  * de verdade dos leads e gestoras. Espelha as 3 chamadas que o receiver wa-verify usa.
@@ -101,11 +120,14 @@ export class IaAppService {
 
   /**
    * Solicita atendimento (atribuição de gestora). Devolve `{ ok, lead, gestora }`.
+   * O objeto `gestora` segue o contrato documentado em `API-INTEGRACAO.md` e inclui:
+   * `nome`, `email`, `email_para_leads`, `whatsapp`, `foto_perfil`, `boas_vindas`.
+   *
    * Se a ia-app responder 404 (lead não existe), retorna `{ leadNotFound: true }` para o
    * caller decidir criar primeiro e tentar novamente.
    */
   async requestAtendimento(whatsapp: string): Promise<
-    | { ok: true; lead?: unknown; gestora?: unknown }
+    | { ok: true; lead?: GestoraLeadShape; gestora?: GestoraShape }
     | { leadNotFound: true }
   > {
     this.assertConfigured();
@@ -125,7 +147,7 @@ export class IaAppService {
       json = {};
     }
     if (res.status === 200 && json.ok === true) {
-      return json as { ok: true; lead?: unknown; gestora?: unknown };
+      return json as { ok: true; lead?: GestoraLeadShape; gestora?: GestoraShape };
     }
     if (res.status === 404) {
       return { leadNotFound: true };
@@ -184,6 +206,49 @@ export class IaAppService {
     const resumo = String(input.quizSummary ?? '').trim() || 'não informado';
     const text = `Ola, meu nome é ${nome}, e vim pela Rafa, minhas respostas ao questionario: ${resumo}`;
     return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+  }
+
+  /** Email da gestora a usar para contacto do lead (prefere `email_para_leads`). */
+  static extractGestoraEmail(g: unknown): string {
+    if (!g || typeof g !== 'object') return '';
+    const o = g as Record<string, unknown>;
+    const candidates = [o.email_para_leads, o.emailParaLeads, o.email];
+    for (const c of candidates) {
+      const v = String(c ?? '').trim();
+      if (v) return v;
+    }
+    return '';
+  }
+
+  /** Mensagem de boas-vindas (HTML-safe) configurada pela gestora. */
+  static extractGestoraBoasVindas(g: unknown): string {
+    if (!g || typeof g !== 'object') return '';
+    const o = g as Record<string, unknown>;
+    const candidates = [o.boas_vindas, o.boasVindas, o.welcomeMessage];
+    for (const c of candidates) {
+      const v = String(c ?? '').trim();
+      if (v) return v;
+    }
+    return '';
+  }
+
+  /**
+   * Normaliza `foto_perfil` da gestora para um `src` utilizável em `<img>` (data URL ou HTTP).
+   * A ia-app pode devolver: data URL completa, URL externa, ou base64 puro (assume `image/jpeg`).
+   */
+  static fotoSrcFromGestora(g: unknown): string {
+    if (!g || typeof g !== 'object') return '';
+    const o = g as Record<string, unknown>;
+    const candidates = [o.foto_perfil, o.fotoPerfil, o.photoUrl, o.avatar];
+    for (const c of candidates) {
+      const raw = String(c ?? '').trim();
+      if (!raw) continue;
+      if (raw.startsWith('data:') || raw.startsWith('http://') || raw.startsWith('https://')) {
+        return raw;
+      }
+      return `data:image/jpeg;base64,${raw}`;
+    }
+    return '';
   }
 
   private extractApiMessage(json: Record<string, unknown>, raw: string, status: number): string {

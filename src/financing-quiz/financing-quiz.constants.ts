@@ -57,9 +57,95 @@ export function computeRequiredCapitalPercent(
 }
 
 /**
- * Constrói um resumo curto das respostas (em português) — usado como comentário do lead na
- * `ia-app`. Mantém o formato do receiver wa-verify para os admins continuarem a ver o mesmo
- * estilo.
+ * Detalhe pergunta→resposta (uma entrada por pergunta efetivamente respondida pelo lead).
+ * Usado tanto no comentário do lead na `ia-app` como no corpo do email enviado ao lead.
+ *
+ * As perguntas reproduzem o texto da `renderQuestion` do frontend (formato natural em PT)
+ * para que o admin/gestora consiga reconstruir a conversa sem ambiguidade.
+ */
+export type QuizAnswerBreakdownItem = { question: string; answer: string };
+
+export function buildAnswersBreakdown(answers: FinancingQuizAnswers): QuizAnswerBreakdownItem[] {
+  const isCasado = answers.mode === 'casado';
+  const possessivoTem = isCasado ? 'Pelo menos um dos dois' : 'Você';
+  const possessivoTeria = isCasado ? 'Vocês teriam' : 'Você teria';
+  const out: QuizAnswerBreakdownItem[] = [];
+
+  if (answers.residencePt) {
+    out.push({
+      question: 'Você já mora em Portugal?',
+      answer: answers.residencePt === 'SIM' ? 'Sim, já moro em Portugal' : 'Ainda não moro',
+    });
+  }
+  if (answers.mode) {
+    out.push({
+      question: 'Estado civil',
+      answer: isCasado ? 'Casado(a) / União de facto' : 'Solteiro(a)',
+    });
+  }
+
+  if (answers.residencePt === 'NAO') {
+    if (answers.foreignCtef) {
+      out.push({
+        question: `${possessivoTem} ${
+          isCasado ? 'possuem' : 'possui'
+        } Contrato de Trabalho Efetivo?`,
+        answer: answers.foreignCtef === 'SIM' ? 'Sim' : 'Não / Recibos verdes / Termo',
+      });
+    }
+    if (answers.foreignCapital) {
+      out.push({
+        question: `${possessivoTeria} 20% do valor da casa em capitais próprios para a entrada?`,
+        answer: answers.foreignCapital === 'SIM' ? 'Sim, conseguiria' : 'Não',
+      });
+    }
+    return out;
+  }
+
+  if (answers.q2) {
+    out.push({
+      question: isCasado
+        ? 'Pelo menos um dos dois já possui Cartão de Cidadão ou Título de Residência (no formato cartão)?'
+        : 'Já possui Cartão de Cidadão ou Título de Residência (no formato cartão)?',
+      answer: answers.q2 === 'SIM' ? 'Sim' : 'Ainda não',
+    });
+  }
+  if (answers.q3) {
+    out.push({
+      question: `${possessivoTem} ${
+        isCasado ? 'possuem' : 'possui'
+      } Contrato de Trabalho Efetivo?`,
+      answer: answers.q3 === 'SIM' ? 'Sim' : 'Não / Recibos verdes / Termo',
+    });
+  }
+  if (answers.q7) {
+    out.push({
+      question: isCasado
+        ? 'Teriam 10% do valor da casa em capitais próprios para dar de entrada?'
+        : 'Teria 10% do valor da casa em capitais próprios para dar de entrada?',
+      answer: answers.q7 === 'SIM' ? 'Sim, conseguiria' : 'Não',
+    });
+  }
+  if (answers.q5) {
+    out.push({
+      question: isCasado ? 'Ambos têm menos de 35 anos?' : 'Tem menos de 35 anos?',
+      answer: answers.q5 === 'SIM' ? 'Sim' : 'Não',
+    });
+  }
+  if (answers.capitalOk) {
+    const pct = answers.capitalPercent ?? 20;
+    out.push({
+      question: `${possessivoTeria} ${pct}% do valor da casa em capitais próprios para dar de entrada?`,
+      answer: answers.capitalOk === 'SIM' ? `Sim, ${pct}% ou mais` : 'Não',
+    });
+  }
+  return out;
+}
+
+/**
+ * Constrói um resumo curto das respostas (em português) — usado como linha-resumo curta no
+ * topo do comentário do lead. Mantém o formato do receiver wa-verify para os admins
+ * continuarem a ver o mesmo estilo.
  */
 export function buildQuizSummary(answers: FinancingQuizAnswers): string {
   const a = answers;

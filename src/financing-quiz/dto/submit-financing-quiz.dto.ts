@@ -1,4 +1,5 @@
 import {
+  IsEmail,
   IsIn,
   IsOptional,
   IsString,
@@ -45,10 +46,24 @@ class FinancingQuizAnswersDto {
   foreignCapital?: 'SIM' | 'NAO';
 }
 
+/** Submeter o quiz: agora só classifica (sem dados pessoais). */
 export class SubmitFinancingQuizDto {
+  @ValidateNested()
+  @Type(() => FinancingQuizAnswersDto)
+  answers!: FinancingQuizAnswersDto;
+}
+
+/**
+ * Pedido de atendimento: cria/encontra o lead na ia-app, atribui gestora e envia ao lead
+ * por email a foto + dados de contacto + link de upload de documentos.
+ */
+export class RequestAtendimentoDto {
   @IsString()
   @MinLength(2)
   name!: string;
+
+  @IsEmail()
+  email!: string;
 
   @IsString()
   @MinLength(8)
@@ -57,10 +72,4 @@ export class SubmitFinancingQuizDto {
   @ValidateNested()
   @Type(() => FinancingQuizAnswersDto)
   answers!: FinancingQuizAnswersDto;
-}
-
-export class RequestAtendimentoDto {
-  @IsString()
-  @MinLength(8)
-  whatsapp!: string;
 }

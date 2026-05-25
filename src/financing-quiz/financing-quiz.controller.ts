@@ -10,19 +10,22 @@ import {
 export class FinancingQuizController {
   constructor(private readonly service: FinancingQuizService) {}
 
+  /** Classifica as respostas e devolve resultado + exemplo — sem persistir. */
   @Public()
   @Post('submit')
-  async submit(@Body() dto: SubmitFinancingQuizDto) {
-    return this.service.submit({
-      name: dto.name,
-      whatsapp: dto.whatsapp,
-      answers: dto.answers,
-    });
+  submit(@Body() dto: SubmitFinancingQuizDto) {
+    return this.service.submit({ answers: dto.answers });
   }
 
+  /** Cria lead, atribui gestora e envia email com kit da gestora ao utilizador. */
   @Public()
   @Post('request-atendimento')
   async requestAtendimento(@Body() dto: RequestAtendimentoDto) {
-    return this.service.requestAtendimento({ whatsapp: dto.whatsapp });
+    return this.service.requestAtendimento({
+      name: dto.name,
+      email: dto.email,
+      whatsapp: dto.whatsapp,
+      answers: dto.answers,
+    });
   }
 }
