@@ -146,7 +146,7 @@ export function buildLeadDocumentsEmailHtml(input: {
     <div style="max-width:600px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:${TEXT_DARK};">
       <div style="background:linear-gradient(135deg,${PRIMARY} 0%,#f0b23a 100%);padding:24px 20px;text-align:center;border-radius:16px 16px 0 0;">
         <p style="margin:0;color:#fff;font-size:13px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Comunidade Rafa Portugal</p>
-        <h1 style="margin:6px 0 0;color:#fff;font-size:22px;font-weight:700;">Documentos recebidos do lead</h1>
+        <h1 style="margin:6px 0 0;color:#fff;font-size:22px;font-weight:700;">Documentos recebidos</h1>
       </div>
       <div style="border:1px solid ${BORDER};border-top:0;border-radius:0 0 16px 16px;padding:24px 22px;background:#fff;">
         <table role="presentation" style="border-collapse:separate;border-spacing:0;width:100%;margin:0 0 18px;">
