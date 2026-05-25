@@ -197,7 +197,7 @@ export class RafacallBookingService {
     const bookingWa = booking.guestWhatsapp ?? booking.user?.whatsapp ?? '';
     if (this.normalizeWhatsapp(bookingWa) !== wa) {
       throw new BadRequestException(
-        'WhatsApp não corresponde a este agendamento.',
+        'O número de WhatsApp introduzido não corresponde ao registado para este agendamento. Verifica e tenta novamente.',
       );
     }
     return booking;
@@ -762,6 +762,12 @@ export class RafacallBookingService {
       }),
     ]);
 
+    // Mantém o unlock associado ao booking ativo (para que um cancelamento futuro o restaure).
+    await this.prisma.rafaCallGuestUnlock.updateMany({
+      where: { consumedBookingId: current.id },
+      data: { consumedBookingId: created.id },
+    });
+
     const name = current.guestName ?? null;
     const wa = current.guestWhatsapp ?? '';
     if (wa) {
@@ -783,7 +789,10 @@ export class RafacallBookingService {
     };
   }
 
-  /** Cancela um booking (guest) — exige confirmação por WhatsApp. */
+  /** Cancela um booking (guest) — exige confirmação por WhatsApp.
+   * O unlock pago é restaurado (sem `consumedAt`, com nova validade) para que o mesmo
+   * número possa marcar uma nova chamada sem voltar a pagar a taxa.
+   */
   async cancelGuest(input: { bookingId: string; whatsapp: string; reason?: string | null }) {
     const current = await this.assertWhatsappCanAccessBooking(input.bookingId, input.whatsapp);
     if (current.status !== RafaCallBookingStatus.SCHEDULED) {
@@ -797,6 +806,34 @@ export class RafacallBookingService {
         cancelReason: input.reason?.trim() || 'user_cancel',
       },
     });
+
+    // Restaurar unlock: prioriza o que aponta para este booking; fallback por WhatsApp.
+    const newExpiry = new Date();
+    newExpiry.setDate(newExpiry.getDate() + 90);
+    let restoredUnlock = await this.prisma.rafaCallGuestUnlock.findFirst({
+      where: { consumedBookingId: current.id, paidAt: { not: null } },
+    });
+    if (!restoredUnlock && current.guestWhatsapp) {
+      restoredUnlock = await this.prisma.rafaCallGuestUnlock.findFirst({
+        where: {
+          whatsapp: current.guestWhatsapp,
+          paidAt: { not: null },
+          consumedAt: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+    if (restoredUnlock) {
+      await this.prisma.rafaCallGuestUnlock.update({
+        where: { id: restoredUnlock.id },
+        data: {
+          consumedAt: null,
+          consumedBookingId: null,
+          expiresAt: newExpiry,
+        },
+      });
+    }
+
     const wa = current.guestWhatsapp ?? '';
     if (wa) {
       void this.sendBookingMessage(

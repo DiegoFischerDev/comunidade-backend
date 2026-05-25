@@ -948,7 +948,7 @@ export class StripeService {
    */
   async createGuestRafacallSession(
     dto: CreateGuestRafacallSessionDto,
-  ): Promise<{ url: string }> {
+  ): Promise<{ url: string } | { skipPayment: true; unlockId: string }> {
     const whatsapp = this.normalizeSignupWhatsapp(dto.whatsapp);
     if (whatsapp.length < 8) {
       throw new BadRequestException('WhatsApp inválido.');
@@ -971,6 +971,27 @@ export class StripeService {
       throw new BadRequestException(
         'Este número de WhatsApp já tem um agendamento ativo. Use o link enviado para gerir o seu agendamento.',
       );
+    }
+
+    // Se este WhatsApp tem um unlock já pago e ainda não consumido (ex.: o utilizador
+    // cancelou um agendamento anterior), salta o pagamento e devolve o unlock para agendamento direto.
+    const existingCredit = await this.prisma.rafaCallGuestUnlock.findFirst({
+      where: {
+        whatsapp,
+        paidAt: { not: null },
+        consumedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (existingCredit) {
+      if (existingCredit.name !== name) {
+        await this.prisma.rafaCallGuestUnlock.update({
+          where: { id: existingCredit.id },
+          data: { name },
+        });
+      }
+      return { skipPayment: true, unlockId: existingCredit.id };
     }
 
     const unlock = await this.prisma.rafaCallGuestUnlock.create({
