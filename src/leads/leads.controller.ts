@@ -5,6 +5,7 @@ import { Roles } from '../auth/roles.decorator';
 import { LeadsService } from './leads.service';
 import { UpdateLeadAdminDto } from './dto/update-lead-admin.dto';
 import { UpdateLeadPartnerDto } from './dto/update-lead-partner.dto';
+import { UpdateNextContactDto } from './dto/update-next-contact.dto';
 
 /**
  * Endpoints para parceiros gerirem os leads que lhes foram atribuídos. O quiz público não fala
@@ -21,6 +22,13 @@ export class LeadsController {
     return this.leadsService.listForPartner(user.id);
   }
 
+  /** Agenda: lista apenas leads com nextContactAt (parceiro). */
+  @Get('me/next-contact')
+  @Roles(Role.PARTNER)
+  async listNextContactMine(@CurrentUser() user: { id: string }) {
+    return this.leadsService.listNextContactForPartner(user.id);
+  }
+
   /** Edita um lead do parceiro autenticado. */
   @Patch('me/:id')
   @Roles(Role.PARTNER)
@@ -30,6 +38,17 @@ export class LeadsController {
     @Body() dto: UpdateLeadPartnerDto,
   ) {
     return this.leadsService.updateForPartner(user.id, id, dto);
+  }
+
+  /** Define/remove nextContactAt (parceiro). */
+  @Patch('me/:id/next-contact')
+  @Roles(Role.PARTNER)
+  async setNextContactMine(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Body() dto: UpdateNextContactDto,
+  ) {
+    return this.leadsService.setNextContactForPartner(user.id, id, dto.nextContactAt);
   }
 
   /** Lista todos os leads (admin). */

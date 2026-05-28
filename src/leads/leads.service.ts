@@ -148,6 +148,100 @@ export class LeadsService {
     return { items };
   }
 
+  /** Lista leads agendados (nextContactAt != null) para o parceiro autenticado. */
+  async listNextContactForPartner(userId: string) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { userId },
+      select: { id: true, categorySlug: true },
+    });
+    if (!partner) {
+      throw new NotFoundException(
+        'Parceiro não encontrado para este utilizador.',
+      );
+    }
+    if (partner.categorySlug !== 'financiamento') {
+      return { items: [] as any[] };
+    }
+
+    const rows = await this.prisma.lead.findMany({
+      where: { partnerId: partner.id, nextContactAt: { not: null } },
+      orderBy: { nextContactAt: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        whatsapp: true,
+        email: true,
+        comment: true,
+        outcomeKey: true,
+        docsSentAt: true,
+        nextContactAt: true,
+        createdAt: true,
+        _count: { select: { submissions: true } },
+      },
+    });
+
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        whatsapp: r.whatsapp,
+        email: r.email,
+        comment: r.comment,
+        outcomeKey: r.outcomeKey,
+        docsSentAt: r.docsSentAt,
+        nextContactAt: r.nextContactAt,
+        submissionsCount: r._count.submissions,
+        createdAt: r.createdAt,
+      })),
+    };
+  }
+
+  /** Define/remove o próximo contacto (parceiro). `nextContactAtIso` em ISO UTC ou null. */
+  async setNextContactForPartner(
+    userId: string,
+    leadId: string,
+    nextContactAtIso?: string | null,
+  ) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { userId },
+      select: { id: true, categorySlug: true },
+    });
+    if (!partner) {
+      throw new NotFoundException(
+        'Parceiro não encontrado para este utilizador.',
+      );
+    }
+    if (partner.categorySlug !== 'financiamento') {
+      throw new NotFoundException('Lead não encontrado.');
+    }
+
+    const existing = await this.prisma.lead.findFirst({
+      where: { id: leadId, partnerId: partner.id },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Lead não encontrado.');
+
+    const nextContactAt =
+      nextContactAtIso === null || nextContactAtIso === undefined || nextContactAtIso === ''
+        ? null
+        : new Date(nextContactAtIso);
+
+    if (nextContactAt && Number.isNaN(nextContactAt.getTime())) {
+      throw new BadRequestException('Data inválida.');
+    }
+
+    const updated = await this.prisma.lead.update({
+      where: { id: leadId },
+      data: { nextContactAt },
+      select: {
+        id: true,
+        nextContactAt: true,
+      },
+    });
+
+    return updated;
+  }
+
   /** Atualiza um lead do parceiro autenticado (apenas leads atribuídos a ele). */
   async updateForPartner(
     userId: string,

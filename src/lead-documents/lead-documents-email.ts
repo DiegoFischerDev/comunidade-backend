@@ -210,7 +210,7 @@ export function buildLeadDocumentsEmailText(input: {
   const lines: string[] = [
     'Documentos recebidos — Comunidade Rafa Portugal',
     '',
-    'Enviado por (lead):',
+    'Enviado por:',
     `- Nome: ${input.leadName || '—'}`,
     `- Email: ${input.leadEmail || '—'}`,
     `- WhatsApp: ${input.leadWhatsapp ? `+${digitsOnly(input.leadWhatsapp)}` : '—'}`,

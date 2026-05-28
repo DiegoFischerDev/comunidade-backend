@@ -533,10 +533,13 @@ model Lead {
   /// Timestamp do primeiro envio de documentos (qualquer modo). `null` = ainda não enviou.
   /// Usamos isto para destacar no dashboard «Meus leads» quem já entregou docs.
   docsSentAt  DateTime?                 @map("docs_sent_at")
+  /// Agenda da gestora: quando deve ser feito o próximo contacto (UTC). `null` = sem agendamento.
+  nextContactAt DateTime?               @map("next_contact_at")
   createdAt   DateTime                  @default(now()) @map("created_at")
   submissions LeadDocumentSubmission[]
 
   @@index([partnerId, createdAt])
+  @@index([partnerId, nextContactAt])
   @@map("leads")
 }
 
