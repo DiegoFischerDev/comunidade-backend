@@ -1,8 +1,9 @@
-import { Controller, Get } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { LeadsService } from './leads.service';
+import { UpdateLeadAdminDto } from './dto/update-lead-admin.dto';
 
 /**
  * Endpoints para parceiros gerirem os leads que lhes foram atribuídos. O quiz público não fala
@@ -17,5 +18,29 @@ export class LeadsController {
   @Roles(Role.PARTNER)
   async listMine(@CurrentUser() user: { id: string }) {
     return this.leadsService.listForPartner(user.id);
+  }
+
+  /** Lista todos os leads (admin). */
+  @Get('admin')
+  @Roles(Role.ADMIN)
+  async listAllAdmin() {
+    return this.leadsService.listForAdmin();
+  }
+
+  /** Edita um lead (admin). */
+  @Patch('admin/:id')
+  @Roles(Role.ADMIN)
+  async updateAdmin(
+    @Param('id') id: string,
+    @Body() dto: UpdateLeadAdminDto,
+  ) {
+    return this.leadsService.updateForAdmin(id, dto);
+  }
+
+  /** Remove um lead (admin). */
+  @Delete('admin/:id')
+  @Roles(Role.ADMIN)
+  async deleteAdmin(@Param('id') id: string) {
+    return this.leadsService.deleteForAdmin(id);
   }
 }

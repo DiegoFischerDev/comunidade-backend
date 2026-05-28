@@ -147,6 +147,107 @@ export class LeadsService {
     }));
     return { items };
   }
+
+  /** Lista todos os leads para o admin, com o parceiro associado. */
+  async listForAdmin() {
+    const rows = await this.prisma.lead.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        whatsapp: true,
+        email: true,
+        comment: true,
+        outcomeKey: true,
+        docsSentAt: true,
+        createdAt: true,
+        partner: {
+          select: {
+            id: true,
+            name: true,
+            categorySlug: true,
+          },
+        },
+        _count: { select: { submissions: true } },
+      },
+    });
+
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        whatsapp: r.whatsapp,
+        email: r.email,
+        comment: r.comment,
+        outcomeKey: r.outcomeKey,
+        docsSentAt: r.docsSentAt,
+        submissionsCount: r._count.submissions,
+        createdAt: r.createdAt,
+        partner: r.partner,
+      })),
+    };
+  }
+
+  /** Atualiza um lead via admin. */
+  async updateForAdmin(
+    id: string,
+    input: {
+      name?: string;
+      email?: string;
+      whatsapp?: string;
+      comment?: string | null;
+      outcomeKey?: string | null;
+      partnerId?: string;
+    },
+  ) {
+    const existing = await this.prisma.lead.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Lead não encontrado.');
+
+    const data: Record<string, unknown> = {};
+    if (typeof input.name === 'string') data.name = input.name.trim();
+    if (typeof input.email === 'string') data.email = input.email.trim();
+    if (typeof input.whatsapp === 'string')
+      data.whatsapp = input.whatsapp.replace(/\D+/g, '');
+    if (typeof input.comment !== 'undefined') data.comment = input.comment;
+    if (typeof input.outcomeKey !== 'undefined') data.outcomeKey = input.outcomeKey;
+    if (typeof input.partnerId === 'string') data.partnerId = input.partnerId;
+
+    const updated = await this.prisma.lead.update({
+      where: { id },
+      data,
+      select: {
+        id: true,
+        name: true,
+        whatsapp: true,
+        email: true,
+        comment: true,
+        outcomeKey: true,
+        docsSentAt: true,
+        createdAt: true,
+        partner: { select: { id: true, name: true, categorySlug: true } },
+        _count: { select: { submissions: true } },
+      },
+    });
+
+    return {
+      ...updated,
+      submissionsCount: updated._count.submissions,
+    };
+  }
+
+  /** Remove um lead via admin. */
+  async deleteForAdmin(id: string) {
+    const existing = await this.prisma.lead.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Lead não encontrado.');
+    await this.prisma.lead.delete({ where: { id } });
+    return { ok: true };
+  }
 }
 
 export type LeadListItem = {
