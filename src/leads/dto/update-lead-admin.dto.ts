@@ -24,5 +24,9 @@ export class UpdateLeadAdminDto {
   @IsOptional()
   @IsString()
   partnerId?: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string | null;
 }
 

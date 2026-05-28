@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { LeadGestoraStatus } from '@prisma/client';
 
 /**
  * Módulo interno de leads — substitui a antiga integração externa com `ia-app`.
@@ -33,7 +34,7 @@ export class LeadsService {
     email: string;
     comment: string;
     outcomeKey: string;
-  }): Promise<{ lead: { id: string; createdAt: Date }; partnerId: string }> {
+  }): Promise<{ lead: { id: string; publicId: number; createdAt: Date }; partnerId: string }> {
     const name = input.name.trim();
     const whatsapp = input.whatsapp.trim();
     const email = input.email.trim();
@@ -60,7 +61,7 @@ export class LeadsService {
           outcomeKey: input.outcomeKey,
           partnerId,
         },
-        select: { id: true, createdAt: true },
+        select: { id: true, publicId: true, createdAt: true },
       });
       return { lead, partnerId };
     } catch (e) {
@@ -124,24 +125,30 @@ export class LeadsService {
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
+        publicId: true,
         name: true,
         whatsapp: true,
         email: true,
         comment: true,
         outcomeKey: true,
         docsSentAt: true,
+        status: true,
+        nextContactAt: true,
         createdAt: true,
         _count: { select: { submissions: true } },
       },
     });
     const items: LeadListItem[] = rows.map((r) => ({
       id: r.id,
+      publicId: r.publicId,
       name: r.name,
       whatsapp: r.whatsapp,
       email: r.email,
       comment: r.comment,
       outcomeKey: r.outcomeKey,
       docsSentAt: r.docsSentAt,
+      status: r.status,
+      nextContactAt: r.nextContactAt,
       submissionsCount: r._count.submissions,
       createdAt: r.createdAt,
     }));
@@ -168,12 +175,14 @@ export class LeadsService {
       orderBy: { nextContactAt: 'asc' },
       select: {
         id: true,
+        publicId: true,
         name: true,
         whatsapp: true,
         email: true,
         comment: true,
         outcomeKey: true,
         docsSentAt: true,
+        status: true,
         nextContactAt: true,
         createdAt: true,
         _count: { select: { submissions: true } },
@@ -183,12 +192,14 @@ export class LeadsService {
     return {
       items: rows.map((r) => ({
         id: r.id,
+        publicId: r.publicId,
         name: r.name,
         whatsapp: r.whatsapp,
         email: r.email,
         comment: r.comment,
         outcomeKey: r.outcomeKey,
         docsSentAt: r.docsSentAt,
+        status: r.status,
         nextContactAt: r.nextContactAt,
         submissionsCount: r._count.submissions,
         createdAt: r.createdAt,
@@ -251,6 +262,7 @@ export class LeadsService {
       email?: string;
       whatsapp?: string;
       comment?: string | null;
+      status?: string | null;
     },
   ) {
     const partner = await this.prisma.partner.findUnique({
@@ -278,6 +290,7 @@ export class LeadsService {
     if (typeof input.whatsapp === 'string')
       data.whatsapp = input.whatsapp.replace(/\D+/g, '');
     if (typeof input.comment !== 'undefined') data.comment = input.comment;
+    if (typeof input.status !== 'undefined') data.status = input.status;
 
     if (!Object.keys(data).length) {
       const lead = await this.prisma.lead.findUnique({
@@ -290,6 +303,7 @@ export class LeadsService {
           comment: true,
           outcomeKey: true,
           docsSentAt: true,
+          status: true,
           createdAt: true,
           _count: { select: { submissions: true } },
         },
@@ -312,6 +326,7 @@ export class LeadsService {
         comment: true,
         outcomeKey: true,
         docsSentAt: true,
+        status: true,
         createdAt: true,
         _count: { select: { submissions: true } },
       },
@@ -328,12 +343,14 @@ export class LeadsService {
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
+        publicId: true,
         name: true,
         whatsapp: true,
         email: true,
         comment: true,
         outcomeKey: true,
         docsSentAt: true,
+        status: true,
         createdAt: true,
         partner: {
           select: {
@@ -349,12 +366,14 @@ export class LeadsService {
     return {
       items: rows.map((r) => ({
         id: r.id,
+        publicId: r.publicId,
         name: r.name,
         whatsapp: r.whatsapp,
         email: r.email,
         comment: r.comment,
         outcomeKey: r.outcomeKey,
         docsSentAt: r.docsSentAt,
+        status: r.status,
         submissionsCount: r._count.submissions,
         createdAt: r.createdAt,
         partner: r.partner,
@@ -372,6 +391,7 @@ export class LeadsService {
       comment?: string | null;
       outcomeKey?: string | null;
       partnerId?: string;
+      status?: string | null;
     },
   ) {
     const existing = await this.prisma.lead.findUnique({
@@ -388,18 +408,21 @@ export class LeadsService {
     if (typeof input.comment !== 'undefined') data.comment = input.comment;
     if (typeof input.outcomeKey !== 'undefined') data.outcomeKey = input.outcomeKey;
     if (typeof input.partnerId === 'string') data.partnerId = input.partnerId;
+    if (typeof input.status !== 'undefined') data.status = input.status;
 
     const updated = await this.prisma.lead.update({
       where: { id },
       data,
       select: {
         id: true,
+        publicId: true,
         name: true,
         whatsapp: true,
         email: true,
         comment: true,
         outcomeKey: true,
         docsSentAt: true,
+        status: true,
         createdAt: true,
         partner: { select: { id: true, name: true, categorySlug: true } },
         _count: { select: { submissions: true } },
@@ -426,12 +449,15 @@ export class LeadsService {
 
 export type LeadListItem = {
   id: string;
+  publicId: number;
   name: string;
   whatsapp: string;
   email: string;
   comment: string | null;
   outcomeKey: string | null;
   docsSentAt: Date | null;
+  status: LeadGestoraStatus | null;
+  nextContactAt: Date | null;
   submissionsCount: number;
   createdAt: Date;
 };

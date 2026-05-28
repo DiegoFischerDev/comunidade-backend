@@ -16,5 +16,9 @@ export class UpdateLeadPartnerDto {
   @IsOptional()
   @IsString()
   comment?: string | null;
+
+  @IsOptional()
+  @IsString()
+  status?: string | null;
 }
 

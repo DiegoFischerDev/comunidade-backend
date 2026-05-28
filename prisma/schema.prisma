@@ -72,6 +72,14 @@ enum PartnerHousePublicationStatus {
   HIDDEN
 }
 
+enum LeadGestoraStatus {
+  inviavel
+  pre_aprovado
+  credito_aprovado
+  agendado_escritura
+  escritura_realizada
+}
+
 enum PartnerAdvertisingLedgerType {
   STRIPE_TOP_UP
   ADMIN_CREDIT
@@ -520,6 +528,8 @@ model Partner {
 /// listagem cronológica simples no dashboard do parceiro.
 model Lead {
   id          String                    @id @default(cuid())
+  /// ID público numérico para exibição no dashboard (6 dígitos).
+  publicId    Int                       @unique @default(dbgenerated("nextval('\"leads_public_id_seq\"'::regclass)")) @map("public_id")
   name        String
   whatsapp    String
   email       String
@@ -533,6 +543,8 @@ model Lead {
   /// Timestamp do primeiro envio de documentos (qualquer modo). `null` = ainda não enviou.
   /// Usamos isto para destacar no dashboard «Meus leads» quem já entregou docs.
   docsSentAt  DateTime?                 @map("docs_sent_at")
+  /// Status operacional da gestora para este lead.
+  status      LeadGestoraStatus?        @map("status")
   /// Agenda da gestora: quando deve ser feito o próximo contacto (UTC). `null` = sem agendamento.
   nextContactAt DateTime?               @map("next_contact_at")
   createdAt   DateTime                  @default(now()) @map("created_at")
@@ -540,6 +552,7 @@ model Lead {
 
   @@index([partnerId, createdAt])
   @@index([partnerId, nextContactAt])
+  @@index([partnerId, status])
   @@map("leads")
 }
 
