@@ -168,6 +168,13 @@ export class PartnerController {
     });
   }
 
+  /** Gestoras de crédito (parceiros financiamento) — para mostrar no topo do quiz público. */
+  @Public()
+  @Get('financiamento/gestoras')
+  async listFinancingManagersPublic() {
+    return this.partnerService.listFinancingManagersPublic();
+  }
+
   /** Página pública do anúncio (detalhes + parceiro relocation). */
   @Public()
   @UseGuards(OptionalJwtAuthGuard)

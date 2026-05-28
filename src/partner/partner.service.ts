@@ -153,6 +153,20 @@ export class PartnerService {
     });
   }
 
+  async listFinancingManagersPublic() {
+    const rows = await this.prisma.partner.findMany({
+      where: { categorySlug: 'financiamento' },
+      orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }] as any,
+      select: {
+        id: true,
+        name: true,
+        logoUrl: true,
+        shortDescription: true,
+      },
+    });
+    return { items: rows };
+  }
+
   setupPartnerContactLinks(partnerId: string) {
     return this.partnerContactLinks.setupPartnerContactLinks(partnerId);
   }
