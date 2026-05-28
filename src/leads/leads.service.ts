@@ -148,6 +148,86 @@ export class LeadsService {
     return { items };
   }
 
+  /** Atualiza um lead do parceiro autenticado (apenas leads atribuídos a ele). */
+  async updateForPartner(
+    userId: string,
+    leadId: string,
+    input: {
+      name?: string;
+      email?: string;
+      whatsapp?: string;
+      comment?: string | null;
+    },
+  ) {
+    const partner = await this.prisma.partner.findUnique({
+      where: { userId },
+      select: { id: true, categorySlug: true },
+    });
+    if (!partner) {
+      throw new NotFoundException(
+        'Parceiro não encontrado para este utilizador.',
+      );
+    }
+    if (partner.categorySlug !== 'financiamento') {
+      throw new NotFoundException('Lead não encontrado.');
+    }
+
+    const existing = await this.prisma.lead.findFirst({
+      where: { id: leadId, partnerId: partner.id },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Lead não encontrado.');
+
+    const data: Record<string, unknown> = {};
+    if (typeof input.name === 'string') data.name = input.name.trim();
+    if (typeof input.email === 'string') data.email = input.email.trim();
+    if (typeof input.whatsapp === 'string')
+      data.whatsapp = input.whatsapp.replace(/\D+/g, '');
+    if (typeof input.comment !== 'undefined') data.comment = input.comment;
+
+    if (!Object.keys(data).length) {
+      const lead = await this.prisma.lead.findUnique({
+        where: { id: leadId },
+        select: {
+          id: true,
+          name: true,
+          whatsapp: true,
+          email: true,
+          comment: true,
+          outcomeKey: true,
+          docsSentAt: true,
+          createdAt: true,
+          _count: { select: { submissions: true } },
+        },
+      });
+      if (!lead) throw new NotFoundException('Lead não encontrado.');
+      return {
+        ...lead,
+        submissionsCount: lead._count.submissions,
+      };
+    }
+
+    const updated = await this.prisma.lead.update({
+      where: { id: leadId },
+      data,
+      select: {
+        id: true,
+        name: true,
+        whatsapp: true,
+        email: true,
+        comment: true,
+        outcomeKey: true,
+        docsSentAt: true,
+        createdAt: true,
+        _count: { select: { submissions: true } },
+      },
+    });
+    return {
+      ...updated,
+      submissionsCount: updated._count.submissions,
+    };
+  }
+
   /** Lista todos os leads para o admin, com o parceiro associado. */
   async listForAdmin() {
     const rows = await this.prisma.lead.findMany({

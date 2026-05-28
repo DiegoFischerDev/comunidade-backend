@@ -4,6 +4,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { LeadsService } from './leads.service';
 import { UpdateLeadAdminDto } from './dto/update-lead-admin.dto';
+import { UpdateLeadPartnerDto } from './dto/update-lead-partner.dto';
 
 /**
  * Endpoints para parceiros gerirem os leads que lhes foram atribuídos. O quiz público não fala
@@ -18,6 +19,17 @@ export class LeadsController {
   @Roles(Role.PARTNER)
   async listMine(@CurrentUser() user: { id: string }) {
     return this.leadsService.listForPartner(user.id);
+  }
+
+  /** Edita um lead do parceiro autenticado. */
+  @Patch('me/:id')
+  @Roles(Role.PARTNER)
+  async updateMine(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Body() dto: UpdateLeadPartnerDto,
+  ) {
+    return this.leadsService.updateForPartner(user.id, id, dto);
   }
 
   /** Lista todos os leads (admin). */

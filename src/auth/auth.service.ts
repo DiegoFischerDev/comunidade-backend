@@ -417,7 +417,7 @@ Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
 
   async changePassword(
     userId: string,
-    input: { currentPassword: string; newPassword: string },
+    input: { currentPassword?: string; newPassword: string },
   ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -427,9 +427,12 @@ Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
       throw new UnauthorizedException('Utilizador não encontrado.');
     }
 
-    const ok = await bcrypt.compare(input.currentPassword, user.passwordHash);
-    if (!ok) {
-      throw new UnauthorizedException('Senha atual inválida.');
+    const current = String(input.currentPassword ?? '').trim();
+    if (current) {
+      const ok = await bcrypt.compare(current, user.passwordHash);
+      if (!ok) {
+        throw new UnauthorizedException('Senha atual inválida.');
+      }
     }
 
     const newPassword = String(input.newPassword || '');
