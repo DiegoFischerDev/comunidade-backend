@@ -415,6 +415,39 @@ Se não foi você que fez este pedido, pode ignorar esta mensagem.`;
     return this.validateUserById(userId);
   }
 
+  async changePassword(
+    userId: string,
+    input: { currentPassword: string; newPassword: string },
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, passwordHash: true },
+    });
+    if (!user) {
+      throw new UnauthorizedException('Utilizador não encontrado.');
+    }
+
+    const ok = await bcrypt.compare(input.currentPassword, user.passwordHash);
+    if (!ok) {
+      throw new UnauthorizedException('Senha atual inválida.');
+    }
+
+    const newPassword = String(input.newPassword || '');
+    if (newPassword.length < 8) {
+      throw new BadRequestException(
+        'A nova senha deve ter pelo menos 8 caracteres.',
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
+
+    return { ok: true };
+  }
+
   async impersonate(adminUserId: string, targetUserId: string) {
     const admin = await this.prisma.user.findUnique({
       where: { id: adminUserId },

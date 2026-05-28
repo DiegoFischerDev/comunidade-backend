@@ -1,7 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { LeadsService } from '../leads/leads.service';
 import {
-  buildAnswersBreakdown,
   buildQuizSummary,
   classifyAnswers,
   financingPracticalExampleForOutcome,
@@ -63,20 +62,12 @@ export class FinancingQuizService {
 
     const outcome = classifyAnswers(input.answers);
     const summary = buildQuizSummary(input.answers);
-    const breakdown = buildAnswersBreakdown(input.answers);
 
-    // Comentário guardado no lead — texto completo, legível para o parceiro no dashboard.
-    const commentLines: string[] = [
-      'Lead via questionário público da Comunidade Rafa Portugal.',
-      `Email do lead: ${email}.`,
-      '',
+    // Comentário guardado no lead — manter curto para facilitar leitura rápida no dashboard.
+    const comment = [
       `Resultado: ${outcome.comment} (${outcome.key}).`,
       `Resumo: ${summary}.`,
-      '',
-      'Respostas detalhadas:',
-      ...breakdown.map((b, i) => `${i + 1}. ${b.question}\n   → ${b.answer}`),
-    ];
-    const comment = commentLines.join('\n');
+    ].join('\n');
 
     // Cria o lead na DB e atribui ao parceiro `financiamento` com menos leads no total.
     await this.leadsService.createForFinancingQuiz({
