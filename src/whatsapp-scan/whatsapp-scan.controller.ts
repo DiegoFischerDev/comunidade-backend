@@ -13,9 +13,12 @@ import {
 import { Role } from '@prisma/client';
 import { Public } from '../auth/public.decorator';
 import { Roles } from '../auth/roles.decorator';
+import { CurrentUser } from '../auth/current-user.decorator';
 import { WhatsappScanService } from './whatsapp-scan.service';
 import { CreateScanGroupDto } from './dto/create-scan-group.dto';
 import { UpdateScanGroupDto } from './dto/update-scan-group.dto';
+import { PartnerUpdateScanGroupDto } from './dto/partner-update-scan-group.dto';
+import { PartnerSetScanAutomationDto } from './dto/partner-set-scan-automation.dto';
 import { IngestMessageDto } from './dto/ingest-message.dto';
 
 @Controller('whatsapp-scan')
@@ -59,6 +62,33 @@ export class WhatsappScanController {
   @Roles(Role.ADMIN)
   groupSubject(@Query('groupJid') groupJid: string) {
     return this.service.fetchGroupSubject(groupJid ?? '');
+  }
+
+  // ===== Parceiro relocation =====
+
+  @Get('me/groups')
+  @Roles(Role.PARTNER)
+  listMyGroups(@CurrentUser() user: { id: string }) {
+    return this.service.listGroupsForPartnerUser(user.id);
+  }
+
+  @Patch('me/groups/:id')
+  @Roles(Role.PARTNER)
+  updateMyGroup(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Body() dto: PartnerUpdateScanGroupDto,
+  ) {
+    return this.service.updateGroupForPartnerUser(user.id, id, dto);
+  }
+
+  @Patch('me/automation')
+  @Roles(Role.PARTNER)
+  setMyAutomation(
+    @CurrentUser() user: { id: string },
+    @Body() dto: PartnerSetScanAutomationDto,
+  ) {
+    return this.service.setAutomationForPartnerUser(user.id, dto.active);
   }
 
   // ===== Ingest interno (chamado pelo receiver whatsapp-evolution-verify) =====

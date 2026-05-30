@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -19,6 +20,7 @@ import {
 } from './whatsapp-scan-openai.service';
 import { CreateScanGroupDto } from './dto/create-scan-group.dto';
 import { UpdateScanGroupDto } from './dto/update-scan-group.dto';
+import { PartnerUpdateScanGroupDto } from './dto/partner-update-scan-group.dto';
 import { IngestMessageDto } from './dto/ingest-message.dto';
 
 /** Janela (minutos) durante a qual a mídia aguarda o texto do anúncio do mesmo remetente. */
@@ -240,6 +242,124 @@ export class WhatsappScanService {
     if (!existing) throw new NotFoundException('Grupo não encontrado.');
     await this.prisma.whatsappScanGroup.delete({ where: { id } });
     return { ok: true as const };
+  }
+
+  // ===== Painel do parceiro (relocation) =====
+
+  private async getRelocationPartnerIdForUser(userId: string): Promise<string> {
+    const partner = await this.prisma.partner.findUnique({
+      where: { userId },
+      select: { id: true, categorySlug: true },
+    });
+    if (!partner) {
+      throw new NotFoundException('Parceiro não encontrado para este utilizador.');
+    }
+    if (partner.categorySlug !== 'relocation') {
+      throw new ForbiddenException(
+        'Apenas parceiros na categoria Relocation podem gerir o scan de WhatsApp.',
+      );
+    }
+    return partner.id;
+  }
+
+  private mapPartnerGroupRow(r: {
+    id: string;
+    title: string | null;
+    groupJid: string;
+    monitoredNumbers: string[];
+    active: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  }) {
+    return {
+      id: r.id,
+      title: r.title,
+      groupJid: r.groupJid,
+      monitoredNumbers: r.monitoredNumbers,
+      active: r.active,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    };
+  }
+
+  async listGroupsForPartnerUser(userId: string) {
+    const partnerId = await this.getRelocationPartnerIdForUser(userId);
+    const rows = await this.prisma.whatsappScanGroup.findMany({
+      where: { partnerId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        groupJid: true,
+        monitoredNumbers: true,
+        active: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    const items = rows.map((r) => this.mapPartnerGroupRow(r));
+    return {
+      items,
+      automationEnabled:
+        items.length > 0 && items.every((g) => g.active),
+    };
+  }
+
+  async updateGroupForPartnerUser(
+    userId: string,
+    groupId: string,
+    dto: PartnerUpdateScanGroupDto,
+  ) {
+    const partnerId = await this.getRelocationPartnerIdForUser(userId);
+    const existing = await this.prisma.whatsappScanGroup.findFirst({
+      where: { id: groupId, partnerId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Grupo não encontrado.');
+    }
+
+    const data: Prisma.WhatsappScanGroupUpdateInput = {};
+    if (Array.isArray(dto.monitoredNumbers)) {
+      data.monitoredNumbers = dto.monitoredNumbers
+        .map(digitsOnly)
+        .filter((n) => n.length > 0);
+    }
+    if (typeof dto.active === 'boolean') {
+      data.active = dto.active;
+    }
+
+    const updated = await this.prisma.whatsappScanGroup.update({
+      where: { id: groupId },
+      data,
+      select: {
+        id: true,
+        title: true,
+        groupJid: true,
+        monitoredNumbers: true,
+        active: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    return this.mapPartnerGroupRow(updated);
+  }
+
+  async setAutomationForPartnerUser(userId: string, active: boolean) {
+    const partnerId = await this.getRelocationPartnerIdForUser(userId);
+    const count = await this.prisma.whatsappScanGroup.count({
+      where: { partnerId },
+    });
+    if (count === 0) {
+      throw new BadRequestException(
+        'Não tens grupos de WhatsApp configurados para scan.',
+      );
+    }
+    await this.prisma.whatsappScanGroup.updateMany({
+      where: { partnerId },
+      data: { active },
+    });
+    return this.listGroupsForPartnerUser(userId);
   }
 
   /** Histórico de mensagens processadas (logs), opcionalmente filtrado por grupo. */
