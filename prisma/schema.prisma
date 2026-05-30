@@ -838,8 +838,10 @@ model WhatsappScanGroup {
   title            String?
   /// JID do grupo (ex.: 120363...@g.us).
   groupJid         String   @unique @map("group_jid")
-  /// Números (apenas dígitos) cujas mensagens são monitorizadas. Vazio = monitoriza todos.
+  /// Números (apenas dígitos) cujas mensagens são monitorizadas quando `monitorAllMembers` é false.
   monitoredNumbers String[] @default([]) @map("monitored_numbers")
+  /// true = monitoriza todas as mensagens do grupo (ignora `monitoredNumbers`).
+  monitorAllMembers Boolean  @default(false) @map("monitor_all_members")
   active           Boolean  @default(true)
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")

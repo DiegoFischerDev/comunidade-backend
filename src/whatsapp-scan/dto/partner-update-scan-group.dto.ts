@@ -11,4 +11,8 @@ export class PartnerUpdateScanGroupDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  monitorAllMembers?: boolean;
 }

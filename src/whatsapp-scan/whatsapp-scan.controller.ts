@@ -64,12 +64,24 @@ export class WhatsappScanController {
     return this.service.fetchGroupSubject(groupJid ?? '');
   }
 
+  @Get('contact-display-name')
+  @Roles(Role.ADMIN)
+  contactDisplayName(@Query('number') number: string) {
+    return this.service.fetchContactDisplayName(number ?? '');
+  }
+
   // ===== Parceiro relocation =====
 
   @Get('me/groups')
   @Roles(Role.PARTNER)
   listMyGroups(@CurrentUser() user: { id: string }) {
     return this.service.listGroupsForPartnerUser(user.id);
+  }
+
+  @Get('me/contact-display-name')
+  @Roles(Role.PARTNER)
+  myContactDisplayName(@Query('number') number: string) {
+    return this.service.fetchContactDisplayName(number ?? '');
   }
 
   @Patch('me/groups/:id')

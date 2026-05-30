@@ -36,4 +36,8 @@ export class CreateScanGroupDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  monitorAllMembers?: boolean;
 }

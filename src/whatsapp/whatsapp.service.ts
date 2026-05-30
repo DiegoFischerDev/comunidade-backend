@@ -271,6 +271,117 @@ export class WhatsAppService {
     return null;
   }
 
+  private contactJidFromDigits(digits: string): string {
+    const n = digits.replace(/\D/g, '');
+    return n ? `${n}@s.whatsapp.net` : '';
+  }
+
+  /** Extrai nome visível de respostas Evolution (fetchProfile / findContacts). */
+  private pickContactDisplayName(data: unknown, depth = 0): string | null {
+    if (!data || typeof data !== 'object' || depth > 4) return null;
+    const o = data as Record<string, unknown>;
+    const fields = [
+      o.name,
+      o.pushName,
+      o.pushname,
+      o.notify,
+      o.verifiedName,
+      o.displayName,
+    ];
+    for (const v of fields) {
+      if (typeof v === 'string' && v.trim().length > 0) return v.trim();
+    }
+    const nested = [o.response, o.data, o.contact, o.profile, o.result];
+    for (const inner of nested) {
+      const name = this.pickContactDisplayName(inner, depth + 1);
+      if (name) return name;
+    }
+    return null;
+  }
+
+  private contactMatchesDigits(contact: unknown, digits: string): boolean {
+    if (!contact || typeof contact !== 'object') return false;
+    const id = (contact as { id?: unknown }).id;
+    if (typeof id !== 'string') return false;
+    const norm = id.replace(/\D/g, '');
+    const want = digits.replace(/\D/g, '');
+    return norm === want || norm.endsWith(want) || want.endsWith(norm);
+  }
+
+  /**
+   * Obtém o nome visível de um contacto via Evolution (`POST /chat/fetchProfile`,
+   * com fallback `POST /chat/findContacts`). Best-effort; null se indisponível.
+   */
+  async getContactDisplayName(
+    phoneDigits: string,
+    instance?: string,
+  ): Promise<string | null> {
+    const base = this.base;
+    const key = this.key;
+    const number = this.normalizeRecipient(phoneDigits);
+    if (!base || !key || !number || number.includes('@')) return null;
+
+    const preferred = (instance || '').trim();
+    const all = this.instancesOrdered;
+    const attempts =
+      preferred && !all.includes(preferred)
+        ? [preferred, ...all]
+        : preferred
+          ? [preferred, ...all.filter((i) => i !== preferred)]
+          : all;
+
+    const signal = this.evolutionRequestSignal('default');
+    const jid = this.contactJidFromDigits(number);
+
+    for (const inst of attempts) {
+      try {
+        const res = await fetch(`${base}/chat/fetchProfile/${inst}`, {
+          method: 'POST',
+          headers: { apikey: key, 'content-type': 'application/json' },
+          body: JSON.stringify({ number }),
+          ...(signal ? { signal } : {}),
+        });
+        if (res.ok) {
+          const data: unknown = await res.json().catch(() => null);
+          const name = this.pickContactDisplayName(data);
+          if (name) return name;
+        }
+      } catch {
+        // tenta findContacts na mesma instância
+      }
+
+      if (!jid) continue;
+      try {
+        const res = await fetch(`${base}/chat/findContacts/${inst}`, {
+          method: 'POST',
+          headers: { apikey: key, 'content-type': 'application/json' },
+          body: JSON.stringify({ where: { id: jid } }),
+          ...(signal ? { signal } : {}),
+        });
+        if (!res.ok) continue;
+        const data: unknown = await res.json().catch(() => null);
+        const list = Array.isArray(data)
+          ? data
+          : data && typeof data === 'object'
+            ? ((data as { contacts?: unknown }).contacts ??
+              (data as { data?: unknown }).data)
+            : null;
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            if (!this.contactMatchesDigits(item, number)) continue;
+            const name = this.pickContactDisplayName(item);
+            if (name) return name;
+          }
+        }
+        const direct = this.pickContactDisplayName(data);
+        if (direct) return direct;
+      } catch {
+        // tenta a próxima instância
+      }
+    }
+    return null;
+  }
+
   async sendText(
     toDigits: string,
     text: string,

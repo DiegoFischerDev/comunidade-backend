@@ -128,6 +128,7 @@ export class WhatsappScanService {
         title: r.title,
         groupJid: r.groupJid,
         monitoredNumbers: r.monitoredNumbers,
+        monitorAllMembers: r.monitorAllMembers,
         active: r.active,
         messagesCount: r._count.messages,
         createdAt: r.createdAt,
@@ -171,12 +172,17 @@ export class WhatsappScanService {
       title = await this.whatsapp.getGroupSubject(groupJid);
     }
 
+    const monitorAllMembers =
+      dto.monitorAllMembers === true ||
+      (dto.monitorAllMembers !== false && monitoredNumbers.length === 0);
+
     return this.prisma.whatsappScanGroup.create({
       data: {
         partnerId: dto.partnerId,
         title,
         groupJid,
-        monitoredNumbers,
+        monitoredNumbers: monitorAllMembers ? [] : monitoredNumbers,
+        monitorAllMembers,
         active: dto.active ?? true,
       },
     });
@@ -192,6 +198,18 @@ export class WhatsappScanService {
     }
     const subject = await this.whatsapp.getGroupSubject(jid);
     return { subject };
+  }
+
+  /** Nome visível do contacto na Evolution (push name / agenda), a partir do número. */
+  async fetchContactDisplayName(
+    number: string,
+  ): Promise<{ displayName: string | null }> {
+    const digits = (number || '').replace(/\D/g, '');
+    if (digits.length < 8) {
+      throw new BadRequestException('Número inválido (mínimo 8 dígitos).');
+    }
+    const displayName = await this.whatsapp.getContactDisplayName(digits);
+    return { displayName };
   }
 
   async updateGroup(id: string, dto: UpdateScanGroupDto) {
@@ -226,6 +244,12 @@ export class WhatsappScanService {
       data.monitoredNumbers = dto.monitoredNumbers
         .map(digitsOnly)
         .filter((n) => n.length > 0);
+    }
+    if (typeof dto.monitorAllMembers === 'boolean') {
+      data.monitorAllMembers = dto.monitorAllMembers;
+      if (dto.monitorAllMembers) {
+        data.monitoredNumbers = [];
+      }
     }
     if (typeof dto.active === 'boolean') {
       data.active = dto.active;
@@ -267,6 +291,7 @@ export class WhatsappScanService {
     title: string | null;
     groupJid: string;
     monitoredNumbers: string[];
+    monitorAllMembers: boolean;
     active: boolean;
     createdAt: Date;
     updatedAt: Date;
@@ -276,6 +301,7 @@ export class WhatsappScanService {
       title: r.title,
       groupJid: r.groupJid,
       monitoredNumbers: r.monitoredNumbers,
+      monitorAllMembers: r.monitorAllMembers,
       active: r.active,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
@@ -292,6 +318,7 @@ export class WhatsappScanService {
         title: true,
         groupJid: true,
         monitoredNumbers: true,
+        monitorAllMembers: true,
         active: true,
         createdAt: true,
         updatedAt: true,
@@ -320,7 +347,13 @@ export class WhatsappScanService {
     }
 
     const data: Prisma.WhatsappScanGroupUpdateInput = {};
-    if (Array.isArray(dto.monitoredNumbers)) {
+    if (typeof dto.monitorAllMembers === 'boolean') {
+      data.monitorAllMembers = dto.monitorAllMembers;
+      if (dto.monitorAllMembers) {
+        data.monitoredNumbers = [];
+      }
+    }
+    if (Array.isArray(dto.monitoredNumbers) && dto.monitorAllMembers !== true) {
       data.monitoredNumbers = dto.monitoredNumbers
         .map(digitsOnly)
         .filter((n) => n.length > 0);
@@ -337,6 +370,7 @@ export class WhatsappScanService {
         title: true,
         groupJid: true,
         monitoredNumbers: true,
+        monitorAllMembers: true,
         active: true,
         createdAt: true,
         updatedAt: true,
@@ -414,7 +448,12 @@ export class WhatsappScanService {
 
     const group = await this.prisma.whatsappScanGroup.findFirst({
       where: { groupJid, active: true },
-      select: { id: true, partnerId: true, monitoredNumbers: true },
+      select: {
+        id: true,
+        partnerId: true,
+        monitoredNumbers: true,
+        monitorAllMembers: true,
+      },
     });
     if (!group) return { ok: true, status: 'ignored_group_not_monitored' };
 
@@ -434,12 +473,14 @@ export class WhatsappScanService {
       return { ok: true, status: 'ignored_empty' };
     }
 
-    // Filtro de números (vazio = todos). Antes de gravar/baixar qualquer coisa.
-    if (
-      group.monitoredNumbers.length > 0 &&
-      !group.monitoredNumbers.includes(senderNumber)
-    ) {
-      return { ok: true, status: 'ignored_sender' };
+    // Filtro de remetente: `monitorAllMembers` ou lista explícita de números.
+    if (!group.monitorAllMembers) {
+      if (
+        group.monitoredNumbers.length === 0 ||
+        !group.monitoredNumbers.includes(senderNumber)
+      ) {
+        return { ok: true, status: 'ignored_sender' };
+      }
     }
 
     // Dedup "claim-first": grava já o log (status `received`). A unique constraint em

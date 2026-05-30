@@ -35,4 +35,8 @@ export class UpdateScanGroupDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  monitorAllMembers?: boolean;
 }
