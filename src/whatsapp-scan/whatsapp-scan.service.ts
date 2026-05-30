@@ -22,6 +22,11 @@ import { CreateScanGroupDto } from './dto/create-scan-group.dto';
 import { UpdateScanGroupDto } from './dto/update-scan-group.dto';
 import { PartnerUpdateScanGroupDto } from './dto/partner-update-scan-group.dto';
 import { IngestMessageDto } from './dto/ingest-message.dto';
+import {
+  canonicalPhoneDigits,
+  digitsOnly,
+  phonesMatchMonitored,
+} from './phone-match.util';
 
 /** Janela (minutos) durante a qual a mídia aguarda o texto do anúncio do mesmo remetente. */
 function mediaWindowMinutes(): number {
@@ -56,10 +61,6 @@ function postedAtFromTimestamp(messageTimestamp?: number): Date {
     return new Date(messageTimestamp * 1000);
   }
   return new Date();
-}
-
-function digitsOnly(value: string): string {
-  return String(value ?? '').replace(/\D+/g, '');
 }
 
 /**
@@ -153,7 +154,7 @@ export class WhatsappScanService {
     await this.assertRelocationPartner(dto.partnerId);
     const groupJid = dto.groupJid.trim();
     const monitoredNumbers = (dto.monitoredNumbers ?? [])
-      .map(digitsOnly)
+      .map((n) => canonicalPhoneDigits(n) || digitsOnly(n))
       .filter((n) => n.length > 0);
 
     const existing = await this.prisma.whatsappScanGroup.findUnique({
@@ -242,7 +243,7 @@ export class WhatsappScanService {
     }
     if (Array.isArray(dto.monitoredNumbers)) {
       data.monitoredNumbers = dto.monitoredNumbers
-        .map(digitsOnly)
+        .map((n) => canonicalPhoneDigits(n) || digitsOnly(n))
         .filter((n) => n.length > 0);
     }
     if (typeof dto.monitorAllMembers === 'boolean') {
@@ -355,7 +356,7 @@ export class WhatsappScanService {
     }
     if (Array.isArray(dto.monitoredNumbers) && dto.monitorAllMembers !== true) {
       data.monitoredNumbers = dto.monitoredNumbers
-        .map(digitsOnly)
+        .map((n) => canonicalPhoneDigits(n) || digitsOnly(n))
         .filter((n) => n.length > 0);
     }
     if (typeof dto.active === 'boolean') {
@@ -459,7 +460,8 @@ export class WhatsappScanService {
 
     const kind = dto.kind ?? 'text';
     const isMedia = kind === 'image' || kind === 'video';
-    const senderNumber = digitsOnly(dto.senderNumber);
+    const senderNumber =
+      canonicalPhoneDigits(dto.senderNumber) || digitsOnly(dto.senderNumber);
     const externalMessageId = dto.externalMessageId?.trim() || null;
     const postedAt = postedAtFromTimestamp(dto.messageTimestamp);
 
@@ -477,8 +479,13 @@ export class WhatsappScanService {
     if (!group.monitorAllMembers) {
       if (
         group.monitoredNumbers.length === 0 ||
-        !group.monitoredNumbers.includes(senderNumber)
+        !phonesMatchMonitored(senderNumber, group.monitoredNumbers)
       ) {
+        if (process.env.WHATSAPP_SCAN_LOG_SENDER === '1') {
+          this.logger.warn(
+            `ignored_sender group=${group.id} sender=${senderNumber} raw=${dto.senderNumber} monitored=${group.monitoredNumbers.join(',')}`,
+          );
+        }
         return { ok: true, status: 'ignored_sender' };
       }
     }
