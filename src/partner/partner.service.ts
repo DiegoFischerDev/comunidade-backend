@@ -67,6 +67,8 @@ import {
   isPartnerCategorySlug,
   RELOCATION_CATEGORY_SLUG,
 } from './partner-categories';
+import { HouseListingOpenAiService } from '../listing-ai/house-listing-openai.service';
+import { CreatePartnerHouseFromDescriptionDto } from './dto/create-partner-house-from-description.dto';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -86,6 +88,7 @@ export class PartnerService {
     private readonly jwtService: JwtService,
     private readonly advertising: PartnerAdvertisingService,
     private readonly partnerContactLinks: PartnerContactLinksService,
+    private readonly listingOpenAi: HouseListingOpenAiService,
   ) {}
 
   private async deleteUploadFileIfLocal(url?: string | null) {
@@ -1851,6 +1854,76 @@ export class PartnerService {
       {
         strict: true,
       },
+    );
+  }
+
+  /**
+   * Cria imóvel (rascunho oculto) a partir de descrição + mídia: a OpenAI extrai título, preço, cidade, etc.
+   */
+  async createMyHouseFromDescription(
+    userId: string,
+    dto: CreatePartnerHouseFromDescriptionDto,
+    imageFiles: Express.Multer.File[],
+    videoFile: Express.Multer.File | null,
+    thumbnailFile: Express.Multer.File | null,
+  ) {
+    if (!this.listingOpenAi.isConfigured()) {
+      throw new BadRequestException(
+        'A extração automática não está disponível (OPENAI_API_KEY em falta no servidor).',
+      );
+    }
+
+    const description = dto.description.trim();
+    const images = (imageFiles ?? []).filter((f) => !!f);
+    const hasVideo = !!videoFile;
+    if (images.length === 0 && !hasVideo) {
+      throw new BadRequestException('Envia pelo menos 1 imagem ou 1 vídeo.');
+    }
+    if (images.length > 6) {
+      throw new BadRequestException('Podes enviar no máximo 6 imagens.');
+    }
+
+    let extracted;
+    try {
+      extracted = await this.listingOpenAi.extractHouseFromDescription(
+        description,
+      );
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`OpenAI (criar imóvel): ${msg}`);
+      if (msg.includes('abort')) {
+        throw new BadRequestException(
+          'A análise demorou demasiado. Tenta novamente com uma descrição mais curta.',
+        );
+      }
+      throw new BadRequestException(
+        'Não foi possível analisar a descrição. Verifica o texto e tenta de novo.',
+      );
+    }
+
+    const partner = await this.getRelocationPartnerOrThrow(userId);
+    const adminDto: AdminCreatePartnerHouseDto = {
+      title: extracted.title,
+      description: extracted.description,
+      businessType: extracted.businessType,
+      typology: extracted.typology,
+      city: extracted.city || undefined,
+      availableFrom: extracted.availableFrom ?? undefined,
+      priceEur: extracted.priceEur || undefined,
+      relocationFeeEur: extracted.relocationFeeEur || undefined,
+      caucoesCount: String(extracted.caucoesCount),
+      rendasEntradaCount: String(extracted.rendasEntradaCount),
+      furnished: extracted.furnished ? 'true' : 'false',
+      coverImageIndex: dto.coverImageIndex,
+    };
+
+    return this.createHousePostForPartner(
+      partner.id,
+      adminDto,
+      images,
+      videoFile,
+      thumbnailFile,
+      { strict: false },
     );
   }
 

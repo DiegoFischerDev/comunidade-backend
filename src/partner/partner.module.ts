@@ -10,6 +10,7 @@ import { HouseImageStorageService } from './house-image-storage.service';
 import { PartnerAdvertisingService } from './partner-advertising.service';
 import { PartnerHousePublicationExpiryTask } from './partner-house-publication-expiry.task';
 import { PartnerContactLinksService } from './partner-contact-links.service';
+import { ListingOpenAiModule } from '../listing-ai/listing-openai.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { PartnerContactLinksService } from './partner-contact-links.service';
     PrismaModule,
     forwardRef(() => StripeModule),
     WhatsAppModule,
+    ListingOpenAiModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'change-me-in-production',
       signOptions: { expiresIn: '7d' },

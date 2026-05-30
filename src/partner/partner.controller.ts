@@ -34,6 +34,7 @@ import {
 } from './dto/create-partner-sale.dto';
 import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { CreatePartnerHouseDto } from './dto/create-partner-house.dto';
+import { CreatePartnerHouseFromDescriptionDto } from './dto/create-partner-house-from-description.dto';
 import { AdminCreatePartnerHouseDto } from './dto/admin-create-partner-house.dto';
 import { UpdatePartnerHouseDto } from './dto/update-partner-house.dto';
 import { AdminUpdatePartnerHouseDto } from './dto/admin-update-partner-house.dto';
@@ -281,6 +282,43 @@ export class PartnerController {
     },
   ) {
     return this.partnerService.createMyHousePost(
+      user.id,
+      dto,
+      files?.images ?? [],
+      files?.video?.[0] ?? null,
+      files?.thumbnail?.[0] ?? null,
+    );
+  }
+
+  @Post('me/houses/from-description')
+  @Roles(Role.PARTNER)
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: 6 },
+        { name: 'video', maxCount: 1 },
+        { name: 'thumbnail', maxCount: 1 },
+      ],
+      {
+        limits: {
+          files: 8,
+          fileSize: 48 * 1024 * 1024,
+        },
+        storage: memoryStorage(),
+      },
+    ),
+  )
+  async createMyHouseFromDescription(
+    @CurrentUser() user: { id: string },
+    @Body() dto: CreatePartnerHouseFromDescriptionDto,
+    @UploadedFiles()
+    files: {
+      images?: Express.Multer.File[];
+      video?: Express.Multer.File[];
+      thumbnail?: Express.Multer.File[];
+    },
+  ) {
+    return this.partnerService.createMyHouseFromDescription(
       user.id,
       dto,
       files?.images ?? [],
