@@ -108,6 +108,15 @@ enum WhatsappScanMessageStatus {
   ignored_not_listing
   created
   error
+  // Mídia (imagem/vídeo) guardada à espera do texto do anúncio.
+  media_stored
+  // Mídia anexada a um imóvel criado a partir do texto do anúncio.
+  media_attached
+}
+
+enum WhatsappScanMediaKind {
+  IMAGE
+  VIDEO
 }
 
 enum RedirectClickKind {
@@ -826,7 +835,8 @@ model WhatsappScanGroup {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  messages WhatsappScanMessage[]
+  messages     WhatsappScanMessage[]
+  pendingMedia WhatsappScanPendingMedia[]
 
   @@index([partnerId])
   @@map("whatsapp_scan_groups")
@@ -854,6 +864,31 @@ model WhatsappScanMessage {
 
   @@index([groupId, createdAt])
   @@map("whatsapp_scan_messages")
+}
+
+/// Mídia (imagem/vídeo) capturada num grupo monitorizado, à espera de ser associada ao texto do
+/// anúncio. No WhatsApp as imagens chegam normalmente como mensagens separadas (uma por imagem)
+/// e só depois o texto do anúncio; o vídeo vem antes do texto ou junto (na legenda). Guardamos
+/// aqui a URL já carregada (R2/disco) e, quando o anúncio é criado, anexamo-la ao imóvel.
+model WhatsappScanPendingMedia {
+  id                String                @id @default(cuid())
+  groupId           String                @map("group_id")
+  group             WhatsappScanGroup     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /// Número (apenas dígitos) que enviou a mídia.
+  senderNumber      String                @map("sender_number")
+  kind              WhatsappScanMediaKind
+  /// URL pública já carregada (imagem WebP ou vídeo).
+  storedUrl         String                @map("stored_url")
+  /// ID da mensagem na Evolution (dedup em reentregas do webhook).
+  externalMessageId String?               @unique @map("external_message_id")
+  /// Log da mensagem correspondente (para atualizar o estado quando anexada).
+  messageId         String?               @map("message_id")
+  /// Imóvel a que a mídia foi anexada (null = ainda pendente).
+  consumedByHouseId String?               @map("consumed_by_house_id")
+  createdAt         DateTime              @default(now()) @map("created_at")
+
+  @@index([groupId, senderNumber, consumedByHouseId, createdAt])
+  @@map("whatsapp_scan_pending_media")
 }
 
 /// Serviços oferecidos por um parceiro. A antiga FK `categoryId` (para `ProductCategory`)

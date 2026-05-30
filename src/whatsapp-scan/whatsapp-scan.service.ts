@@ -4,9 +4,14 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, WhatsappScanMessageStatus } from '@prisma/client';
+import {
+  Prisma,
+  WhatsappScanMediaKind,
+  WhatsappScanMessageStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PartnerService } from '../partner/partner.service';
+import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import {
   WhatsappScanOpenAiService,
   type ScanExtractionResult,
@@ -14,6 +19,16 @@ import {
 import { CreateScanGroupDto } from './dto/create-scan-group.dto';
 import { UpdateScanGroupDto } from './dto/update-scan-group.dto';
 import { IngestMessageDto } from './dto/ingest-message.dto';
+
+/** Janela (minutos) durante a qual a mídia aguarda o texto do anúncio do mesmo remetente. */
+function mediaWindowMinutes(): number {
+  const raw = process.env.WHATSAPP_SCAN_MEDIA_WINDOW_MIN?.trim();
+  if (raw && /^\d+$/.test(raw)) {
+    const n = parseInt(raw, 10);
+    if (n > 0 && n <= 240) return n;
+  }
+  return 5;
+}
 
 function digitsOnly(value: string): string {
   return String(value ?? '').replace(/\D+/g, '');
@@ -48,6 +63,7 @@ export class WhatsappScanService {
     private readonly prisma: PrismaService,
     private readonly partnerService: PartnerService,
     private readonly openai: WhatsappScanOpenAiService,
+    private readonly houseImages: HouseImageStorageService,
   ) {}
 
   // ===== CRUD admin =====
@@ -195,12 +211,13 @@ export class WhatsappScanService {
   // ===== Ingest (receiver) =====
 
   /**
-   * Processa uma mensagem recebida de um grupo monitorizado:
-   * 1) verifica se o grupo está a ser monitorizado (ativo);
-   * 2) verifica o filtro de números;
-   * 3) deduplica por externalMessageId;
-   * 4) chama a OpenAI para classificar/extrair;
-   * 5) cria imóvel rascunho se for um anúncio.
+   * Processa uma mensagem recebida de um grupo monitorizado.
+   *
+   * Texto: classifica via OpenAI e, se for anúncio, cria imóvel rascunho — anexando a mídia
+   * que tenha chegado antes (imagens/vídeo do mesmo remetente, dentro da janela).
+   *
+   * Mídia (imagem/vídeo, com base64 do Webhook Base64): carrega o ficheiro e guarda-o como
+   * pendente; se a legenda for um anúncio, cria já o imóvel e anexa a mídia.
    *
    * Devolve sempre um resultado (não lança), para o receiver responder 200 e a Evolution não
    * reentregar em loop.
@@ -216,76 +233,130 @@ export class WhatsappScanService {
     });
     if (!group) return { ok: true, status: 'ignored_group_not_monitored' };
 
-    if (!text) {
+    const kind = dto.kind ?? 'text';
+    const hasMediaBytes =
+      (kind === 'image' || kind === 'video') && !!dto.base64?.length;
+
+    // Mensagem sem texto e sem mídia processável: nada a fazer.
+    if (!hasMediaBytes && !text) {
       return { ok: true, status: 'ignored_empty' };
     }
 
     const senderNumber = digitsOnly(dto.senderNumber);
     const externalMessageId = dto.externalMessageId?.trim() || null;
 
-    // Dedup "claim-first": gravamos já o registo (status `received`). Como o Evolution costuma
-    // entregar a mesma mensagem várias vezes (webhook global + por instância, e reentregas),
-    // a unique constraint em `externalMessageId` garante que apenas a 1.ª entrega prossegue.
-    // Sem id, deduplicamos por conteúdo recente (mesmo grupo + remetente + texto nos últimos 5 min).
-    let recordId: string;
-    if (externalMessageId) {
+    // Filtro de números (vazio = todos). Antes de gravar/baixar qualquer coisa.
+    if (
+      group.monitoredNumbers.length > 0 &&
+      !group.monitoredNumbers.includes(senderNumber)
+    ) {
+      return { ok: true, status: 'ignored_sender' };
+    }
+
+    // Dedup "claim-first": grava já o log (status `received`). A unique constraint em
+    // `externalMessageId` garante que apenas a 1.ª entrega prossegue (Evolution reentrega).
+    const rawText = text || (hasMediaBytes ? `[${kind}]` : '');
+    const claim = await this.claimMessage({
+      groupId: group.id,
+      senderNumber,
+      externalMessageId,
+      rawText,
+      // Sem id, só deduplicamos por conteúdo quando é texto (mídia partilharia o placeholder).
+      contentDedup: !hasMediaBytes,
+    });
+    if (claim.duplicate) return { ok: true, status: 'ignored_duplicate' };
+    const recordId = claim.id;
+
+    if (hasMediaBytes) {
+      return this.handleMedia({
+        recordId,
+        group,
+        senderNumber,
+        externalMessageId,
+        kind,
+        base64: dto.base64 as string,
+        mimeType: dto.mimeType ?? '',
+        fileName: dto.fileName ?? '',
+        caption: text,
+      });
+    }
+
+    return this.handleListingText({
+      recordId,
+      group,
+      senderNumber,
+      text,
+    });
+  }
+
+  /** Grava o log da mensagem (claim-first); devolve `duplicate` quando já existia. */
+  private async claimMessage(input: {
+    groupId: string;
+    senderNumber: string;
+    externalMessageId: string | null;
+    rawText: string;
+    contentDedup: boolean;
+  }): Promise<{ id: string; duplicate: boolean }> {
+    const rawText = input.rawText.slice(0, 8000);
+    if (input.externalMessageId) {
       try {
         const created = await this.prisma.whatsappScanMessage.create({
           data: {
-            groupId: group.id,
-            senderNumber,
-            externalMessageId,
-            rawText: text.slice(0, 8000),
+            groupId: input.groupId,
+            senderNumber: input.senderNumber,
+            externalMessageId: input.externalMessageId,
+            rawText,
             status: WhatsappScanMessageStatus.received,
           },
           select: { id: true },
         });
-        recordId = created.id;
+        return { id: created.id, duplicate: false };
       } catch (e) {
         if (
           e instanceof Prisma.PrismaClientKnownRequestError &&
           e.code === 'P2002'
         ) {
-          return { ok: true, status: 'ignored_duplicate' };
+          return { id: '', duplicate: true };
         }
         throw e;
       }
-    } else {
+    }
+
+    if (input.contentDedup && rawText) {
       const recent = await this.prisma.whatsappScanMessage.findFirst({
         where: {
-          groupId: group.id,
-          senderNumber,
-          rawText: text.slice(0, 8000),
+          groupId: input.groupId,
+          senderNumber: input.senderNumber,
+          rawText,
           createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
         },
         select: { id: true },
       });
-      if (recent) return { ok: true, status: 'ignored_duplicate' };
-      const created = await this.prisma.whatsappScanMessage.create({
-        data: {
-          groupId: group.id,
-          senderNumber,
-          rawText: text.slice(0, 8000),
-          status: WhatsappScanMessageStatus.received,
-        },
-        select: { id: true },
-      });
-      recordId = created.id;
+      if (recent) return { id: '', duplicate: true };
     }
 
-    // Filtro de números (vazio = todos).
-    if (
-      group.monitoredNumbers.length > 0 &&
-      !group.monitoredNumbers.includes(senderNumber)
-    ) {
-      await this.updateRecord(recordId, {
-        status: WhatsappScanMessageStatus.ignored_sender,
-      });
-      return { ok: true, status: 'ignored_sender' };
-    }
+    const created = await this.prisma.whatsappScanMessage.create({
+      data: {
+        groupId: input.groupId,
+        senderNumber: input.senderNumber,
+        rawText,
+        status: WhatsappScanMessageStatus.received,
+      },
+      select: { id: true },
+    });
+    return { id: created.id, duplicate: false };
+  }
 
-    // Pré-filtro barato (sem IA) para poupar tokens: descarta mensagens que não têm qualquer
-    // indício de anúncio de imóvel. Desligável com WHATSAPP_SCAN_PREFILTER=0.
+  /** Texto do anúncio: classifica, cria imóvel e anexa a mídia pendente do mesmo remetente. */
+  private async handleListingText(input: {
+    recordId: string;
+    group: { id: string; partnerId: string };
+    senderNumber: string;
+    text: string;
+  }): Promise<{ ok: true; status: string }> {
+    const { recordId, group, senderNumber, text } = input;
+
+    // Pré-filtro barato (sem IA) para poupar tokens. Desligável com WHATSAPP_SCAN_PREFILTER=0.
     const prefilterEnabled = process.env.WHATSAPP_SCAN_PREFILTER !== '0';
     if (prefilterEnabled && !looksLikePropertyListing(text)) {
       await this.updateRecord(recordId, {
@@ -294,7 +365,6 @@ export class WhatsappScanService {
       return { ok: true, status: 'ignored_prefilter' };
     }
 
-    // Classificação + extração via OpenAI.
     let extraction: ScanExtractionResult;
     try {
       extraction = await this.openai.extractListing(text);
@@ -316,22 +386,12 @@ export class WhatsappScanService {
       return { ok: true, status: 'ignored_not_listing' };
     }
 
-    // Cria imóvel rascunho atribuído ao parceiro do grupo.
     try {
-      const house = await this.partnerService.createDraftHouseFromScan({
-        partnerId: group.partnerId,
-        title: extraction.house.title,
-        description: extraction.house.description,
-        businessType: extraction.house.businessType,
-        typology: extraction.house.typology,
-        city: extraction.house.city,
-        availableFrom: extraction.house.availableFrom,
-        priceEur: extraction.house.priceEur,
-        relocationFeeEur: extraction.house.relocationFeeEur,
-        caucoesCount: extraction.house.caucoesCount,
-        rendasEntradaCount: extraction.house.rendasEntradaCount,
-        furnished: extraction.house.furnished,
-      });
+      const house = await this.createHouseFromExtraction(
+        group.partnerId,
+        extraction,
+      );
+      await this.attachPendingMediaToHouse(group.id, senderNumber, house.id);
       await this.updateRecord(recordId, {
         status: WhatsappScanMessageStatus.created,
         parsedJson: extraction as unknown as Prisma.InputJsonValue,
@@ -347,6 +407,203 @@ export class WhatsappScanService {
         error: msg.slice(0, 1000),
       });
       return { ok: true, status: 'error_create' };
+    }
+  }
+
+  /** Mídia: carrega o ficheiro, guarda como pendente e, se a legenda for anúncio, cria já o imóvel. */
+  private async handleMedia(input: {
+    recordId: string;
+    group: { id: string; partnerId: string };
+    senderNumber: string;
+    externalMessageId: string | null;
+    kind: 'image' | 'video';
+    base64: string;
+    mimeType: string;
+    fileName: string;
+    caption: string;
+  }): Promise<{ ok: true; status: string }> {
+    const { recordId, group, senderNumber, kind, caption } = input;
+
+    // Carrega o ficheiro (imagem → WebP; vídeo → original) e sobe para R2/disco.
+    let storedUrl: string;
+    try {
+      const buf = Buffer.from(input.base64, 'base64');
+      if (!buf.length) throw new Error('Mídia vazia.');
+      storedUrl =
+        kind === 'image'
+          ? (await this.houseImages.processHouseImageBuffer(buf)).publicUrl
+          : (
+              await this.houseImages.storeHouseVideoBuffer(
+                buf,
+                input.mimeType,
+                input.fileName,
+              )
+            ).publicUrl;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.error(`Falha ao guardar mídia do scan (${kind}): ${msg}`);
+      await this.updateRecord(recordId, {
+        status: WhatsappScanMessageStatus.error,
+        error: msg.slice(0, 1000),
+      });
+      return { ok: true, status: 'error_media' };
+    }
+
+    // Regista a mídia pendente (dedup por externalMessageId).
+    try {
+      await this.prisma.whatsappScanPendingMedia.create({
+        data: {
+          groupId: group.id,
+          senderNumber,
+          kind:
+            kind === 'image'
+              ? WhatsappScanMediaKind.IMAGE
+              : WhatsappScanMediaKind.VIDEO,
+          storedUrl,
+          externalMessageId: input.externalMessageId,
+          messageId: recordId,
+        },
+      });
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        // Reentrega: já temos esta mídia pendente; apaga o ficheiro recém-carregado (evita órfão).
+        await this.houseImages.deleteStoredUrl(storedUrl);
+        return { ok: true, status: 'ignored_duplicate' };
+      }
+      throw e;
+    }
+
+    // Se a legenda for um anúncio, cria já o imóvel e anexa a mídia pendente (incluindo esta).
+    const prefilterEnabled = process.env.WHATSAPP_SCAN_PREFILTER !== '0';
+    if (caption && (!prefilterEnabled || looksLikePropertyListing(caption))) {
+      let extraction: ScanExtractionResult | null = null;
+      try {
+        extraction = await this.openai.extractListing(caption);
+      } catch (e) {
+        this.logger.warn(
+          `OpenAI falhou na legenda da mídia; mídia fica pendente: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+      if (extraction?.isListing && extraction.house) {
+        try {
+          const house = await this.createHouseFromExtraction(
+            group.partnerId,
+            extraction,
+          );
+          await this.attachPendingMediaToHouse(
+            group.id,
+            senderNumber,
+            house.id,
+          );
+          await this.updateRecord(recordId, {
+            status: WhatsappScanMessageStatus.created,
+            parsedJson: extraction as unknown as Prisma.InputJsonValue,
+            createdHouseId: house.id,
+          });
+          return { ok: true, status: 'created' };
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          this.logger.error(`Falha ao criar imóvel via legenda: ${msg}`);
+          // Mantém a mídia pendente para um eventual texto do anúncio.
+        }
+      }
+    }
+
+    await this.updateRecord(recordId, {
+      status: WhatsappScanMessageStatus.media_stored,
+    });
+    return { ok: true, status: 'media_stored' };
+  }
+
+  private createHouseFromExtraction(
+    partnerId: string,
+    extraction: ScanExtractionResult,
+  ) {
+    const house = extraction.house!;
+    return this.partnerService.createDraftHouseFromScan({
+      partnerId,
+      title: house.title,
+      description: house.description,
+      businessType: house.businessType,
+      typology: house.typology,
+      city: house.city,
+      availableFrom: house.availableFrom,
+      priceEur: house.priceEur,
+      relocationFeeEur: house.relocationFeeEur,
+      caucoesCount: house.caucoesCount,
+      rendasEntradaCount: house.rendasEntradaCount,
+      furnished: house.furnished,
+    });
+  }
+
+  /**
+   * Anexa a mídia pendente (do mesmo grupo + remetente, dentro da janela) ao imóvel criado e
+   * marca-a como consumida (mesmo a que excede o limite de 6 imagens, para não reaparecer noutro
+   * anúncio seguinte).
+   */
+  private async attachPendingMediaToHouse(
+    groupId: string,
+    senderNumber: string,
+    houseId: string,
+  ): Promise<void> {
+    const since = new Date(Date.now() - mediaWindowMinutes() * 60 * 1000);
+    const pendings = await this.prisma.whatsappScanPendingMedia.findMany({
+      where: {
+        groupId,
+        senderNumber,
+        consumedByHouseId: null,
+        createdAt: { gte: since },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (pendings.length === 0) return;
+
+    const imageUrls = pendings
+      .filter((p) => p.kind === WhatsappScanMediaKind.IMAGE)
+      .map((p) => p.storedUrl);
+    const videoUrl =
+      pendings.find((p) => p.kind === WhatsappScanMediaKind.VIDEO)?.storedUrl ??
+      null;
+
+    try {
+      await this.partnerService.attachScanMediaToHouse({
+        houseId,
+        imageUrls,
+        videoUrl,
+      });
+    } catch (e) {
+      this.logger.warn(
+        `Não foi possível anexar mídia ao imóvel ${houseId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return;
+    }
+
+    const pendingIds = pendings.map((p) => p.id);
+    const messageIds = pendings
+      .map((p) => p.messageId)
+      .filter((id): id is string => !!id);
+    await this.prisma.whatsappScanPendingMedia.updateMany({
+      where: { id: { in: pendingIds } },
+      data: { consumedByHouseId: houseId },
+    });
+    if (messageIds.length > 0) {
+      await this.prisma.whatsappScanMessage.updateMany({
+        where: {
+          id: { in: messageIds },
+          status: WhatsappScanMessageStatus.media_stored,
+        },
+        data: {
+          status: WhatsappScanMessageStatus.media_attached,
+          createdHouseId: houseId,
+        },
+      });
     }
   }
 

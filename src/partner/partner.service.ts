@@ -1897,6 +1897,67 @@ export class PartnerService {
     });
   }
 
+  /**
+   * Anexa mídia já carregada (Whatsapp scan) a um imóvel existente: acrescenta imagens (até ao
+   * limite de 6), define a capa se ainda não houver, e define o vídeo se ainda não houver.
+   */
+  async attachScanMediaToHouse(input: {
+    houseId: string;
+    imageUrls: string[];
+    videoUrl?: string | null;
+  }): Promise<{ attachedImages: number; attachedVideo: boolean }> {
+    const incomingImages = (input.imageUrls ?? []).filter((u) => !!u);
+    if (incomingImages.length === 0 && !input.videoUrl) {
+      return { attachedImages: 0, attachedVideo: false };
+    }
+
+    const house = await this.prisma.partnerHouse.findUnique({
+      where: { id: input.houseId },
+      select: {
+        id: true,
+        imageUrls: true,
+        coverImageUrl: true,
+        videoUrl: true,
+      },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+
+    const existingImages: string[] = house.imageUrls ?? [];
+    const mergedImages = [...existingImages];
+    for (const u of incomingImages) {
+      if (mergedImages.length >= 6) break;
+      if (!mergedImages.includes(u)) mergedImages.push(u);
+    }
+    const attachedImages = mergedImages.length - existingImages.length;
+
+    let coverImageUrl = house.coverImageUrl;
+    if (
+      mergedImages.length > 0 &&
+      (!coverImageUrl || !mergedImages.includes(coverImageUrl))
+    ) {
+      coverImageUrl = mergedImages[0]!;
+    }
+
+    let videoUrl = house.videoUrl;
+    let attachedVideo = false;
+    if (!videoUrl && input.videoUrl) {
+      videoUrl = input.videoUrl;
+      attachedVideo = true;
+    }
+
+    if (attachedImages === 0 && !attachedVideo) {
+      return { attachedImages: 0, attachedVideo: false };
+    }
+
+    await this.prisma.partnerHouse.update({
+      where: { id: house.id },
+      data: { imageUrls: mergedImages, coverImageUrl, videoUrl },
+    });
+    return { attachedImages, attachedVideo };
+  }
+
   async getMyHouse(userId: string, houseId: string) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
     const house = await this.prisma.partnerHouse.findFirst({

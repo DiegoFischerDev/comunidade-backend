@@ -207,7 +207,8 @@ export class HouseImageStorageService {
   }
 
   private resolveHouseVideoMimeAndExt(
-    file: Express.Multer.File,
+    declaredMime: string,
+    originalName: string,
     buf: Buffer,
   ): { mime: string; ext: string } {
     const sniffed = this.sniffVideoKind(buf);
@@ -218,7 +219,7 @@ export class HouseImageStorageService {
       return { mime: 'video/mp4', ext: '.mp4' };
     }
 
-    const rawMime = (file.mimetype || '').split(';')[0]!.trim().toLowerCase();
+    const rawMime = (declaredMime || '').split(';')[0]!.trim().toLowerCase();
     const normalized = this.normalizeDeclaredVideoMime(rawMime);
     if (normalized) {
       return this.mimeAndExtFromCanonicalMime(normalized);
@@ -229,7 +230,7 @@ export class HouseImageStorageService {
       rawMime === '' ||
       rawMime === 'binary/octet-stream'
     ) {
-      const fromName = this.inferMimeFromOriginalName(file.originalname || '');
+      const fromName = this.inferMimeFromOriginalName(originalName || '');
       if (fromName) {
         const n = this.normalizeDeclaredVideoMime(fromName);
         if (n) return this.mimeAndExtFromCanonicalMime(n);
@@ -248,6 +249,14 @@ export class HouseImageStorageService {
     publicUrl: string;
   }> {
     const buf = await this.readBuffer(file);
+    if (!buf?.length) {
+      throw new Error('Imagem inválida (sem conteúdo).');
+    }
+    return this.processHouseImageBuffer(buf);
+  }
+
+  /** Converte um buffer de imagem para WebP e grava (R2/disco). Para mídia capturada (scan). */
+  async processHouseImageBuffer(buf: Buffer): Promise<{ publicUrl: string }> {
     if (!buf?.length) {
       throw new Error('Imagem inválida (sem conteúdo).');
     }
@@ -392,7 +401,29 @@ export class HouseImageStorageService {
     if (!buf?.length) {
       throw new Error('Vídeo inválido (sem conteúdo).');
     }
-    const { mime, ext } = this.resolveHouseVideoMimeAndExt(file, buf);
+    const { mime, ext } = this.resolveHouseVideoMimeAndExt(
+      file.mimetype || '',
+      file.originalname || '',
+      buf,
+    );
+    const publicUrl = await this.uploadBinary(buf, mime, 'houses/videos', ext);
+    return { publicUrl };
+  }
+
+  /** Grava um buffer de vídeo (mídia capturada no scan). */
+  async storeHouseVideoBuffer(
+    buf: Buffer,
+    declaredMime: string,
+    originalName = '',
+  ): Promise<{ publicUrl: string }> {
+    if (!buf?.length) {
+      throw new Error('Vídeo inválido (sem conteúdo).');
+    }
+    const { mime, ext } = this.resolveHouseVideoMimeAndExt(
+      declaredMime || '',
+      originalName || '',
+      buf,
+    );
     const publicUrl = await this.uploadBinary(buf, mime, 'houses/videos', ext);
     return { publicUrl };
   }
