@@ -33,6 +33,12 @@ export class IngestMessageDto {
   @IsString()
   base64?: string;
 
+  /** Nome da instância Evolution (fallback: backend busca o base64 via getBase64FromMediaMessage). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  instance?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(200)

@@ -157,6 +157,69 @@ export class WhatsAppService {
     return raw.replace(/\D/g, '');
   }
 
+  /**
+   * Obtém a mídia de uma mensagem em base64 via Evolution (`getBase64FromMediaMessage`).
+   * Fallback usado pelo Whatsapp scan quando o webhook não traz o base64 (Webhook Base64 desligado).
+   * Tenta a instância indicada e depois as restantes; devolve null se não conseguir.
+   */
+  async getMediaBase64(
+    instance: string | undefined,
+    messageId: string,
+    opts?: { convertToMp4?: boolean },
+  ): Promise<{ base64: string; mimetype: string; fileName: string } | null> {
+    const base = this.base;
+    const key = this.key;
+    if (!base || !key || !messageId) return null;
+
+    const preferred = (instance || '').trim();
+    const all = this.instancesOrdered;
+    const attempts =
+      preferred && !all.includes(preferred)
+        ? [preferred, ...all]
+        : preferred
+          ? [preferred, ...all.filter((i) => i !== preferred)]
+          : all;
+
+    const signal = this.evolutionRequestSignal('default');
+    for (const inst of attempts) {
+      try {
+        const res = await fetch(
+          `${base}/chat/getBase64FromMediaMessage/${inst}`,
+          {
+            method: 'POST',
+            headers: { apikey: key, 'content-type': 'application/json' },
+            body: JSON.stringify({
+              message: { key: { id: messageId } },
+              convertToMp4: opts?.convertToMp4 === true,
+            }),
+            ...(signal ? { signal } : {}),
+          },
+        );
+        if (!res.ok) continue;
+        const data: unknown = await res.json().catch(() => null);
+        const b64 =
+          data && typeof data === 'object'
+            ? (data as { base64?: unknown }).base64
+            : undefined;
+        if (typeof b64 === 'string' && b64.length > 0) {
+          const obj = data as {
+            base64: string;
+            mimetype?: unknown;
+            fileName?: unknown;
+          };
+          return {
+            base64: obj.base64,
+            mimetype: typeof obj.mimetype === 'string' ? obj.mimetype : '',
+            fileName: typeof obj.fileName === 'string' ? obj.fileName : '',
+          };
+        }
+      } catch {
+        // tenta a próxima instância
+      }
+    }
+    return null;
+  }
+
   async sendText(
     toDigits: string,
     text: string,

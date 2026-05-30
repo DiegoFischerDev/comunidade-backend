@@ -12,6 +12,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { PartnerService } from '../partner/partner.service';
 import { HouseImageStorageService } from '../partner/house-image-storage.service';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import {
   WhatsappScanOpenAiService,
   type ScanExtractionResult,
@@ -64,7 +65,23 @@ export class WhatsappScanService {
     private readonly partnerService: PartnerService,
     private readonly openai: WhatsappScanOpenAiService,
     private readonly houseImages: HouseImageStorageService,
+    private readonly whatsapp: WhatsAppService,
   ) {}
+
+  /**
+   * Serializa as anexações de mídia (read-modify-write em `imageUrls`) nesta instância, para
+   * evitar "lost updates" quando várias imagens chegam quase em simultâneo (requisições paralelas).
+   */
+  private attachChain: Promise<void> = Promise.resolve();
+
+  private runSerialized<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.attachChain.then(fn, fn);
+    this.attachChain = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
 
   // ===== CRUD admin =====
 
@@ -234,16 +251,19 @@ export class WhatsappScanService {
     if (!group) return { ok: true, status: 'ignored_group_not_monitored' };
 
     const kind = dto.kind ?? 'text';
-    const hasMediaBytes =
-      (kind === 'image' || kind === 'video') && !!dto.base64?.length;
-
-    // Mensagem sem texto e sem mídia processável: nada a fazer.
-    if (!hasMediaBytes && !text) {
-      return { ok: true, status: 'ignored_empty' };
-    }
-
+    const isMedia = kind === 'image' || kind === 'video';
     const senderNumber = digitsOnly(dto.senderNumber);
     const externalMessageId = dto.externalMessageId?.trim() || null;
+
+    // Mídia processável se traz o base64 (Webhook Base64) ou se podemos buscá-lo na Evolution
+    // (precisa do id da mensagem; a instância é opcional, mas ajuda a acertar de 1.ª).
+    const hasBase64 = !!dto.base64?.length;
+    const handleAsMedia = isMedia && (hasBase64 || !!externalMessageId);
+
+    // Mensagem sem texto e sem mídia processável: nada a fazer.
+    if (!handleAsMedia && !text) {
+      return { ok: true, status: 'ignored_empty' };
+    }
 
     // Filtro de números (vazio = todos). Antes de gravar/baixar qualquer coisa.
     if (
@@ -255,28 +275,29 @@ export class WhatsappScanService {
 
     // Dedup "claim-first": grava já o log (status `received`). A unique constraint em
     // `externalMessageId` garante que apenas a 1.ª entrega prossegue (Evolution reentrega).
-    const rawText = text || (hasMediaBytes ? `[${kind}]` : '');
+    const rawText = text || (handleAsMedia ? `[${kind}]` : '');
     const claim = await this.claimMessage({
       groupId: group.id,
       senderNumber,
       externalMessageId,
       rawText,
       // Sem id, só deduplicamos por conteúdo quando é texto (mídia partilharia o placeholder).
-      contentDedup: !hasMediaBytes,
+      contentDedup: !handleAsMedia,
     });
     if (claim.duplicate) return { ok: true, status: 'ignored_duplicate' };
     const recordId = claim.id;
 
-    if (hasMediaBytes) {
+    if (handleAsMedia) {
       return this.handleMedia({
         recordId,
         group,
         senderNumber,
         externalMessageId,
         kind,
-        base64: dto.base64 as string,
+        base64: dto.base64 ?? '',
         mimeType: dto.mimeType ?? '',
         fileName: dto.fileName ?? '',
+        instance: dto.instance ?? '',
         caption: text,
       });
     }
@@ -391,12 +412,14 @@ export class WhatsappScanService {
         group.partnerId,
         extraction,
       );
-      await this.attachPendingMediaToHouse(group.id, senderNumber, house.id);
+      // Marca o imóvel como criado ANTES de anexar, para que mídia concorrente (imagens ainda
+      // a ser processadas noutras requisições) o encontre e se anexe (findRecentCreatedHouseId).
       await this.updateRecord(recordId, {
         status: WhatsappScanMessageStatus.created,
         parsedJson: extraction as unknown as Prisma.InputJsonValue,
         createdHouseId: house.id,
       });
+      await this.attachPendingMediaToHouse(group.id, senderNumber, house.id);
       return { ok: true, status: 'created' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -420,14 +443,44 @@ export class WhatsappScanService {
     base64: string;
     mimeType: string;
     fileName: string;
+    instance: string;
     caption: string;
   }): Promise<{ ok: true; status: string }> {
     const { recordId, group, senderNumber, kind, caption } = input;
 
+    // Obtém os bytes: do webhook (Webhook Base64) ou, em fallback, da Evolution.
+    let base64 = input.base64;
+    let mimeType = input.mimeType;
+    let fileName = input.fileName;
+    if (!base64 && input.externalMessageId) {
+      const fetched = await this.whatsapp.getMediaBase64(
+        input.instance,
+        input.externalMessageId,
+        { convertToMp4: kind === 'video' },
+      );
+      if (fetched) {
+        base64 = fetched.base64;
+        mimeType = mimeType || fetched.mimetype;
+        fileName = fileName || fetched.fileName;
+      }
+    }
+    if (!base64) {
+      this.logger.warn(
+        `Mídia sem bytes (${kind}); Webhook Base64 desligado e getBase64 falhou (msg ${
+          input.externalMessageId ?? '—'
+        }).`,
+      );
+      await this.updateRecord(recordId, {
+        status: WhatsappScanMessageStatus.error,
+        error: 'Mídia sem bytes (Webhook Base64 desligado / getBase64 falhou).',
+      });
+      return { ok: true, status: 'error_media_no_bytes' };
+    }
+
     // Carrega o ficheiro (imagem → WebP; vídeo → original) e sobe para R2/disco.
     let storedUrl: string;
     try {
-      const buf = Buffer.from(input.base64, 'base64');
+      const buf = Buffer.from(base64, 'base64');
       if (!buf.length) throw new Error('Mídia vazia.');
       storedUrl =
         kind === 'image'
@@ -435,8 +488,8 @@ export class WhatsappScanService {
           : (
               await this.houseImages.storeHouseVideoBuffer(
                 buf,
-                input.mimeType,
-                input.fileName,
+                mimeType,
+                fileName,
               )
             ).publicUrl;
     } catch (e) {
@@ -514,10 +567,50 @@ export class WhatsappScanService {
       }
     }
 
+    // Corrida com o texto: como cada mensagem chega numa requisição separada e o processamento
+    // da imagem é mais lento (download + WebP + upload), o texto pode criar o imóvel primeiro.
+    // Se já existe um imóvel criado há pouco para este remetente, anexamo-nos a ele.
+    const recentHouseId = await this.findRecentCreatedHouseId(
+      group.id,
+      senderNumber,
+    );
+    if (recentHouseId) {
+      await this.attachPendingMediaToHouse(
+        group.id,
+        senderNumber,
+        recentHouseId,
+      );
+      await this.updateRecord(recordId, {
+        status: WhatsappScanMessageStatus.media_attached,
+        createdHouseId: recentHouseId,
+      });
+      return { ok: true, status: 'media_attached' };
+    }
+
     await this.updateRecord(recordId, {
       status: WhatsappScanMessageStatus.media_stored,
     });
     return { ok: true, status: 'media_stored' };
+  }
+
+  /** Imóvel criado há pouco (dentro da janela) a partir do mesmo grupo + remetente, se existir. */
+  private async findRecentCreatedHouseId(
+    groupId: string,
+    senderNumber: string,
+  ): Promise<string | null> {
+    const since = new Date(Date.now() - mediaWindowMinutes() * 60 * 1000);
+    const recent = await this.prisma.whatsappScanMessage.findFirst({
+      where: {
+        groupId,
+        senderNumber,
+        status: WhatsappScanMessageStatus.created,
+        createdHouseId: { not: null },
+        createdAt: { gte: since },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { createdHouseId: true },
+    });
+    return recent?.createdHouseId ?? null;
   }
 
   private createHouseFromExtraction(
@@ -546,7 +639,17 @@ export class WhatsappScanService {
    * marca-a como consumida (mesmo a que excede o limite de 6 imagens, para não reaparecer noutro
    * anúncio seguinte).
    */
-  private async attachPendingMediaToHouse(
+  private attachPendingMediaToHouse(
+    groupId: string,
+    senderNumber: string,
+    houseId: string,
+  ): Promise<void> {
+    return this.runSerialized(() =>
+      this.attachPendingMediaToHouseInner(groupId, senderNumber, houseId),
+    );
+  }
+
+  private async attachPendingMediaToHouseInner(
     groupId: string,
     senderNumber: string,
     houseId: string,
