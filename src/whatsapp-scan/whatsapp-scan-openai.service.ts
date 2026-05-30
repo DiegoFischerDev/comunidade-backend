@@ -21,13 +21,30 @@ export interface ScanExtractionResult {
   house: ScanExtractionHouse | null;
 }
 
+/**
+ * Converte um valor monetário em formato livre/europeu para número.
+ * Trata "." e espaços como separadores de milhar e "," como separador decimal.
+ * Ex.: "200.000" → 200000, "750,50" → 750.5, "200 000" → 200000. Devolve null se não for número.
+ */
+function parseEurAmount(raw: string): number | null {
+  const cleaned = (raw ?? '').replace(/[^\d.,]/g, '').trim();
+  if (!cleaned) return null;
+  // remove pontos e espaços (milhar) e usa vírgula como decimal
+  const normalized = cleaned
+    .replace(/\./g, '')
+    .replace(/\s/g, '')
+    .replace(',', '.');
+  const n = parseFloat(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
 const SYSTEM_PROMPT = `És um assistente que analisa mensagens enviadas em grupos de WhatsApp sobre imóveis em Portugal.
 A tua tarefa tem dois passos:
 1) Classificar se a mensagem é um ANÚNCIO de imóvel (arrendamento ou venda). Mensagens de conversa, perguntas, procura de casa ("procuro T2 em Lisboa"), saudações ou spam NÃO são anúncios.
 2) Se for um anúncio, extrair os dados estruturados do imóvel.
 
 Regras de extração:
-- "businessType": "RENT" para arrendamento/aluguer, "SALE" para venda. Em caso de dúvida usa "RENT".
+- "businessType": "RENT" para arrendamento/aluguer, "SALE" para venda. POR DEFEITO usa "RENT". Só usa "SALE" se a mensagem deixar claro que é para venda (ex.: "vende-se", "para venda", "à venda"). Valores acima de 5000€ normalmente indicam venda; valores até 5000€ indicam arrendamento (renda mensal).
 - "typology": uma de T0, T1, T2, T3, T4, T5 ou QUARTO_AP_COMPARTILHADO (quarto/quarto em apartamento partilhado). Se não souberes, usa "T2".
 - "city": nome da cidade/localidade em Portugal mencionada (ex.: "Lisboa", "Porto"). Se não houver, usa "".
 - "priceEur": valor da renda/preço APENAS com números (ex.: "750" ou "750,50"). Sem símbolos nem texto. Se não houver, usa "".
@@ -160,8 +177,20 @@ export class WhatsappScanOpenAiService {
       allowedTypology.includes(typologyRaw) ? typologyRaw : 'T2'
     ) as ScanExtractionHouse['typology'];
 
-    const businessType =
+    const priceEur = str(h.priceEur).replace(/[^\d.,]/g, '');
+    const numericPrice = parseEurAmount(priceEur);
+
+    // Regra determinística: por defeito arrendamento. O preço é o sinal mais forte —
+    // valores até 5000€ são renda mensal (RENT); acima disso, venda (SALE). Sem preço,
+    // respeita a classificação da IA (que por defeito devolve RENT).
+    const modelBusinessType =
       str(h.businessType).toUpperCase() === 'SALE' ? 'SALE' : 'RENT';
+    const businessType: 'RENT' | 'SALE' =
+      numericPrice != null && numericPrice > 0
+        ? numericPrice > 5000
+          ? 'SALE'
+          : 'RENT'
+        : modelBusinessType;
 
     const availableFromRaw = str(h.availableFrom);
     const availableFrom = /^\d{4}-\d{2}-\d{2}/.test(availableFromRaw)
@@ -174,7 +203,7 @@ export class WhatsappScanOpenAiService {
       businessType,
       typology,
       city: str(h.city),
-      priceEur: str(h.priceEur).replace(/[^\d.,]/g, ''),
+      priceEur,
       relocationFeeEur: str(h.relocationFeeEur).replace(/[^\d.,]/g, '') || '0',
       caucoesCount: intInRange(h.caucoesCount),
       rendasEntradaCount: intInRange(h.rendasEntradaCount),

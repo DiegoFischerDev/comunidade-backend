@@ -19,6 +19,27 @@ function digitsOnly(value: string): string {
   return String(value ?? '').replace(/\D+/g, '');
 }
 
+/**
+ * Pré-filtro barato (sem IA) para poupar tokens: só vale a pena chamar a OpenAI se a mensagem
+ * tiver pelo menos um indício de anúncio de imóvel. Mensagens curtas ou sem qualquer sinal
+ * (saudações, agradecimentos, conversa) são descartadas sem custo.
+ * Conservador de propósito: na dúvida, deixa passar para a IA decidir.
+ */
+function looksLikePropertyListing(text: string): boolean {
+  const t = (text ?? '').trim();
+  if (t.length < 20) return false;
+
+  const hasPrice = /(€|\beur\b|\beuros?\b)/i.test(t) || /\d[\d.\s]{2,}/.test(t);
+  const hasTypology = /\bt[0-5]\b/i.test(t);
+  const hasKeyword =
+    /(arrend|renda|aluga|aluguer|vende|venda|à\s*venda|im[oó]ve|apartament|vivend|morad|quarto|estúdio|estudio|duplex|casa de banho|mobilad|condom|fra[cç][aã]o|propriedade)/i.test(
+      t,
+    );
+
+  // Precisa de uma palavra-chave de imóvel E (preço OU tipologia).
+  return hasKeyword && (hasPrice || hasTypology);
+}
+
 @Injectable()
 export class WhatsappScanService {
   private readonly logger = new Logger(WhatsappScanService.name);
@@ -261,6 +282,16 @@ export class WhatsappScanService {
         status: WhatsappScanMessageStatus.ignored_sender,
       });
       return { ok: true, status: 'ignored_sender' };
+    }
+
+    // Pré-filtro barato (sem IA) para poupar tokens: descarta mensagens que não têm qualquer
+    // indício de anúncio de imóvel. Desligável com WHATSAPP_SCAN_PREFILTER=0.
+    const prefilterEnabled = process.env.WHATSAPP_SCAN_PREFILTER !== '0';
+    if (prefilterEnabled && !looksLikePropertyListing(text)) {
+      await this.updateRecord(recordId, {
+        status: WhatsappScanMessageStatus.ignored_not_listing,
+      });
+      return { ok: true, status: 'ignored_prefilter' };
     }
 
     // Classificação + extração via OpenAI.
