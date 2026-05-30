@@ -842,7 +842,7 @@ model WhatsappScanMessage {
   /// ID da mensagem na Evolution (para deduplicação em reentregas do webhook).
   externalMessageId String?                   @unique @map("external_message_id")
   /// Texto bruto da mensagem capturada.
-  rawText           String                    @db.Text
+  rawText           String                    @map("raw_text") @db.Text
   status            WhatsappScanMessageStatus @default(received)
   /// JSON devolvido pela OpenAI (classificação + campos extraídos).
   parsedJson        Json?                     @map("parsed_json")
