@@ -22,6 +22,7 @@ import { RecommendedServicesModule } from './recommended-services/recommended-se
 import { FinancingQuizModule } from './financing-quiz/financing-quiz.module';
 import { LeadsModule } from './leads/leads.module';
 import { LeadDocumentsModule } from './lead-documents/lead-documents.module';
+import { WhatsappScanModule } from './whatsapp-scan/whatsapp-scan.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { LeadDocumentsModule } from './lead-documents/lead-documents.module';
     LeadsModule,
     LeadDocumentsModule,
     FinancingQuizModule,
+    WhatsappScanModule,
   ],
   controllers: [AppController],
   providers: [

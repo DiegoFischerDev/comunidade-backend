@@ -41,7 +41,10 @@ import {
   expandRelocationCityFilter,
   normalizeRelocationCityForAdminStorage,
 } from './relocation-cities';
-import { requirePartnerDeviceId, tryPartnerDeviceId } from './partner-device-id';
+import {
+  requirePartnerDeviceId,
+  tryPartnerDeviceId,
+} from './partner-device-id';
 import { HouseImageStorageService } from './house-image-storage.service';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import {
@@ -260,7 +263,11 @@ export class PartnerService {
     // Valida o slug recebido (apenas os slugs constantes são aceites; `null` limpa).
     let nextCategorySlug: string | null | undefined = undefined;
     if (Object.prototype.hasOwnProperty.call(dto, 'categorySlug')) {
-      if (dto.categorySlug === null || dto.categorySlug === undefined || dto.categorySlug === '') {
+      if (
+        dto.categorySlug === null ||
+        dto.categorySlug === undefined ||
+        dto.categorySlug === ''
+      ) {
         nextCategorySlug = null;
       } else if (isPartnerCategorySlug(dto.categorySlug)) {
         nextCategorySlug = dto.categorySlug;
@@ -272,11 +279,14 @@ export class PartnerService {
     return this.prisma.partner.update({
       where: { id },
       data: {
-        ...(nextCategorySlug !== undefined ? { categorySlug: nextCategorySlug } : {}),
+        ...(nextCategorySlug !== undefined
+          ? { categorySlug: nextCategorySlug }
+          : {}),
         priority:
-          Object.prototype.hasOwnProperty.call(dto, 'priority') && typeof dto.priority === 'number'
+          Object.prototype.hasOwnProperty.call(dto, 'priority') &&
+          typeof dto.priority === 'number'
             ? dto.priority
-            : (partner as any).priority ?? 0,
+            : ((partner as any).priority ?? 0),
       } as any,
       include: {
         user: {
@@ -328,7 +338,12 @@ export class PartnerService {
       }
     >();
     for (const id of partnerIds) {
-      map.set(id, { likeCount: 0, dislikeCount: 0, commentCount: 0, shareCount: 0 });
+      map.set(id, {
+        likeCount: 0,
+        dislikeCount: 0,
+        commentCount: 0,
+        shareCount: 0,
+      });
     }
     if (partnerIds.length === 0) {
       return map;
@@ -405,28 +420,35 @@ export class PartnerService {
       throw new NotFoundException('Parceiro não encontrado.');
     }
     const deviceId = tryPartnerDeviceId(deviceHeader);
-    const [likeCount, dislikeCount, commentCount, myReaction, hasDeviceComment] =
-      await Promise.all([
-        this.prisma.partnerReaction.count({ where: { partnerId, type: 'LIKE' } }),
-        this.prisma.partnerReaction.count({ where: { partnerId, type: 'DISLIKE' } }),
-        this.prisma.partnerComment.count({ where: { partnerId } }),
-        userId
+    const [
+      likeCount,
+      dislikeCount,
+      commentCount,
+      myReaction,
+      hasDeviceComment,
+    ] = await Promise.all([
+      this.prisma.partnerReaction.count({ where: { partnerId, type: 'LIKE' } }),
+      this.prisma.partnerReaction.count({
+        where: { partnerId, type: 'DISLIKE' },
+      }),
+      this.prisma.partnerComment.count({ where: { partnerId } }),
+      userId
+        ? this.prisma.partnerReaction.findFirst({
+            where: { userId, partnerId },
+            select: { type: true },
+          })
+        : deviceId
           ? this.prisma.partnerReaction.findFirst({
-              where: { userId, partnerId },
+              where: { deviceId, partnerId },
               select: { type: true },
             })
-          : deviceId
-            ? this.prisma.partnerReaction.findFirst({
-                where: { deviceId, partnerId },
-                select: { type: true },
-              })
-            : Promise.resolve(null),
-        deviceId
-          ? this.prisma.partnerComment.count({
-              where: { partnerId, deviceId },
-            })
-          : Promise.resolve(0),
-      ]);
+          : Promise.resolve(null),
+      deviceId
+        ? this.prisma.partnerComment.count({
+            where: { partnerId, deviceId },
+          })
+        : Promise.resolve(0),
+    ]);
     return {
       likeCount,
       dislikeCount,
@@ -455,7 +477,9 @@ export class PartnerService {
       });
       if (type === null) {
         if (existing) {
-          await this.prisma.partnerReaction.delete({ where: { id: existing.id } });
+          await this.prisma.partnerReaction.delete({
+            where: { id: existing.id },
+          });
         }
         return { myReaction: null as PartnerReactionType | null };
       }
@@ -494,7 +518,11 @@ export class PartnerService {
     return { myReaction: existing.type };
   }
 
-  async listPartnerComments(partnerId: string, take: number, deviceHeader?: string) {
+  async listPartnerComments(
+    partnerId: string,
+    take: number,
+    deviceHeader?: string,
+  ) {
     const exists = await this.prisma.partner.findUnique({
       where: { id: partnerId },
       select: { id: true },
@@ -504,7 +532,9 @@ export class PartnerService {
     }
     const takeN = Math.min(Math.max(take, 1), 2000);
     const requestDeviceId = tryPartnerDeviceId(deviceHeader);
-    const total = await this.prisma.partnerComment.count({ where: { partnerId } });
+    const total = await this.prisma.partnerComment.count({
+      where: { partnerId },
+    });
     const rows = await this.prisma.partnerComment.findMany({
       where: { partnerId },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -555,10 +585,14 @@ export class PartnerService {
           select: { id: true, partnerId: true },
         });
         if (!parent) {
-          throw new BadRequestException('Comentário a que responde não foi encontrado.');
+          throw new BadRequestException(
+            'Comentário a que responde não foi encontrado.',
+          );
         }
         if (parent.partnerId !== partnerId) {
-          throw new BadRequestException('Não podes responder a um comentário de outro parceiro.');
+          throw new BadRequestException(
+            'Não podes responder a um comentário de outro parceiro.',
+          );
         }
       }
       const c = await this.prisma.partnerComment.create({
@@ -648,7 +682,9 @@ export class PartnerService {
       await this.prisma.partnerComment.delete({ where: { id: commentId } });
       return { ok: true as const, partnerId: c.partnerId };
     }
-    throw new ForbiddenException('Não tens permissão para eliminar este comentário.');
+    throw new ForbiddenException(
+      'Não tens permissão para eliminar este comentário.',
+    );
   }
 
   async recordPartnerShare(partnerId: string) {
@@ -660,7 +696,11 @@ export class PartnerService {
       });
       return { shareCount: p.shareCount };
     } catch (e) {
-      if (e && typeof e === 'object' && (e as { code?: string }).code === 'P2025') {
+      if (
+        e &&
+        typeof e === 'object' &&
+        (e as { code?: string }).code === 'P2025'
+      ) {
         throw new NotFoundException('Parceiro não encontrado.');
       }
       throw e;
@@ -760,7 +800,8 @@ export class PartnerService {
     }
 
     const newCatalogImages =
-      dto.catalogImageUrls?.filter((url) => !!url && url.trim() !== '') ?? oldCatalogImages;
+      dto.catalogImageUrls?.filter((url) => !!url && url.trim() !== '') ??
+      oldCatalogImages;
     if (newCatalogImages.length > 5) {
       throw new BadRequestException(
         'O parceiro pode ter no máximo 5 imagens de catálogo.',
@@ -775,9 +816,7 @@ export class PartnerService {
         : undefined;
 
     const nameToSet =
-      dto.name !== undefined && dto.name !== null
-        ? dto.name.trim()
-        : undefined;
+      dto.name !== undefined && dto.name !== null ? dto.name.trim() : undefined;
     if (nameToSet !== undefined && !nameToSet) {
       throw new BadRequestException('O nome da empresa não pode ser vazio.');
     }
@@ -802,7 +841,9 @@ export class PartnerService {
             select: { id: true },
           });
           if (taken) {
-            throw new ConflictException('Este endereço público já está em uso.');
+            throw new ConflictException(
+              'Este endereço público já está em uso.',
+            );
           }
           publicSlugToSet = normalized;
         }
@@ -812,46 +853,52 @@ export class PartnerService {
     let updated;
     try {
       updated = await this.prisma.$transaction(async (tx) => {
-      const userPatch: { whatsapp?: string; name?: string } = {};
-      if (whatsappToSet !== undefined) userPatch.whatsapp = whatsappToSet;
-      if (nameToSet !== undefined) userPatch.name = nameToSet;
-      if (Object.keys(userPatch).length) {
-        await tx.user.update({
-          where: { id: userId },
-          data: userPatch,
-        });
-      }
+        const userPatch: { whatsapp?: string; name?: string } = {};
+        if (whatsappToSet !== undefined) userPatch.whatsapp = whatsappToSet;
+        if (nameToSet !== undefined) userPatch.name = nameToSet;
+        if (Object.keys(userPatch).length) {
+          await tx.user.update({
+            where: { id: userId },
+            data: userPatch,
+          });
+        }
 
-      return tx.partner.update({
-        where: { id: partner.id },
-        data: {
-          name: nameToSet !== undefined ? nameToSet : partner.name,
-          logoUrl: dto.logoUrl ?? partner.logoUrl,
-          shortDescription: dto.shortDescription ?? partner.shortDescription,
-          fullDescription: dto.fullDescription ?? partner.fullDescription,
-          backgroundImageUrl:
-            dto.backgroundImageUrl ?? partner.backgroundImageUrl,
-          catalogImageUrls: newCatalogImages,
-          catalogVideoUrl: nextCatalogVideoUrl,
-          instagram:
-            dto.instagram !== undefined ? dto.instagram : partner.instagram,
-          billingName:
-            dto.billingName !== undefined ? dto.billingName : partner.billingName,
-          billingNif:
-            dto.billingNif !== undefined ? dto.billingNif : partner.billingNif,
-          billingAddress:
-            dto.billingAddress !== undefined
-              ? dto.billingAddress
-              : partner.billingAddress,
-          billingPostalCode:
-            dto.billingPostalCode !== undefined
-              ? dto.billingPostalCode
-              : partner.billingPostalCode,
-          ...(whatsappToSet !== undefined && { whatsapp: whatsappToSet }),
-          ...(publicSlugToSet !== undefined && { publicSlug: publicSlugToSet }),
-        },
+        return tx.partner.update({
+          where: { id: partner.id },
+          data: {
+            name: nameToSet !== undefined ? nameToSet : partner.name,
+            logoUrl: dto.logoUrl ?? partner.logoUrl,
+            shortDescription: dto.shortDescription ?? partner.shortDescription,
+            fullDescription: dto.fullDescription ?? partner.fullDescription,
+            backgroundImageUrl:
+              dto.backgroundImageUrl ?? partner.backgroundImageUrl,
+            catalogImageUrls: newCatalogImages,
+            catalogVideoUrl: nextCatalogVideoUrl,
+            instagram:
+              dto.instagram !== undefined ? dto.instagram : partner.instagram,
+            billingName:
+              dto.billingName !== undefined
+                ? dto.billingName
+                : partner.billingName,
+            billingNif:
+              dto.billingNif !== undefined
+                ? dto.billingNif
+                : partner.billingNif,
+            billingAddress:
+              dto.billingAddress !== undefined
+                ? dto.billingAddress
+                : partner.billingAddress,
+            billingPostalCode:
+              dto.billingPostalCode !== undefined
+                ? dto.billingPostalCode
+                : partner.billingPostalCode,
+            ...(whatsappToSet !== undefined && { whatsapp: whatsappToSet }),
+            ...(publicSlugToSet !== undefined && {
+              publicSlug: publicSlugToSet,
+            }),
+          },
+        });
       });
-    });
     } catch (e: any) {
       if (e?.code === 'P2002') {
         throw new ConflictException('Este endereço público já está em uso.');
@@ -972,7 +1019,9 @@ export class PartnerService {
       throw new NotFoundException('Administrador não encontrado.');
     }
     if (user.role !== Role.ADMIN) {
-      throw new ForbiddenException('Apenas administradores podem criar anúncios nesta área.');
+      throw new ForbiddenException(
+        'Apenas administradores podem criar anúncios nesta área.',
+      );
     }
 
     if (!user.partner) {
@@ -1041,7 +1090,7 @@ export class PartnerService {
         partnerId: partner.id,
         title: dto.title,
         description: dto.description?.trim() ?? '',
-        price: priceOnRequest ? null : (dto.price?.trim() || null),
+        price: priceOnRequest ? null : dto.price?.trim() || null,
         priceOnRequest,
       },
     });
@@ -1069,11 +1118,16 @@ export class PartnerService {
     }
     const priceOnRequest = dto.priceOnRequest ?? service.priceOnRequest;
     const title = dto.title ?? service.title;
-    const description = dto.description !== undefined ? dto.description : service.description;
+    const description =
+      dto.description !== undefined ? dto.description : service.description;
     const price =
       dto.price !== undefined
-        ? (priceOnRequest ? null : dto.price || null)
-        : (priceOnRequest ? null : service.price);
+        ? priceOnRequest
+          ? null
+          : dto.price || null
+        : priceOnRequest
+          ? null
+          : service.price;
 
     if (!priceOnRequest && (!price || price.trim() === '')) {
       throw new BadRequestException(
@@ -1213,14 +1267,17 @@ export class PartnerService {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
     const cityLabel = this.formatHouseCityLabel(params.city);
-    const businessTypeLabel = this.formatHouseBusinessTypeLabel(params.businessType);
+    const businessTypeLabel = this.formatHouseBusinessTypeLabel(
+      params.businessType,
+    );
     const entrada = this.formatHouseEntradaShortLine(
       params.caucoesCount,
       params.rendasEntradaCount,
     );
     const fee = params.relocationFeeEur.trim();
     const mobilado = params.furnished ? 'Sim' : 'Não';
-    const priceLabel = params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
+    const priceLabel =
+      params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
     const priceValue = `${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`;
     const frontendBase = getFrontendBaseUrl();
     /** Sem `https://` para o WhatsApp não gerar preview com metadados no grupo. */
@@ -1371,8 +1428,7 @@ export class PartnerService {
     }
     if (!isHousePubliclyVisible(house)) {
       const allowed =
-        viewer &&
-        (await this.canViewNonPublicHouse(viewer, house.partnerId));
+        viewer && (await this.canViewNonPublicHouse(viewer, house.partnerId));
       if (!allowed) {
         throw new NotFoundException('Imóvel não encontrado.');
       }
@@ -1425,7 +1481,8 @@ export class PartnerService {
     const frontendBase = getFrontendBaseUrl();
     const successUrl =
       dto.successUrl ?? `${frontendBase}/dashboard/casas?topup=success`;
-    const cancelUrl = dto.cancelUrl ?? `${frontendBase}/dashboard/casas?topup=cancel`;
+    const cancelUrl =
+      dto.cancelUrl ?? `${frontendBase}/dashboard/casas?topup=cancel`;
     return this.stripeService.createPartnerAdvertisingTopupCheckout({
       partnerUserId: userId,
       partnerId: partner.id,
@@ -1515,9 +1572,7 @@ export class PartnerService {
     };
   }
 
-  private partnerHouseCreatePayloadFromStrictDto(
-    dto: CreatePartnerHouseDto,
-  ): {
+  private partnerHouseCreatePayloadFromStrictDto(dto: CreatePartnerHouseDto): {
     title: string;
     description: string;
     businessType: HouseBusinessType;
@@ -1545,13 +1600,18 @@ export class PartnerService {
       priceEur: dto.priceEur.trim(),
       relocationFeeEur: dto.relocationFeeEur.trim(),
       caucoesCount: Math.min(12, Math.max(0, parseInt(dto.caucoesCount, 10))),
-      rendasEntradaCount: Math.min(12, Math.max(0, parseInt(dto.rendasEntradaCount, 10))),
+      rendasEntradaCount: Math.min(
+        12,
+        Math.max(0, parseInt(dto.rendasEntradaCount, 10)),
+      ),
       furnished: dto.furnished === 'true',
       coverImageIndex: dto.coverImageIndex,
     };
   }
 
-  private partnerHouseCreatePayloadFromAdminDto(dto: AdminCreatePartnerHouseDto): {
+  private partnerHouseCreatePayloadFromAdminDto(
+    dto: AdminCreatePartnerHouseDto,
+  ): {
     title: string;
     description: string;
     businessType: HouseBusinessType;
@@ -1588,7 +1648,9 @@ export class PartnerService {
     return {
       title: (dto.title ?? '').trim() || 'Sem título',
       description: (dto.description ?? '').trim() || '—',
-      businessType: (dto.businessType === 'SALE' ? 'SALE' : 'RENT') as HouseBusinessType,
+      businessType: (dto.businessType === 'SALE'
+        ? 'SALE'
+        : 'RENT') as HouseBusinessType,
       typology,
       city: normalizeRelocationCityForAdminStorage(dto.city),
       availableFrom,
@@ -1610,8 +1672,12 @@ export class PartnerService {
     options: { strict: boolean },
   ) {
     const payload = options.strict
-      ? this.partnerHouseCreatePayloadFromStrictDto(dto as CreatePartnerHouseDto)
-      : this.partnerHouseCreatePayloadFromAdminDto(dto as AdminCreatePartnerHouseDto);
+      ? this.partnerHouseCreatePayloadFromStrictDto(
+          dto as CreatePartnerHouseDto,
+        )
+      : this.partnerHouseCreatePayloadFromAdminDto(
+          dto as AdminCreatePartnerHouseDto,
+        );
 
     const images = (imageFiles ?? []).filter((f) => !!f);
     const hasVideo = !!videoFile;
@@ -1622,13 +1688,14 @@ export class PartnerService {
       throw new BadRequestException('Envia pelo menos 1 imagem ou 1 vídeo.');
     }
 
-    let imageUrls: string[] = [];
+    const imageUrls: string[] = [];
     let videoUrl: string | null = null;
     let videoPosterUrl: string | null = null;
 
     for (const file of images) {
       try {
-        const { publicUrl } = await this.houseImages.processHouseImageForListing(file);
+        const { publicUrl } =
+          await this.houseImages.processHouseImageForListing(file);
         imageUrls.push(publicUrl);
         if (file.path) {
           await unlink(file.path).catch(() => undefined);
@@ -1647,10 +1714,7 @@ export class PartnerService {
       const raw = payload.coverImageIndex?.trim();
       const idx =
         raw != null && raw !== ''
-          ? Math.min(
-              Math.max(0, parseInt(raw, 10)),
-              imageUrls.length - 1,
-            )
+          ? Math.min(Math.max(0, parseInt(raw, 10)), imageUrls.length - 1)
           : 0;
       coverImageUrl = imageUrls[idx]!;
     }
@@ -1664,7 +1728,11 @@ export class PartnerService {
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes('inválido') || msg.includes('suportado') || msg.includes('Formato')) {
+        if (
+          msg.includes('inválido') ||
+          msg.includes('suportado') ||
+          msg.includes('Formato')
+        ) {
           throw new BadRequestException(msg);
         }
         throw e;
@@ -1674,7 +1742,8 @@ export class PartnerService {
     // Thumbnail manual (admin): guardada em `videoPosterUrl` para uso nos cards/listas.
     if (thumbnailFile) {
       try {
-        const { publicUrl } = await this.houseImages.processHouseImageForListing(thumbnailFile);
+        const { publicUrl } =
+          await this.houseImages.processHouseImageForListing(thumbnailFile);
         videoPosterUrl = publicUrl;
         if (thumbnailFile.path) {
           await unlink(thumbnailFile.path).catch(() => undefined);
@@ -1720,9 +1789,16 @@ export class PartnerService {
     thumbnailFile: Express.Multer.File | null,
   ) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
-    return this.createHousePostForPartner(partner.id, dto, imageFiles, videoFile, thumbnailFile, {
-      strict: true,
-    });
+    return this.createHousePostForPartner(
+      partner.id,
+      dto,
+      imageFiles,
+      videoFile,
+      thumbnailFile,
+      {
+        strict: true,
+      },
+    );
   }
 
   async adminCreateHousePost(
@@ -1750,11 +1826,73 @@ export class PartnerService {
       }
       partnerId = assigned.id;
     } else {
-      const partner = await this.getOrCreateRelocationPartnerForAdmin(adminUserId);
+      const partner =
+        await this.getOrCreateRelocationPartnerForAdmin(adminUserId);
       partnerId = partner.id;
     }
 
-    return this.createHousePostForPartner(partnerId, dto, imageFiles, videoFile, thumbnailFile, {
+    return this.createHousePostForPartner(
+      partnerId,
+      dto,
+      imageFiles,
+      videoFile,
+      thumbnailFile,
+      {
+        strict: false,
+      },
+    );
+  }
+
+  /**
+   * Cria um imóvel rascunho (HIDDEN, sem ficheiros) a partir dos dados extraídos por IA de uma
+   * mensagem de WhatsApp (feature "Whatsapp scan"). Valida que o parceiro existe e é relocation.
+   * Reutiliza a normalização do caminho admin (`strict: false`).
+   */
+  async createDraftHouseFromScan(input: {
+    partnerId: string;
+    title: string;
+    description: string;
+    businessType?: 'RENT' | 'SALE';
+    typology?: string;
+    city?: string;
+    availableFrom?: string | null;
+    priceEur?: string;
+    relocationFeeEur?: string;
+    caucoesCount?: number;
+    rendasEntradaCount?: number;
+    furnished?: boolean;
+  }) {
+    const partner = await this.prisma.partner.findFirst({
+      where: { id: input.partnerId, categorySlug: RELOCATION_CATEGORY_SLUG },
+      select: { id: true },
+    });
+    if (!partner) {
+      throw new BadRequestException(
+        'Parceiro não encontrado ou não pertence à categoria Relocation.',
+      );
+    }
+
+    const dto: AdminCreatePartnerHouseDto = {
+      title: input.title,
+      description: input.description,
+      businessType: input.businessType,
+      typology: input.typology,
+      city: input.city,
+      availableFrom: input.availableFrom ?? undefined,
+      priceEur: input.priceEur,
+      relocationFeeEur: input.relocationFeeEur,
+      caucoesCount:
+        typeof input.caucoesCount === 'number'
+          ? String(input.caucoesCount)
+          : undefined,
+      rendasEntradaCount:
+        typeof input.rendasEntradaCount === 'number'
+          ? String(input.rendasEntradaCount)
+          : undefined,
+      furnished: input.furnished ? 'true' : 'false',
+    };
+
+    return this.createHousePostForPartner(partner.id, dto, [], null, null, {
       strict: false,
     });
   }
@@ -1775,16 +1913,28 @@ export class PartnerService {
     const partner = await this.getRelocationPartnerOrThrow(userId);
     const house = await this.prisma.partnerHouse.findFirst({
       where: { id: houseId, partnerId: partner.id },
-      select: { id: true, imageUrls: true, videoUrl: true, videoPosterUrl: true } as any,
+      select: {
+        id: true,
+        imageUrls: true,
+        videoUrl: true,
+        videoPosterUrl: true,
+      } as any,
     });
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
     await this.removeHouseMediaFiles({
-      imageUrls: Array.isArray((house as any).imageUrls) ? (house as any).imageUrls : [],
-      videoUrl: typeof (house as any).videoUrl === 'string' ? (house as any).videoUrl : null,
+      imageUrls: Array.isArray((house as any).imageUrls)
+        ? (house as any).imageUrls
+        : [],
+      videoUrl:
+        typeof (house as any).videoUrl === 'string'
+          ? (house as any).videoUrl
+          : null,
       videoPosterUrl:
-        typeof (house as any).videoPosterUrl === 'string' ? (house as any).videoPosterUrl : null,
+        typeof (house as any).videoPosterUrl === 'string'
+          ? (house as any).videoPosterUrl
+          : null,
     });
     await this.prisma.partnerHouse.delete({ where: { id: houseId } });
     return { ok: true as const };
@@ -1805,7 +1955,14 @@ export class PartnerService {
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
-    return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile, thumbnailFile);
+    return this.applyHouseListingUpdate(
+      house,
+      houseId,
+      dto,
+      imageFiles,
+      videoFile,
+      thumbnailFile,
+    );
   }
 
   /** Admin: carregar qualquer anúncio para edição. */
@@ -1860,14 +2017,23 @@ export class PartnerService {
         }
         partnerIdOpt = assigned.id;
       } else {
-        const partner = await this.getOrCreateRelocationPartnerForAdmin(adminUserId);
+        const partner =
+          await this.getOrCreateRelocationPartnerForAdmin(adminUserId);
         partnerIdOpt = partner.id;
       }
     }
 
-    return this.applyHouseListingUpdate(house, houseId, dto, imageFiles, videoFile, thumbnailFile, {
-      partnerId: partnerIdOpt,
-    });
+    return this.applyHouseListingUpdate(
+      house,
+      houseId,
+      dto,
+      imageFiles,
+      videoFile,
+      thumbnailFile,
+      {
+        partnerId: partnerIdOpt,
+      },
+    );
   }
 
   private async applyHouseListingUpdate(
@@ -1881,13 +2047,16 @@ export class PartnerService {
   ) {
     const images = (imageFiles ?? []).filter((f) => !!f);
     if (images.length > 6) {
-      throw new BadRequestException('Podes enviar no máximo 6 imagens de uma vez.');
+      throw new BadRequestException(
+        'Podes enviar no máximo 6 imagens de uma vez.',
+      );
     }
 
     const newUrlsFromFiles: string[] = [];
     for (const file of images) {
       try {
-        const { publicUrl } = await this.houseImages.processHouseImageForListing(file);
+        const { publicUrl } =
+          await this.houseImages.processHouseImageForListing(file);
         newUrlsFromFiles.push(publicUrl);
         if (file.path) {
           await unlink(file.path).catch(() => undefined);
@@ -1913,8 +2082,13 @@ export class PartnerService {
           'keepImageUrls deve ser JSON válido (array de URLs).',
         );
       }
-      if (!Array.isArray(parsed) || !parsed.every((u) => typeof u === 'string')) {
-        throw new BadRequestException('keepImageUrls deve ser um array de strings (URLs).');
+      if (
+        !Array.isArray(parsed) ||
+        !parsed.every((u) => typeof u === 'string')
+      ) {
+        throw new BadRequestException(
+          'keepImageUrls deve ser um array de strings (URLs).',
+        );
       }
       for (const u of parsed) {
         if (!house.imageUrls.includes(u)) {
@@ -1937,7 +2111,10 @@ export class PartnerService {
     }
 
     let videoUrl = house.videoUrl;
-    let videoPosterUrl = (house as any).videoPosterUrl as string | null | undefined;
+    let videoPosterUrl = (house as any).videoPosterUrl as
+      | string
+      | null
+      | undefined;
     if (videoPosterUrl === undefined) videoPosterUrl = null;
     if (dto.removeVideo?.toLowerCase() === 'true') {
       if (videoUrl) {
@@ -1957,7 +2134,11 @@ export class PartnerService {
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes('inválido') || msg.includes('suportado') || msg.includes('Formato')) {
+        if (
+          msg.includes('inválido') ||
+          msg.includes('suportado') ||
+          msg.includes('Formato')
+        ) {
           throw new BadRequestException(msg);
         }
         throw e;
@@ -1970,7 +2151,8 @@ export class PartnerService {
         await this.houseImages.deleteStoredUrl(videoPosterUrl);
       }
       try {
-        const { publicUrl } = await this.houseImages.processHouseImageForListing(thumbnailFile);
+        const { publicUrl } =
+          await this.houseImages.processHouseImageForListing(thumbnailFile);
         videoPosterUrl = publicUrl;
         if (thumbnailFile.path) {
           await unlink(thumbnailFile.path).catch(() => undefined);
@@ -1985,7 +2167,9 @@ export class PartnerService {
     }
 
     if (imageUrls.length === 0 && !videoUrl) {
-      throw new BadRequestException('O anúncio deve ter pelo menos 1 imagem ou 1 vídeo.');
+      throw new BadRequestException(
+        'O anúncio deve ter pelo menos 1 imagem ou 1 vídeo.',
+      );
     }
 
     if (dto.availableFrom != null) {
@@ -2009,16 +2193,16 @@ export class PartnerService {
     let coverImageUrl: string | null = house.coverImageUrl;
     if (imageUrls.length === 0) {
       coverImageUrl = null;
-    } else if (dto.coverImageIndex != null && dto.coverImageIndex.trim() !== '') {
+    } else if (
+      dto.coverImageIndex != null &&
+      dto.coverImageIndex.trim() !== ''
+    ) {
       const idx = Math.min(
         Math.max(0, parseInt(dto.coverImageIndex.trim(), 10)),
         imageUrls.length - 1,
       );
       coverImageUrl = imageUrls[idx]!;
-    } else if (
-      house.coverImageUrl &&
-      imageUrls.includes(house.coverImageUrl)
-    ) {
+    } else if (house.coverImageUrl && imageUrls.includes(house.coverImageUrl)) {
       coverImageUrl = house.coverImageUrl;
     } else {
       coverImageUrl = imageUrls[0]!;
@@ -2174,8 +2358,8 @@ export class PartnerService {
     filteredByPrice.sort((a, b) => {
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
       return (
-        new Date(b.availableFrom as any).getTime() -
-        new Date(a.availableFrom as any).getTime()
+        new Date(b.availableFrom).getTime() -
+        new Date(a.availableFrom).getTime()
       );
     });
 
@@ -2191,7 +2375,9 @@ export class PartnerService {
     });
   }
 
-  async adminCreateHouseRelocationWhatsappGroup(dto: CreateHouseRelocationWhatsappGroupDto) {
+  async adminCreateHouseRelocationWhatsappGroup(
+    dto: CreateHouseRelocationWhatsappGroupDto,
+  ) {
     const name = dto.name.trim();
     const groupJid = dto.groupJid.trim();
     const agg = await this.prisma.houseRelocationWhatsappGroup.aggregate({
@@ -2313,7 +2499,11 @@ export class PartnerService {
 
       if (options.chargePartner) {
         const balance = await this.advertising.getBalance(house.partnerId);
-        return { ...result, publishedUntil, balanceEurCents: balance.balanceEurCents };
+        return {
+          ...result,
+          publishedUntil,
+          balanceEurCents: balance.balanceEurCents,
+        };
       }
 
       return { ...result, publishedUntil };
@@ -2481,16 +2671,28 @@ export class PartnerService {
   async adminDeleteHouse(houseId: string) {
     const house = await this.prisma.partnerHouse.findUnique({
       where: { id: houseId },
-      select: { id: true, imageUrls: true, videoUrl: true, videoPosterUrl: true } as any,
+      select: {
+        id: true,
+        imageUrls: true,
+        videoUrl: true,
+        videoPosterUrl: true,
+      } as any,
     });
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
     await this.removeHouseMediaFiles({
-      imageUrls: Array.isArray((house as any).imageUrls) ? (house as any).imageUrls : [],
-      videoUrl: typeof (house as any).videoUrl === 'string' ? (house as any).videoUrl : null,
+      imageUrls: Array.isArray((house as any).imageUrls)
+        ? (house as any).imageUrls
+        : [],
+      videoUrl:
+        typeof (house as any).videoUrl === 'string'
+          ? (house as any).videoUrl
+          : null,
       videoPosterUrl:
-        typeof (house as any).videoPosterUrl === 'string' ? (house as any).videoPosterUrl : null,
+        typeof (house as any).videoPosterUrl === 'string'
+          ? (house as any).videoPosterUrl
+          : null,
     });
     await this.prisma.partnerHouse.delete({ where: { id: houseId } });
     return { ok: true as const };
@@ -2583,7 +2785,9 @@ export class PartnerService {
       select: { id: true, commissionPaymentStatus: true },
     });
     if (!sale) throw new NotFoundException('Venda não encontrada.');
-    if (sale.commissionPaymentStatus === PartnerSaleCommissionPaymentStatus.PAID) {
+    if (
+      sale.commissionPaymentStatus === PartnerSaleCommissionPaymentStatus.PAID
+    ) {
       throw new BadRequestException('Não é possível apagar uma venda já paga.');
     }
     await this.prisma.partnerSale.delete({ where: { id: sale.id } });
@@ -2618,13 +2822,18 @@ export class PartnerService {
       include: { service: { select: { rpmCommissionEur: true } } },
     });
     if (!sale) throw new NotFoundException('Venda não encontrada.');
-    if (sale.commissionPaymentStatus === PartnerSaleCommissionPaymentStatus.PAID) {
+    if (
+      sale.commissionPaymentStatus === PartnerSaleCommissionPaymentStatus.PAID
+    ) {
       throw new BadRequestException('Esta comissão já foi paga.');
     }
 
     const commission = params.commissionEur.trim();
-    if (!commission) throw new BadRequestException('Valor da comissão é obrigatório.');
-    const commissionCents = Math.round(Number(commission.replace(',', '.')) * 100);
+    if (!commission)
+      throw new BadRequestException('Valor da comissão é obrigatório.');
+    const commissionCents = Math.round(
+      Number(commission.replace(',', '.')) * 100,
+    );
     if (!Number.isFinite(commissionCents) || commissionCents <= 0) {
       throw new BadRequestException('Valor da comissão inválido.');
     }
@@ -2643,27 +2852,38 @@ export class PartnerService {
     await this.prisma.partnerSale.update({
       where: { id: sale.id },
       data: {
-        commissionSuggestedEur: sale.commissionSuggestedEur ?? sale.service.rpmCommissionEur ?? null,
+        commissionSuggestedEur:
+          sale.commissionSuggestedEur ?? sale.service.rpmCommissionEur ?? null,
         commissionPaidEur: commission,
         wantsInvoice: params.wantsInvoice,
-        invoiceName: params.wantsInvoice ? partnerBilling?.billingName ?? null : null,
-        invoiceNif: params.wantsInvoice ? partnerBilling?.billingNif ?? null : null,
-        invoiceAddress: params.wantsInvoice ? partnerBilling?.billingAddress ?? null : null,
-        invoicePostalCode: params.wantsInvoice ? partnerBilling?.billingPostalCode ?? null : null,
+        invoiceName: params.wantsInvoice
+          ? (partnerBilling?.billingName ?? null)
+          : null,
+        invoiceNif: params.wantsInvoice
+          ? (partnerBilling?.billingNif ?? null)
+          : null,
+        invoiceAddress: params.wantsInvoice
+          ? (partnerBilling?.billingAddress ?? null)
+          : null,
+        invoicePostalCode: params.wantsInvoice
+          ? (partnerBilling?.billingPostalCode ?? null)
+          : null,
         invoiceRequestedAt: params.wantsInvoice ? new Date() : null,
       },
     });
 
     const session =
       params.method === 'mbway'
-        ? await this.stripeService.createPartnerSaleCommissionMbWayCheckoutSession({
-            saleId: sale.id,
-            partnerUserId: params.partnerUserId,
-            partnerEmail: params.partnerEmail,
-            commissionEurCents: commissionCents,
-            successUrl: params.successUrl,
-            cancelUrl: params.cancelUrl,
-          })
+        ? await this.stripeService.createPartnerSaleCommissionMbWayCheckoutSession(
+            {
+              saleId: sale.id,
+              partnerUserId: params.partnerUserId,
+              partnerEmail: params.partnerEmail,
+              commissionEurCents: commissionCents,
+              successUrl: params.successUrl,
+              cancelUrl: params.cancelUrl,
+            },
+          )
         : await this.stripeService.createPartnerSaleCommissionCheckoutSession({
             saleId: sale.id,
             partnerUserId: params.partnerUserId,
@@ -2683,4 +2903,3 @@ export class PartnerService {
 
   // Endpoints admin/services removidos (sem aprovação e sem comissão/cashback).
 }
-

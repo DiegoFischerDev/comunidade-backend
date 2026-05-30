@@ -30,7 +30,11 @@ import { PartnerContactLinksService } from './partner-contact-links.service';
     PartnerHousePublicationExpiryTask,
     PartnerContactLinksService,
   ],
-  exports: [HouseImageStorageService, PartnerAdvertisingService, PartnerContactLinksService],
+  exports: [
+    PartnerService,
+    HouseImageStorageService,
+    PartnerAdvertisingService,
+    PartnerContactLinksService,
+  ],
 })
 export class PartnerModule {}
-

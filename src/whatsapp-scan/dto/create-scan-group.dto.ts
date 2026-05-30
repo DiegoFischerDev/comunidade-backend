@@ -1,0 +1,34 @@
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
+
+export class CreateScanGroupDto {
+  @IsString()
+  @MinLength(1, { message: 'Indica o parceiro.' })
+  partnerId!: string;
+
+  @IsString()
+  @Matches(/@g\.us$/i, {
+    message: 'JID do grupo inválido (deve terminar em @g.us).',
+  })
+  @MaxLength(120)
+  groupJid!: string;
+
+  /** Números (apenas dígitos) a monitorizar. Vazio = monitoriza todos. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  monitoredNumbers?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}

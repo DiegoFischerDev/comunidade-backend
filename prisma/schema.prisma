@@ -101,6 +101,15 @@ enum PartnerHouseBusinessType {
   SALE
 }
 
+/// Estado do processamento de uma mensagem capturada num grupo monitorizado (Whatsapp scan).
+enum WhatsappScanMessageStatus {
+  received
+  ignored_sender
+  ignored_not_listing
+  created
+  error
+}
+
 enum RedirectClickKind {
   CUSTOM_LINK
   HOUSE
@@ -516,6 +525,8 @@ model Partner {
   /// Leads atribuídos a este parceiro (round-robin total-time entre parceiros da categoria
   /// `financiamento`). Ver `LeadsService.createForFinancingQuiz`.
   leads                    Lead[]
+  /// Grupos de WhatsApp monitorizados cujos anúncios são atribuídos a este parceiro (Whatsapp scan).
+  whatsappScanGroups       WhatsappScanGroup[]
   /// Link rastreado do botão «Entre em contato» na hero da página pública.
   heroShareLinkId          String?                         @unique @map("hero_share_link_id")
   heroShareLink            PartnerShareLink?               @relation("PartnerHeroShareLink", fields: [heroShareLinkId], references: [id], onDelete: SetNull)
@@ -527,28 +538,28 @@ model Partner {
 /// `/leads/{id}/documentos` (ver `LeadDocumentSubmission`). Sem máquina de estados —
 /// listagem cronológica simples no dashboard do parceiro.
 model Lead {
-  id          String                    @id @default(cuid())
+  id            String                   @id @default(cuid())
   /// ID público numérico para exibição no dashboard (6 dígitos).
-  publicId    Int                       @unique @default(dbgenerated("nextval('\"leads_public_id_seq\"'::regclass)")) @map("public_id")
-  name        String
-  whatsapp    String
-  email       String
+  publicId      Int                      @unique @default(dbgenerated("nextval('\"leads_public_id_seq\"'::regclass)")) @map("public_id")
+  name          String
+  whatsapp      String
+  email         String
   /// Conteúdo completo (resumo do quiz + classificação + respostas detalhadas) usado no email
   /// enviado ao parceiro e ao lead.
-  comment     String?                   @db.Text
+  comment       String?                  @db.Text
   /// Chave da classificação retornada pelo motor do quiz (ex.: `outcomeOk`, `notNow`, ...).
-  outcomeKey  String?                   @map("outcome_key")
-  partnerId   String                    @map("partner_id")
-  partner     Partner                   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  outcomeKey    String?                  @map("outcome_key")
+  partnerId     String                   @map("partner_id")
+  partner       Partner                  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   /// Timestamp do primeiro envio de documentos (qualquer modo). `null` = ainda não enviou.
   /// Usamos isto para destacar no dashboard «Meus leads» quem já entregou docs.
-  docsSentAt  DateTime?                 @map("docs_sent_at")
+  docsSentAt    DateTime?                @map("docs_sent_at")
   /// Status operacional da gestora para este lead.
-  status      LeadGestoraStatus?        @map("status")
+  status        LeadGestoraStatus?       @map("status")
   /// Agenda da gestora: quando deve ser feito o próximo contacto (UTC). `null` = sem agendamento.
-  nextContactAt DateTime?               @map("next_contact_at")
-  createdAt   DateTime                  @default(now()) @map("created_at")
-  submissions LeadDocumentSubmission[]
+  nextContactAt DateTime?                @map("next_contact_at")
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  submissions   LeadDocumentSubmission[]
 
   @@index([partnerId, createdAt])
   @@index([partnerId, nextContactAt])
@@ -797,6 +808,52 @@ model HouseRelocationWhatsappGroup {
 
   @@index([active, businessType, sortOrder])
   @@map("house_relocation_whatsapp_groups")
+}
+
+/// Grupo de WhatsApp monitorizado (Whatsapp scan). Mensagens recebidas neste grupo (opcionalmente
+/// filtradas por números específicos) são enviadas à OpenAI para identificar anúncios de imóveis e,
+/// quando positivas, criam um imóvel rascunho (HIDDEN) atribuído ao parceiro relocation indicado.
+model WhatsappScanGroup {
+  id               String   @id @default(cuid())
+  /// Parceiro (categoria `relocation`) a quem os imóveis identificados serão atribuídos.
+  partnerId        String   @map("partner_id")
+  partner          Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  /// JID do grupo (ex.: 120363...@g.us).
+  groupJid         String   @unique @map("group_jid")
+  /// Números (apenas dígitos) cujas mensagens são monitorizadas. Vazio = monitoriza todos.
+  monitoredNumbers String[] @default([]) @map("monitored_numbers")
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  messages WhatsappScanMessage[]
+
+  @@index([partnerId])
+  @@map("whatsapp_scan_groups")
+}
+
+/// Histórico/log de cada mensagem capturada num grupo monitorizado e o resultado do processamento.
+model WhatsappScanMessage {
+  id                String                    @id @default(cuid())
+  groupId           String                    @map("group_id")
+  group             WhatsappScanGroup         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /// Número (apenas dígitos) que enviou a mensagem.
+  senderNumber      String                    @map("sender_number")
+  /// ID da mensagem na Evolution (para deduplicação em reentregas do webhook).
+  externalMessageId String?                   @unique @map("external_message_id")
+  /// Texto bruto da mensagem capturada.
+  rawText           String                    @db.Text
+  status            WhatsappScanMessageStatus @default(received)
+  /// JSON devolvido pela OpenAI (classificação + campos extraídos).
+  parsedJson        Json?                     @map("parsed_json")
+  /// Imóvel criado (rascunho) a partir desta mensagem, se aplicável.
+  createdHouseId    String?                   @map("created_house_id")
+  /// Mensagem de erro, quando `status = error`.
+  error             String?                   @db.Text
+  createdAt         DateTime                  @default(now()) @map("created_at")
+
+  @@index([groupId, createdAt])
+  @@map("whatsapp_scan_messages")
 }
 
 /// Serviços oferecidos por um parceiro. A antiga FK `categoryId` (para `ProductCategory`)
