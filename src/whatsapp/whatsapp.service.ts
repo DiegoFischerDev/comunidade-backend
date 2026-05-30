@@ -271,6 +271,110 @@ export class WhatsAppService {
     return null;
   }
 
+  /** Instância principal (`EVOLUTION_INSTANCE`). */
+  getPrimaryInstanceName(): string {
+    const primary = (process.env.EVOLUTION_INSTANCE || 'comunidade').trim();
+    return primary || 'comunidade';
+  }
+
+  private normalizeEvolutionGroupsPayload(data: unknown): unknown[] {
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object') {
+      const o = data as Record<string, unknown>;
+      if (Array.isArray(o.groups)) return o.groups;
+      if (Array.isArray(o.data)) return o.data;
+      if (Array.isArray(o.response)) return o.response;
+    }
+    return [];
+  }
+
+  private parseEvolutionGroupItem(
+    item: unknown,
+  ): { groupJid: string; title: string } | null {
+    if (!item || typeof item !== 'object') return null;
+    const o = item as Record<string, unknown>;
+    const jidRaw = o.id ?? o.jid ?? o.groupJid;
+    if (typeof jidRaw !== 'string' || !/@g\.us$/i.test(jidRaw.trim())) {
+      return null;
+    }
+    const groupJid = jidRaw.trim();
+    const subject = o.subject ?? o.name ?? o.subjectName;
+    const title =
+      typeof subject === 'string' && subject.trim().length > 0
+        ? subject.trim()
+        : '';
+    return { groupJid, title };
+  }
+
+  private groupJidShortLabel(groupJid: string): string {
+    const id = groupJid.replace(/@g\.us$/i, '');
+    return id.length > 16 ? `${id.slice(0, 16)}…` : id;
+  }
+
+  /**
+   * Lista grupos WhatsApp em que a instância participa (`GET /group/fetchAllGroups`).
+   * Grupos sem subject na resposta são enriquecidos com `findGroupInfos` (best-effort).
+   */
+  async fetchInstanceGroups(
+    instance?: string,
+  ): Promise<{ groupJid: string; title: string }[]> {
+    const base = this.base;
+    const key = this.key;
+    const inst = (instance || this.getPrimaryInstanceName()).trim();
+    if (!base || !key || !inst) return [];
+
+    const signal = this.evolutionRequestSignal('default');
+    try {
+      const res = await fetch(
+        `${base}/group/fetchAllGroups/${encodeURIComponent(inst)}?getParticipants=false`,
+        {
+          method: 'GET',
+          headers: { apikey: key },
+          ...(signal ? { signal } : {}),
+        },
+      );
+      if (!res.ok) {
+        this.logger.warn(
+          `fetchAllGroups ${inst} respondeu ${res.status}`,
+        );
+        return [];
+      }
+      const data: unknown = await res.json().catch(() => null);
+      const raw = this.normalizeEvolutionGroupsPayload(data);
+      const parsed: { groupJid: string; title: string }[] = [];
+      const seen = new Set<string>();
+      for (const item of raw) {
+        const g = this.parseEvolutionGroupItem(item);
+        if (!g || seen.has(g.groupJid)) continue;
+        seen.add(g.groupJid);
+        parsed.push(g);
+      }
+
+      const missing = parsed.filter((g) => !g.title);
+      const enrichBatch = 8;
+      for (let i = 0; i < missing.length; i += enrichBatch) {
+        const chunk = missing.slice(i, i + enrichBatch);
+        await Promise.all(
+          chunk.map(async (g) => {
+            const subject = await this.getGroupSubject(g.groupJid, inst);
+            g.title = subject || this.groupJidShortLabel(g.groupJid);
+          }),
+        );
+      }
+      for (const g of parsed) {
+        if (!g.title) g.title = this.groupJidShortLabel(g.groupJid);
+      }
+
+      return parsed.sort((a, b) =>
+        a.title.localeCompare(b.title, 'pt-PT', { sensitivity: 'base' }),
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`fetchAllGroups falhou (${inst}): ${msg}`);
+      return [];
+    }
+  }
+
   private contactJidFromDigits(digits: string): string {
     const n = digits.replace(/\D/g, '');
     return n ? `${n}@s.whatsapp.net` : '';

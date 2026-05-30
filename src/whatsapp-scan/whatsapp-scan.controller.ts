@@ -58,6 +58,12 @@ export class WhatsappScanController {
   }
 
   /** Busca o nome (subject) do grupo na Evolution a partir do JID. */
+  @Get('evolution-groups')
+  @Roles(Role.ADMIN)
+  evolutionGroups() {
+    return this.service.listEvolutionGroups();
+  }
+
   @Get('group-subject')
   @Roles(Role.ADMIN)
   groupSubject(@Query('groupJid') groupJid: string) {
