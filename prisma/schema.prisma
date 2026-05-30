@@ -827,6 +827,8 @@ model WhatsappScanGroup {
   /// Parceiro (categoria `relocation`) a quem os imóveis identificados serão atribuídos.
   partnerId        String   @map("partner_id")
   partner          Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  /// Título do grupo (apenas para identificação no painel; opcional).
+  title            String?
   /// JID do grupo (ex.: 120363...@g.us).
   groupJid         String   @unique @map("group_jid")
   /// Números (apenas dígitos) cujas mensagens são monitorizadas. Vazio = monitoriza todos.

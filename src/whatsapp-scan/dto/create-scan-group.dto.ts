@@ -14,6 +14,11 @@ export class CreateScanGroupDto {
   @MinLength(1, { message: 'Indica o parceiro.' })
   partnerId!: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  title?: string;
+
   @IsString()
   @Matches(/@g\.us$/i, {
     message: 'JID do grupo inválido (deve terminar em @g.us).',

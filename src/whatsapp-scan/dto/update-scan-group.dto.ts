@@ -15,6 +15,11 @@ export class UpdateScanGroupDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(160)
+  title?: string;
+
+  @IsOptional()
+  @IsString()
   @Matches(/@g\.us$/i, {
     message: 'JID do grupo inválido (deve terminar em @g.us).',
   })

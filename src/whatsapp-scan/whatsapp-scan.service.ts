@@ -123,6 +123,7 @@ export class WhatsappScanService {
         id: r.id,
         partnerId: r.partnerId,
         partner: r.partner,
+        title: r.title,
         groupJid: r.groupJid,
         monitoredNumbers: r.monitoredNumbers,
         active: r.active,
@@ -162,14 +163,33 @@ export class WhatsappScanService {
       );
     }
 
+    // Sem título informado: tenta obter o nome do grupo na Evolution (best-effort).
+    let title = dto.title?.trim() || null;
+    if (!title) {
+      title = await this.whatsapp.getGroupSubject(groupJid);
+    }
+
     return this.prisma.whatsappScanGroup.create({
       data: {
         partnerId: dto.partnerId,
+        title,
         groupJid,
         monitoredNumbers,
         active: dto.active ?? true,
       },
     });
+  }
+
+  /** Obtém o nome do grupo na Evolution a partir do JID (para preencher o título no painel). */
+  async fetchGroupSubject(groupJid: string): Promise<{ subject: string | null }> {
+    const jid = (groupJid || '').trim();
+    if (!/@g\.us$/i.test(jid)) {
+      throw new BadRequestException(
+        'JID do grupo inválido (deve terminar em @g.us).',
+      );
+    }
+    const subject = await this.whatsapp.getGroupSubject(jid);
+    return { subject };
   }
 
   async updateGroup(id: string, dto: UpdateScanGroupDto) {
@@ -183,6 +203,9 @@ export class WhatsappScanService {
     if (typeof dto.partnerId === 'string') {
       await this.assertRelocationPartner(dto.partnerId);
       data.partner = { connect: { id: dto.partnerId } };
+    }
+    if (typeof dto.title === 'string') {
+      data.title = dto.title.trim() || null;
     }
     if (typeof dto.groupJid === 'string') {
       const groupJid = dto.groupJid.trim();

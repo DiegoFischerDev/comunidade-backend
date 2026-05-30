@@ -54,6 +54,13 @@ export class WhatsappScanController {
     return this.service.listMessages(groupId);
   }
 
+  /** Busca o nome (subject) do grupo na Evolution a partir do JID. */
+  @Get('group-subject')
+  @Roles(Role.ADMIN)
+  groupSubject(@Query('groupJid') groupJid: string) {
+    return this.service.fetchGroupSubject(groupJid ?? '');
+  }
+
   // ===== Ingest interno (chamado pelo receiver whatsapp-evolution-verify) =====
 
   /**

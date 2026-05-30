@@ -220,6 +220,57 @@ export class WhatsAppService {
     return null;
   }
 
+  /**
+   * Obtém o nome (subject) de um grupo via Evolution (`GET /group/findGroupInfos`).
+   * Tenta a instância indicada e depois as restantes; devolve null se não conseguir.
+   */
+  async getGroupSubject(
+    groupJid: string,
+    instance?: string,
+  ): Promise<string | null> {
+    const base = this.base;
+    const key = this.key;
+    const jid = (groupJid || '').trim();
+    if (!base || !key || !jid) return null;
+
+    const preferred = (instance || '').trim();
+    const all = this.instancesOrdered;
+    const attempts =
+      preferred && !all.includes(preferred)
+        ? [preferred, ...all]
+        : preferred
+          ? [preferred, ...all.filter((i) => i !== preferred)]
+          : all;
+
+    const signal = this.evolutionRequestSignal('default');
+    for (const inst of attempts) {
+      try {
+        const res = await fetch(
+          `${base}/group/findGroupInfos/${inst}?groupJid=${encodeURIComponent(
+            jid,
+          )}`,
+          {
+            method: 'GET',
+            headers: { apikey: key },
+            ...(signal ? { signal } : {}),
+          },
+        );
+        if (!res.ok) continue;
+        const data: unknown = await res.json().catch(() => null);
+        const subject =
+          data && typeof data === 'object'
+            ? (data as { subject?: unknown }).subject
+            : undefined;
+        if (typeof subject === 'string' && subject.trim().length > 0) {
+          return subject.trim();
+        }
+      } catch {
+        // tenta a próxima instância
+      }
+    }
+    return null;
+  }
+
   async sendText(
     toDigits: string,
     text: string,
