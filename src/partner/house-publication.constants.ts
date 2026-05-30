@@ -3,6 +3,11 @@ export const HOUSE_PUBLICATION_DURATION_DAYS = 7;
 export const ADVERTISING_TOPUP_MIN_EUR_CENTS = 500;
 export const ADVERTISING_TOPUP_MAX_EUR_CENTS = 500_00;
 
+/** Dias que um imóvel oculto aguarda antes de ir automaticamente para a lixeira. */
+export const HOUSE_HIDDEN_TO_TRASH_DAYS = 3;
+/** Dias que um imóvel fica na lixeira antes de ser excluído (com mídia) automaticamente. */
+export const HOUSE_TRASH_TO_DELETE_DAYS = 10;
+
 export function addPublicationDays(from: Date, days: number): Date {
   const d = new Date(from);
   d.setDate(d.getDate() + days);

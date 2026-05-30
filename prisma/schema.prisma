@@ -70,6 +70,7 @@ enum GrupoTesteMessageStatus {
 enum PartnerHousePublicationStatus {
   PUBLISHED
   HIDDEN
+  TRASH
 }
 
 enum LeadGestoraStatus {
@@ -679,6 +680,10 @@ model PartnerHouse {
   publicationStatus  PartnerHousePublicationStatus @default(HIDDEN) @map("publication_status")
   publishedUntil     DateTime?                     @map("published_until")
   lastPublishedAt    DateTime?                     @map("last_published_at")
+  /// Momento em que passou a oculto (base para mover automaticamente para a lixeira após N dias).
+  hiddenAt           DateTime?                     @map("hidden_at")
+  /// Momento em que foi movido para a lixeira (base para exclusão automática após N dias).
+  trashedAt          DateTime?                     @map("trashed_at")
   whatsappSentAt     DateTime?                     @map("whatsapp_sent_at")
   whatsappError      String?                       @map("whatsapp_error")
   createdAt          DateTime                      @default(now()) @map("created_at")
@@ -690,6 +695,8 @@ model PartnerHouse {
 
   @@index([partnerId, publicationStatus])
   @@index([publicationStatus, publishedUntil])
+  @@index([publicationStatus, hiddenAt])
+  @@index([publicationStatus, trashedAt])
   @@index([availableFrom])
   @@map("partner_houses")
 }

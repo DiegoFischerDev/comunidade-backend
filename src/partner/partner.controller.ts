@@ -372,6 +372,26 @@ export class PartnerController {
     return this.partnerService.unpublishMyHouse(user.id, id);
   }
 
+  @Post('me/houses/:id/trash')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  async trashMyHouse(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+  ) {
+    return this.partnerService.trashMyHouse(user.id, id);
+  }
+
+  @Post('me/houses/:id/restore')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  async restoreMyHouse(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+  ) {
+    return this.partnerService.restoreMyHouse(user.id, id);
+  }
+
   @Delete('me/houses/:id')
   @Roles(Role.PARTNER)
   @HttpCode(200)

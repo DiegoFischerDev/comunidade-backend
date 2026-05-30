@@ -1558,7 +1558,10 @@ export class PartnerService {
     }
     const updated = await this.prisma.partnerHouse.update({
       where: { id: houseId },
-      data: { publicationStatus: PartnerHousePublicationStatus.HIDDEN },
+      data: {
+        publicationStatus: PartnerHousePublicationStatus.HIDDEN,
+        hiddenAt: new Date(),
+      },
       select: {
         id: true,
         publicationStatus: true,
@@ -1570,6 +1573,55 @@ export class PartnerService {
       publicationStatus: updated.publicationStatus,
       publishedUntil: updated.publishedUntil?.toISOString() ?? null,
     };
+  }
+
+  /** Parceiro: move o anúncio para a lixeira (recuperável). */
+  async trashMyHouse(userId: string, houseId: string) {
+    const partner = await this.getRelocationPartnerOrThrow(userId);
+    const house = await this.prisma.partnerHouse.findFirst({
+      where: { id: houseId, partnerId: partner.id },
+      select: { id: true, publicationStatus: true },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    if (house.publicationStatus === PartnerHousePublicationStatus.TRASH) {
+      throw new BadRequestException('Este imóvel já está na lixeira.');
+    }
+    await this.prisma.partnerHouse.update({
+      where: { id: houseId },
+      data: {
+        publicationStatus: PartnerHousePublicationStatus.TRASH,
+        trashedAt: new Date(),
+        hiddenAt: null,
+        publishedUntil: null,
+      },
+    });
+    return { ok: true as const };
+  }
+
+  /** Parceiro: restaura um imóvel da lixeira para oculto. */
+  async restoreMyHouse(userId: string, houseId: string) {
+    const partner = await this.getRelocationPartnerOrThrow(userId);
+    const house = await this.prisma.partnerHouse.findFirst({
+      where: { id: houseId, partnerId: partner.id },
+      select: { id: true, publicationStatus: true },
+    });
+    if (!house) {
+      throw new NotFoundException('Imóvel não encontrado.');
+    }
+    if (house.publicationStatus !== PartnerHousePublicationStatus.TRASH) {
+      throw new BadRequestException('Este imóvel não está na lixeira.');
+    }
+    await this.prisma.partnerHouse.update({
+      where: { id: houseId },
+      data: {
+        publicationStatus: PartnerHousePublicationStatus.HIDDEN,
+        hiddenAt: new Date(),
+        trashedAt: null,
+      },
+    });
+    return { ok: true as const };
   }
 
   private partnerHouseCreatePayloadFromStrictDto(dto: CreatePartnerHouseDto): {
@@ -1775,6 +1827,7 @@ export class PartnerService {
         coverImageUrl,
         videoUrl,
         videoPosterUrl,
+        hiddenAt: new Date(),
       } as any,
     });
 
@@ -2527,6 +2580,8 @@ export class PartnerService {
         publicationStatus: true,
         publishedUntil: true,
         lastPublishedAt: true,
+        hiddenAt: true,
+        trashedAt: true,
       },
     });
     if (!house) {
@@ -2537,6 +2592,8 @@ export class PartnerService {
       publicationStatus: house.publicationStatus,
       publishedUntil: house.publishedUntil,
       lastPublishedAt: house.lastPublishedAt,
+      hiddenAt: house.hiddenAt,
+      trashedAt: house.trashedAt,
     };
 
     if (options.chargePartner) {
@@ -2553,6 +2610,8 @@ export class PartnerService {
           publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
           publishedUntil,
           lastPublishedAt: now,
+          hiddenAt: null,
+          trashedAt: null,
         },
       });
 
