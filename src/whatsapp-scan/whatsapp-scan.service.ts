@@ -195,34 +195,72 @@ export class WhatsappScanService {
     });
     if (!group) return { ok: true, status: 'ignored_group_not_monitored' };
 
-    // Dedup por messageId, se fornecido.
-    const externalMessageId = dto.externalMessageId?.trim() || null;
-    if (externalMessageId) {
-      const dupe = await this.prisma.whatsappScanMessage.findUnique({
-        where: { externalMessageId },
-        select: { id: true },
-      });
-      if (dupe) return { ok: true, status: 'ignored_duplicate' };
+    if (!text) {
+      return { ok: true, status: 'ignored_empty' };
     }
 
     const senderNumber = digitsOnly(dto.senderNumber);
+    const externalMessageId = dto.externalMessageId?.trim() || null;
+
+    // Dedup "claim-first": gravamos já o registo (status `received`). Como o Evolution costuma
+    // entregar a mesma mensagem várias vezes (webhook global + por instância, e reentregas),
+    // a unique constraint em `externalMessageId` garante que apenas a 1.ª entrega prossegue.
+    // Sem id, deduplicamos por conteúdo recente (mesmo grupo + remetente + texto nos últimos 5 min).
+    let recordId: string;
+    if (externalMessageId) {
+      try {
+        const created = await this.prisma.whatsappScanMessage.create({
+          data: {
+            groupId: group.id,
+            senderNumber,
+            externalMessageId,
+            rawText: text.slice(0, 8000),
+            status: WhatsappScanMessageStatus.received,
+          },
+          select: { id: true },
+        });
+        recordId = created.id;
+      } catch (e) {
+        if (
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === 'P2002'
+        ) {
+          return { ok: true, status: 'ignored_duplicate' };
+        }
+        throw e;
+      }
+    } else {
+      const recent = await this.prisma.whatsappScanMessage.findFirst({
+        where: {
+          groupId: group.id,
+          senderNumber,
+          rawText: text.slice(0, 8000),
+          createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
+        },
+        select: { id: true },
+      });
+      if (recent) return { ok: true, status: 'ignored_duplicate' };
+      const created = await this.prisma.whatsappScanMessage.create({
+        data: {
+          groupId: group.id,
+          senderNumber,
+          rawText: text.slice(0, 8000),
+          status: WhatsappScanMessageStatus.received,
+        },
+        select: { id: true },
+      });
+      recordId = created.id;
+    }
 
     // Filtro de números (vazio = todos).
     if (
       group.monitoredNumbers.length > 0 &&
       !group.monitoredNumbers.includes(senderNumber)
     ) {
-      await this.safeLog(group.id, {
-        senderNumber,
-        externalMessageId,
-        rawText: text,
+      await this.updateRecord(recordId, {
         status: WhatsappScanMessageStatus.ignored_sender,
       });
       return { ok: true, status: 'ignored_sender' };
-    }
-
-    if (!text) {
-      return { ok: true, status: 'ignored_empty' };
     }
 
     // Classificação + extração via OpenAI.
@@ -232,10 +270,7 @@ export class WhatsappScanService {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.error(`Falha OpenAI no scan: ${msg}`);
-      await this.safeLog(group.id, {
-        senderNumber,
-        externalMessageId,
-        rawText: text,
+      await this.updateRecord(recordId, {
         status: WhatsappScanMessageStatus.error,
         error: msg.slice(0, 1000),
       });
@@ -243,10 +278,7 @@ export class WhatsappScanService {
     }
 
     if (!extraction.isListing || !extraction.house) {
-      await this.safeLog(group.id, {
-        senderNumber,
-        externalMessageId,
-        rawText: text,
+      await this.updateRecord(recordId, {
         status: WhatsappScanMessageStatus.ignored_not_listing,
         parsedJson: extraction as unknown as Prisma.InputJsonValue,
       });
@@ -269,10 +301,7 @@ export class WhatsappScanService {
         rendasEntradaCount: extraction.house.rendasEntradaCount,
         furnished: extraction.house.furnished,
       });
-      await this.safeLog(group.id, {
-        senderNumber,
-        externalMessageId,
-        rawText: text,
+      await this.updateRecord(recordId, {
         status: WhatsappScanMessageStatus.created,
         parsedJson: extraction as unknown as Prisma.InputJsonValue,
         createdHouseId: house.id,
@@ -281,10 +310,7 @@ export class WhatsappScanService {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.error(`Falha ao criar imóvel via scan: ${msg}`);
-      await this.safeLog(group.id, {
-        senderNumber,
-        externalMessageId,
-        rawText: text,
+      await this.updateRecord(recordId, {
         status: WhatsappScanMessageStatus.error,
         parsedJson: extraction as unknown as Prisma.InputJsonValue,
         error: msg.slice(0, 1000),
@@ -293,13 +319,10 @@ export class WhatsappScanService {
     }
   }
 
-  /** Grava o log da mensagem; nunca lança (best-effort). */
-  private async safeLog(
-    groupId: string,
+  /** Atualiza o registo da mensagem com o resultado do processamento; nunca lança (best-effort). */
+  private async updateRecord(
+    id: string,
     data: {
-      senderNumber: string;
-      externalMessageId: string | null;
-      rawText: string;
       status: WhatsappScanMessageStatus;
       parsedJson?: Prisma.InputJsonValue;
       createdHouseId?: string;
@@ -307,12 +330,9 @@ export class WhatsappScanService {
     },
   ) {
     try {
-      await this.prisma.whatsappScanMessage.create({
+      await this.prisma.whatsappScanMessage.update({
+        where: { id },
         data: {
-          groupId,
-          senderNumber: data.senderNumber,
-          externalMessageId: data.externalMessageId,
-          rawText: data.rawText.slice(0, 8000),
           status: data.status,
           parsedJson: data.parsedJson,
           createdHouseId: data.createdHouseId,
@@ -321,7 +341,7 @@ export class WhatsappScanService {
       });
     } catch (e) {
       this.logger.warn(
-        `Não foi possível gravar log do scan: ${e instanceof Error ? e.message : String(e)}`,
+        `Não foi possível atualizar log do scan: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
