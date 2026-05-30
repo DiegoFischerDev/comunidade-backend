@@ -860,6 +860,8 @@ model WhatsappScanMessage {
   createdHouseId    String?                   @map("created_house_id")
   /// Mensagem de erro, quando `status = error`.
   error             String?                   @db.Text
+  /// Momento em que a mensagem foi enviada no WhatsApp (messageTimestamp da Evolution).
+  postedAt          DateTime?                 @map("posted_at")
   createdAt         DateTime                  @default(now()) @map("created_at")
 
   @@index([groupId, createdAt])
@@ -885,6 +887,8 @@ model WhatsappScanPendingMedia {
   messageId         String?               @map("message_id")
   /// Imóvel a que a mídia foi anexada (null = ainda pendente).
   consumedByHouseId String?               @map("consumed_by_house_id")
+  /// Momento em que a mídia foi enviada no WhatsApp (messageTimestamp da Evolution).
+  postedAt          DateTime?             @map("posted_at")
   createdAt         DateTime              @default(now()) @map("created_at")
 
   @@index([groupId, senderNumber, consumedByHouseId, createdAt])

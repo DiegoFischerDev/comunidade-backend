@@ -1,4 +1,11 @@
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 
 /** Payload enviado pelo receiver (whatsapp-evolution-verify) para cada mensagem de grupo. */
 export class IngestMessageDto {
@@ -48,4 +55,10 @@ export class IngestMessageDto {
   @IsString()
   @MaxLength(300)
   fileName?: string;
+
+  /** Momento de envio no WhatsApp (Evolution messageTimestamp, em segundos Unix). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  messageTimestamp?: number;
 }

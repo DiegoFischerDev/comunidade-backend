@@ -31,6 +31,31 @@ function mediaWindowMinutes(): number {
   return 5;
 }
 
+/**
+ * Tolerância (ms): mídia postada até X segundos DEPOIS do texto do anúncio ainda é anexada.
+ * Mídia postada mais tarde que isto é considerada de outro contexto e não entra no imóvel.
+ */
+function mediaAfterTextGraceMs(): number {
+  const raw = process.env.WHATSAPP_SCAN_MEDIA_AFTER_TEXT_GRACE_SEC?.trim();
+  if (raw && /^\d+$/.test(raw)) {
+    const n = parseInt(raw, 10);
+    if (n >= 0 && n <= 600) return n * 1000;
+  }
+  return 5000;
+}
+
+/** messageTimestamp (segundos Unix) → Date; fallback para agora se ausente/inválido. */
+function postedAtFromTimestamp(messageTimestamp?: number): Date {
+  if (
+    typeof messageTimestamp === 'number' &&
+    Number.isFinite(messageTimestamp) &&
+    messageTimestamp > 0
+  ) {
+    return new Date(messageTimestamp * 1000);
+  }
+  return new Date();
+}
+
 function digitsOnly(value: string): string {
   return String(value ?? '').replace(/\D+/g, '');
 }
@@ -254,6 +279,7 @@ export class WhatsappScanService {
     const isMedia = kind === 'image' || kind === 'video';
     const senderNumber = digitsOnly(dto.senderNumber);
     const externalMessageId = dto.externalMessageId?.trim() || null;
+    const postedAt = postedAtFromTimestamp(dto.messageTimestamp);
 
     // Mídia processável se traz o base64 (Webhook Base64) ou se podemos buscá-lo na Evolution
     // (precisa do id da mensagem; a instância é opcional, mas ajuda a acertar de 1.ª).
@@ -281,6 +307,7 @@ export class WhatsappScanService {
       senderNumber,
       externalMessageId,
       rawText,
+      postedAt,
       // Sem id, só deduplicamos por conteúdo quando é texto (mídia partilharia o placeholder).
       contentDedup: !handleAsMedia,
     });
@@ -293,6 +320,7 @@ export class WhatsappScanService {
         group,
         senderNumber,
         externalMessageId,
+        postedAt,
         kind,
         base64: dto.base64 ?? '',
         mimeType: dto.mimeType ?? '',
@@ -307,6 +335,7 @@ export class WhatsappScanService {
       group,
       senderNumber,
       text,
+      postedAt,
     });
   }
 
@@ -316,6 +345,7 @@ export class WhatsappScanService {
     senderNumber: string;
     externalMessageId: string | null;
     rawText: string;
+    postedAt: Date;
     contentDedup: boolean;
   }): Promise<{ id: string; duplicate: boolean }> {
     const rawText = input.rawText.slice(0, 8000);
@@ -327,6 +357,7 @@ export class WhatsappScanService {
             senderNumber: input.senderNumber,
             externalMessageId: input.externalMessageId,
             rawText,
+            postedAt: input.postedAt,
             status: WhatsappScanMessageStatus.received,
           },
           select: { id: true },
@@ -361,6 +392,7 @@ export class WhatsappScanService {
         groupId: input.groupId,
         senderNumber: input.senderNumber,
         rawText,
+        postedAt: input.postedAt,
         status: WhatsappScanMessageStatus.received,
       },
       select: { id: true },
@@ -374,8 +406,9 @@ export class WhatsappScanService {
     group: { id: string; partnerId: string };
     senderNumber: string;
     text: string;
+    postedAt: Date;
   }): Promise<{ ok: true; status: string }> {
-    const { recordId, group, senderNumber, text } = input;
+    const { recordId, group, senderNumber, text, postedAt } = input;
 
     // Pré-filtro barato (sem IA) para poupar tokens. Desligável com WHATSAPP_SCAN_PREFILTER=0.
     const prefilterEnabled = process.env.WHATSAPP_SCAN_PREFILTER !== '0';
@@ -419,7 +452,12 @@ export class WhatsappScanService {
         parsedJson: extraction as unknown as Prisma.InputJsonValue,
         createdHouseId: house.id,
       });
-      await this.attachPendingMediaToHouse(group.id, senderNumber, house.id);
+      await this.attachPendingMediaToHouse(
+        group.id,
+        senderNumber,
+        house.id,
+        postedAt,
+      );
       return { ok: true, status: 'created' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -445,8 +483,9 @@ export class WhatsappScanService {
     fileName: string;
     instance: string;
     caption: string;
+    postedAt: Date;
   }): Promise<{ ok: true; status: string }> {
-    const { recordId, group, senderNumber, kind, caption } = input;
+    const { recordId, group, senderNumber, kind, caption, postedAt } = input;
 
     // Obtém os bytes: do webhook (Webhook Base64) ou, em fallback, da Evolution.
     let base64 = input.base64;
@@ -515,6 +554,7 @@ export class WhatsappScanService {
           storedUrl,
           externalMessageId: input.externalMessageId,
           messageId: recordId,
+          postedAt,
         },
       });
     } catch (e) {
@@ -548,16 +588,17 @@ export class WhatsappScanService {
             group.partnerId,
             extraction,
           );
-          await this.attachPendingMediaToHouse(
-            group.id,
-            senderNumber,
-            house.id,
-          );
           await this.updateRecord(recordId, {
             status: WhatsappScanMessageStatus.created,
             parsedJson: extraction as unknown as Prisma.InputJsonValue,
             createdHouseId: house.id,
           });
+          await this.attachPendingMediaToHouse(
+            group.id,
+            senderNumber,
+            house.id,
+            postedAt,
+          );
           return { ok: true, status: 'created' };
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -570,21 +611,28 @@ export class WhatsappScanService {
     // Corrida com o texto: como cada mensagem chega numa requisição separada e o processamento
     // da imagem é mais lento (download + WebP + upload), o texto pode criar o imóvel primeiro.
     // Se já existe um imóvel criado há pouco para este remetente, anexamo-nos a ele.
-    const recentHouseId = await this.findRecentCreatedHouseId(
+    const recentHouse = await this.findRecentCreatedHouse(
       group.id,
       senderNumber,
     );
-    if (recentHouseId) {
-      await this.attachPendingMediaToHouse(
-        group.id,
-        senderNumber,
-        recentHouseId,
-      );
-      await this.updateRecord(recordId, {
-        status: WhatsappScanMessageStatus.media_attached,
-        createdHouseId: recentHouseId,
-      });
-      return { ok: true, status: 'media_attached' };
+    // Só anexamos a um imóvel já criado se esta mídia foi postada até X segundos DEPOIS do texto
+    // (mídia postada antes do texto também entra). Mídia muito mais tardia fica pendente.
+    if (recentHouse) {
+      const cutoff =
+        recentHouse.listingPostedAt.getTime() + mediaAfterTextGraceMs();
+      if (postedAt.getTime() <= cutoff) {
+        await this.attachPendingMediaToHouse(
+          group.id,
+          senderNumber,
+          recentHouse.houseId,
+          recentHouse.listingPostedAt,
+        );
+        await this.updateRecord(recordId, {
+          status: WhatsappScanMessageStatus.media_attached,
+          createdHouseId: recentHouse.houseId,
+        });
+        return { ok: true, status: 'media_attached' };
+      }
     }
 
     await this.updateRecord(recordId, {
@@ -594,10 +642,10 @@ export class WhatsappScanService {
   }
 
   /** Imóvel criado há pouco (dentro da janela) a partir do mesmo grupo + remetente, se existir. */
-  private async findRecentCreatedHouseId(
+  private async findRecentCreatedHouse(
     groupId: string,
     senderNumber: string,
-  ): Promise<string | null> {
+  ): Promise<{ houseId: string; listingPostedAt: Date } | null> {
     const since = new Date(Date.now() - mediaWindowMinutes() * 60 * 1000);
     const recent = await this.prisma.whatsappScanMessage.findFirst({
       where: {
@@ -608,9 +656,13 @@ export class WhatsappScanService {
         createdAt: { gte: since },
       },
       orderBy: { createdAt: 'desc' },
-      select: { createdHouseId: true },
+      select: { createdHouseId: true, postedAt: true, createdAt: true },
     });
-    return recent?.createdHouseId ?? null;
+    if (!recent?.createdHouseId) return null;
+    return {
+      houseId: recent.createdHouseId,
+      listingPostedAt: recent.postedAt ?? recent.createdAt,
+    };
   }
 
   private createHouseFromExtraction(
@@ -643,9 +695,15 @@ export class WhatsappScanService {
     groupId: string,
     senderNumber: string,
     houseId: string,
+    listingPostedAt: Date,
   ): Promise<void> {
     return this.runSerialized(() =>
-      this.attachPendingMediaToHouseInner(groupId, senderNumber, houseId),
+      this.attachPendingMediaToHouseInner(
+        groupId,
+        senderNumber,
+        houseId,
+        listingPostedAt,
+      ),
     );
   }
 
@@ -653,9 +711,10 @@ export class WhatsappScanService {
     groupId: string,
     senderNumber: string,
     houseId: string,
+    listingPostedAt: Date,
   ): Promise<void> {
     const since = new Date(Date.now() - mediaWindowMinutes() * 60 * 1000);
-    const pendings = await this.prisma.whatsappScanPendingMedia.findMany({
+    const candidates = await this.prisma.whatsappScanPendingMedia.findMany({
       where: {
         groupId,
         senderNumber,
@@ -663,6 +722,14 @@ export class WhatsappScanService {
         createdAt: { gte: since },
       },
       orderBy: { createdAt: 'asc' },
+    });
+
+    // Só entram mídia postada ANTES do texto ou até X segundos DEPOIS dele. Mídia mais tardia
+    // fica pendente (pode pertencer a um anúncio seguinte).
+    const cutoff = listingPostedAt.getTime() + mediaAfterTextGraceMs();
+    const pendings = candidates.filter((p) => {
+      const posted = (p.postedAt ?? p.createdAt).getTime();
+      return posted <= cutoff;
     });
     if (pendings.length === 0) return;
 
