@@ -38,7 +38,14 @@ function parseEurAmount(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-const SYSTEM_PROMPT = `És um assistente que analisa mensagens enviadas em grupos de WhatsApp sobre imóveis em Portugal.
+function buildSystemPrompt(): string {
+  const now = new Date();
+  const todayIso = now.toISOString().slice(0, 10);
+  const year = now.getFullYear();
+  return `És um assistente que analisa mensagens enviadas em grupos de WhatsApp sobre imóveis em Portugal.
+
+Contexto temporal: hoje é ${todayIso} (ano atual: ${year}). Ao interpretar datas relativas (ex.: "entrada 5 de julho", "disponível em setembro"), assume SEMPRE o ano atual (${year}); se essa data já tiver passado este ano, usa o ano seguinte. NUNCA uses anos passados.
+
 A tua tarefa tem dois passos:
 1) Classificar se a mensagem é um ANÚNCIO de imóvel (arrendamento ou venda). Mensagens de conversa, perguntas, procura de casa ("procuro T2 em Lisboa"), saudações ou spam NÃO são anúncios.
 2) Se for um anúncio, extrair os dados estruturados do imóvel.
@@ -52,13 +59,45 @@ Regras de extração:
 - "caucoesCount": nº de cauções exigidas (inteiro 0–12). Se não souberes, 0.
 - "rendasEntradaCount": nº de rendas adiantadas exigidas (inteiro 0–12). Se não souberes, 0.
 - "furnished": true se mobilado, senão false.
-- "availableFrom": data de disponibilidade no formato AAAA-MM-DD se mencionada, senão null.
+- "availableFrom": data de disponibilidade no formato AAAA-MM-DD usando as regras de contexto temporal acima; se não for mencionada, null.
 - "title": título curto e descritivo (máx. ~80 caracteres) baseado na mensagem.
-- "description": usa o texto do anúncio (limpo) como descrição.
+- "description": reescreve o anúncio em estilo de mensagem de WhatsApp, apelativo e fácil de ler, COM emojis e quebras de linha reais (usa \\n entre as linhas). Diretrizes:
+  • começa com um emoji de casa (🏡) e a frase de abertura;
+  • lista cada característica numa linha própria começando por "✔️ ";
+  • usa "📍 " para localização e datas (ex.: entrada/disponibilidade);
+  • usa "📩 " para a linha de contacto, se existir;
+  • mantém SOMENTE a informação presente na mensagem (não inventes dados, valores, nem características);
+  • não incluas o preço dentro da descrição.
+  Exemplo de formato:
+  "🏡 Vivenda mobilada com:\\n✔️ 5 quartos amplos\\n✔️ 2 casas de banho\\n✔️ Jardim privado 🌿\\n\\nLocalizada em ...\\n\\n📍 entrada 5 de julho\\n📩 Entre em contacto para mais informações."
 
 Responde SEMPRE em JSON válido, sem texto adicional, no formato:
 {"isListing": boolean, "confidence": number (0..1), "house": {...} | null}
 Quando "isListing" for false, "house" deve ser null.`;
+}
+
+/**
+ * Garante que uma data (AAAA-MM-DD) não fica no passado: se já passou, mantém o dia/mês e
+ * avança para o ano atual e, se ainda assim for passado, para o ano seguinte.
+ */
+function ensureFutureDate(dateStr: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!m) return dateStr;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const month = parseInt(m[2], 10);
+  const day = parseInt(m[3], 10);
+  let year = parseInt(m[1], 10);
+  let d = new Date(year, month - 1, day);
+  if (d < today) {
+    year = today.getFullYear();
+    d = new Date(year, month - 1, day);
+    if (d < today) {
+      year += 1;
+    }
+  }
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
 
 /**
  * Serviço que usa a OpenAI para classificar mensagens de grupos de WhatsApp e extrair, quando
@@ -105,7 +144,7 @@ export class WhatsappScanOpenAiService {
           temperature: 0,
           response_format: { type: 'json_object' },
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: buildSystemPrompt() },
             { role: 'user', content: rawText },
           ],
         }),
@@ -194,7 +233,7 @@ export class WhatsappScanOpenAiService {
 
     const availableFromRaw = str(h.availableFrom);
     const availableFrom = /^\d{4}-\d{2}-\d{2}/.test(availableFromRaw)
-      ? availableFromRaw.slice(0, 10)
+      ? ensureFutureDate(availableFromRaw.slice(0, 10))
       : null;
 
     const house: ScanExtractionHouse = {
