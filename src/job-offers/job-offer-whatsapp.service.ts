@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import {
   JobOfferWhatsappMessageStatus,
@@ -16,25 +17,25 @@ import {
   phonesMatchMonitored,
 } from '../whatsapp-scan/phone-match.util';
 import { IngestMessageDto } from '../whatsapp-scan/dto/ingest-message.dto';
-import { UpdateJobOfferWhatsappConfigDto } from './dto/update-job-offer-whatsapp-config.dto';
+import { CreateJobOfferWhatsappRouteDto } from './dto/create-job-offer-whatsapp-route.dto';
+import { UpdateJobOfferWhatsappRouteDto } from './dto/update-job-offer-whatsapp-route.dto';
 
-const CONFIG_ID = 'default';
-
-function mapConfigRow(r: {
-  sourceGroupJid: string | null;
+type RouteRow = {
+  id: string;
+  sourceGroupJid: string;
   sourceTitle: string | null;
-  destGroupJid: string | null;
+  destGroupJid: string;
   destTitle: string | null;
   monitoredNumbers: string[];
   monitorAllMembers: boolean;
   active: boolean;
+  createdAt: Date;
   updatedAt: Date;
-}) {
-  const automationReady =
-    r.active &&
-    !!r.sourceGroupJid?.trim() &&
-    !!r.destGroupJid?.trim();
+};
+
+function mapRouteRow(r: RouteRow) {
   return {
+    id: r.id,
     sourceGroupJid: r.sourceGroupJid,
     sourceTitle: r.sourceTitle,
     destGroupJid: r.destGroupJid,
@@ -42,10 +43,23 @@ function mapConfigRow(r: {
     monitoredNumbers: r.monitoredNumbers,
     monitorAllMembers: r.monitorAllMembers,
     active: r.active,
-    automationReady,
+    createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
 }
+
+const routeSelect = {
+  id: true,
+  sourceGroupJid: true,
+  sourceTitle: true,
+  destGroupJid: true,
+  destTitle: true,
+  monitoredNumbers: true,
+  monitorAllMembers: true,
+  active: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 /** Texto republicado no grupo de destino. */
 export function formatJobOfferWhatsappText(offer: {
@@ -84,47 +98,85 @@ export class JobOfferWhatsappService {
     private readonly whatsapp: WhatsAppService,
   ) {}
 
-  private async getConfigRow() {
-    return this.prisma.jobOfferWhatsappConfig.upsert({
-      where: { id: CONFIG_ID },
-      create: { id: CONFIG_ID },
-      update: {},
-      select: {
-        sourceGroupJid: true,
-        sourceTitle: true,
-        destGroupJid: true,
-        destTitle: true,
-        monitoredNumbers: true,
-        monitorAllMembers: true,
-        active: true,
-        updatedAt: true,
-      },
+  async listRoutes() {
+    const rows = await this.prisma.jobOfferWhatsappRoute.findMany({
+      orderBy: { createdAt: 'asc' },
+      select: routeSelect,
     });
+    return { items: rows.map(mapRouteRow) };
   }
 
-  async getConfig() {
-    const row = await this.getConfigRow();
-    return mapConfigRow(row);
+  async createRoute(dto: CreateJobOfferWhatsappRouteDto) {
+    const sourceGroupJid = dto.sourceGroupJid.trim();
+    const destGroupJid = dto.destGroupJid.trim();
+    if (sourceGroupJid === destGroupJid) {
+      throw new BadRequestException(
+        'O grupo de origem e o de destino não podem ser o mesmo.',
+      );
+    }
+
+    const monitoredNumbers = (dto.monitoredNumbers ?? [])
+      .map((n) => canonicalPhoneDigits(n) || digitsOnly(n))
+      .filter((n) => n.length > 0);
+    const monitorAllMembers =
+      dto.monitorAllMembers === true ||
+      (dto.monitorAllMembers !== false && monitoredNumbers.length === 0);
+
+    let sourceTitle = dto.sourceTitle?.trim() || null;
+    let destTitle = dto.destTitle?.trim() || null;
+    if (!sourceTitle) {
+      sourceTitle = await this.whatsapp.getGroupSubject(sourceGroupJid);
+    }
+    if (!destTitle) {
+      destTitle = await this.whatsapp.getGroupSubject(destGroupJid);
+    }
+
+    try {
+      const row = await this.prisma.jobOfferWhatsappRoute.create({
+        data: {
+          sourceGroupJid,
+          sourceTitle,
+          destGroupJid,
+          destTitle,
+          monitoredNumbers: monitorAllMembers ? [] : monitoredNumbers,
+          monitorAllMembers,
+          active: dto.active ?? true,
+        },
+        select: routeSelect,
+      });
+      return mapRouteRow(row);
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new BadRequestException(
+          'Já existe uma rota com este par origem → destino.',
+        );
+      }
+      throw e;
+    }
   }
 
-  async updateConfig(dto: UpdateJobOfferWhatsappConfigDto) {
-    const data: Prisma.JobOfferWhatsappConfigUpdateInput = {};
+  async updateRoute(id: string, dto: UpdateJobOfferWhatsappRouteDto) {
+    const existing = await this.prisma.jobOfferWhatsappRoute.findUnique({
+      where: { id },
+      select: routeSelect,
+    });
+    if (!existing) throw new NotFoundException('Rota não encontrada.');
 
-    if (dto.sourceGroupJid !== undefined) {
-      const jid = dto.sourceGroupJid?.trim() || null;
-      data.sourceGroupJid = jid;
-      if (!jid) data.sourceTitle = null;
+    const data: Prisma.JobOfferWhatsappRouteUpdateInput = {};
+    if (typeof dto.sourceTitle === 'string') {
+      data.sourceTitle = dto.sourceTitle.trim() || null;
     }
-    if (dto.sourceTitle !== undefined) {
-      data.sourceTitle = dto.sourceTitle?.trim() || null;
+    if (typeof dto.destTitle === 'string') {
+      data.destTitle = dto.destTitle.trim() || null;
     }
-    if (dto.destGroupJid !== undefined) {
-      const jid = dto.destGroupJid?.trim() || null;
-      data.destGroupJid = jid;
-      if (!jid) data.destTitle = null;
+    if (typeof dto.sourceGroupJid === 'string') {
+      data.sourceGroupJid = dto.sourceGroupJid.trim();
     }
-    if (dto.destTitle !== undefined) {
-      data.destTitle = dto.destTitle?.trim() || null;
+    if (typeof dto.destGroupJid === 'string') {
+      data.destGroupJid = dto.destGroupJid.trim();
     }
     if (Array.isArray(dto.monitoredNumbers)) {
       const nums = dto.monitoredNumbers
@@ -138,69 +190,54 @@ export class JobOfferWhatsappService {
     }
     if (typeof dto.monitorAllMembers === 'boolean') {
       data.monitorAllMembers = dto.monitorAllMembers;
-      if (dto.monitorAllMembers) {
-        data.monitoredNumbers = [];
-      }
+      if (dto.monitorAllMembers) data.monitoredNumbers = [];
     }
     if (typeof dto.active === 'boolean') {
       data.active = dto.active;
     }
 
-    const current = await this.getConfigRow();
     const nextSource =
-      dto.sourceGroupJid !== undefined
-        ? dto.sourceGroupJid?.trim() || null
-        : current.sourceGroupJid;
+      typeof dto.sourceGroupJid === 'string'
+        ? dto.sourceGroupJid.trim()
+        : existing.sourceGroupJid;
     const nextDest =
-      dto.destGroupJid !== undefined
-        ? dto.destGroupJid?.trim() || null
-        : current.destGroupJid;
-    if (
-      nextSource &&
-      nextDest &&
-      nextSource === nextDest
-    ) {
+      typeof dto.destGroupJid === 'string'
+        ? dto.destGroupJid.trim()
+        : existing.destGroupJid;
+    if (nextSource === nextDest) {
       throw new BadRequestException(
         'O grupo de origem e o de destino não podem ser o mesmo.',
       );
     }
 
-    if (
-      typeof dto.sourceGroupJid === 'string' &&
-      dto.sourceGroupJid.trim() &&
-      !dto.sourceTitle?.trim()
-    ) {
-      const subject = await this.whatsapp.getGroupSubject(
-        dto.sourceGroupJid.trim(),
-      );
-      if (subject) data.sourceTitle = subject;
+    try {
+      const row = await this.prisma.jobOfferWhatsappRoute.update({
+        where: { id },
+        data,
+        select: routeSelect,
+      });
+      return mapRouteRow(row);
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new BadRequestException(
+          'Já existe uma rota com este par origem → destino.',
+        );
+      }
+      throw e;
     }
-    if (
-      typeof dto.destGroupJid === 'string' &&
-      dto.destGroupJid.trim() &&
-      !dto.destTitle?.trim()
-    ) {
-      const subject = await this.whatsapp.getGroupSubject(
-        dto.destGroupJid.trim(),
-      );
-      if (subject) data.destTitle = subject;
-    }
+  }
 
-    const row = await this.prisma.jobOfferWhatsappConfig.update({
-      where: { id: CONFIG_ID },
-      data,
-      select: {
-        sourceGroupJid: true,
-        sourceTitle: true,
-        destGroupJid: true,
-        destTitle: true,
-        monitoredNumbers: true,
-        monitorAllMembers: true,
-        active: true,
-        updatedAt: true,
-      },
+  async deleteRoute(id: string) {
+    const existing = await this.prisma.jobOfferWhatsappRoute.findUnique({
+      where: { id },
+      select: { id: true },
     });
-    return mapConfigRow(row);
+    if (!existing) throw new NotFoundException('Rota não encontrada.');
+    await this.prisma.jobOfferWhatsappRoute.delete({ where: { id } });
+    return { ok: true as const };
   }
 
   async listEvolutionGroups() {
@@ -209,23 +246,37 @@ export class JobOfferWhatsappService {
     return { instance, items };
   }
 
-  async listMessages(limit = 80) {
+  async listMessages(limit = 80, routeId?: string) {
     const rows = await this.prisma.jobOfferWhatsappMessage.findMany({
+      where: routeId ? { routeId } : undefined,
       orderBy: { createdAt: 'desc' },
       take: Math.min(200, Math.max(1, limit)),
       select: {
         id: true,
+        routeId: true,
         senderNumber: true,
         rawText: true,
         status: true,
         createdJobOfferId: true,
         error: true,
         createdAt: true,
+        route: {
+          select: {
+            sourceTitle: true,
+            destTitle: true,
+            sourceGroupJid: true,
+            destGroupJid: true,
+          },
+        },
       },
     });
     return {
       items: rows.map((r) => ({
         id: r.id,
+        routeId: r.routeId,
+        routeLabel: r.route
+          ? `${r.route.sourceTitle ?? r.route.sourceGroupJid} → ${r.route.destTitle ?? r.route.destGroupJid}`
+          : null,
         senderNumber: r.senderNumber,
         rawText: r.rawText.slice(0, 500),
         status: r.status,
@@ -241,14 +292,11 @@ export class JobOfferWhatsappService {
     const groupJid = (dto.groupJid ?? '').trim();
     if (!groupJid) return { ok: true, status: 'ignored_no_group' };
 
-    const config = await this.getConfigRow();
-    if (!config.active) return { ok: true, status: 'ignored_inactive' };
-    const sourceJid = config.sourceGroupJid?.trim();
-    if (!sourceJid || groupJid !== sourceJid) {
-      return { ok: true, status: 'ignored_not_source_group' };
-    }
-    const destJid = config.destGroupJid?.trim();
-    if (!destJid) return { ok: true, status: 'ignored_no_dest' };
+    const routes = await this.prisma.jobOfferWhatsappRoute.findMany({
+      where: { sourceGroupJid: groupJid, active: true },
+      select: routeSelect,
+    });
+    if (!routes.length) return { ok: true, status: 'ignored_no_route' };
 
     const kind = dto.kind ?? 'text';
     if ((kind === 'image' || kind === 'video') && !text) {
@@ -256,30 +304,43 @@ export class JobOfferWhatsappService {
     }
     if (!text) return { ok: true, status: 'ignored_empty' };
 
+    let lastStatus = 'ignored_no_route';
+    for (const route of routes) {
+      lastStatus = await this.processForRoute(dto, route, text);
+    }
+    return { ok: true, status: lastStatus };
+  }
+
+  private async processForRoute(
+    dto: IngestMessageDto,
+    route: RouteRow,
+    text: string,
+  ): Promise<string> {
     const senderNumber =
       canonicalPhoneDigits(dto.senderNumber) || digitsOnly(dto.senderNumber);
     const externalMessageId = dto.externalMessageId?.trim() || null;
 
-    if (!config.monitorAllMembers) {
+    if (!route.monitorAllMembers) {
       if (
-        config.monitoredNumbers.length === 0 ||
-        !phonesMatchMonitored(senderNumber, config.monitoredNumbers)
+        route.monitoredNumbers.length === 0 ||
+        !phonesMatchMonitored(senderNumber, route.monitoredNumbers)
       ) {
         if (process.env.JOB_OFFER_WHATSAPP_LOG_SENDER === '1') {
           this.logger.warn(
-            `ignored_sender sender=${senderNumber} monitored=${config.monitoredNumbers.join(',')}`,
+            `ignored_sender route=${route.id} sender=${senderNumber}`,
           );
         }
-        return { ok: true, status: 'ignored_sender' };
+        return 'ignored_sender';
       }
     }
 
     const claim = await this.claimMessage({
+      routeId: route.id,
       senderNumber,
       externalMessageId,
       rawText: text,
     });
-    if (claim.duplicate) return { ok: true, status: 'ignored_duplicate' };
+    if (claim.duplicate) return 'ignored_duplicate';
     const recordId = claim.id;
 
     if (!this.listingOpenAi.isConfigured()) {
@@ -287,7 +348,7 @@ export class JobOfferWhatsappService {
         status: JobOfferWhatsappMessageStatus.error,
         error: 'OPENAI_API_KEY em falta',
       });
-      return { ok: true, status: 'error_openai_config' };
+      return 'error_openai_config';
     }
 
     let parsed;
@@ -300,7 +361,7 @@ export class JobOfferWhatsappService {
         status: JobOfferWhatsappMessageStatus.error,
         error: msg.slice(0, 1000),
       });
-      return { ok: true, status: 'error_openai' };
+      return 'error_openai';
     }
 
     if (!parsed.isJobOffer || !parsed.offer) {
@@ -308,7 +369,7 @@ export class JobOfferWhatsappService {
         status: JobOfferWhatsappMessageStatus.ignored_not_offer,
         parsedJson: parsed as unknown as Prisma.InputJsonValue,
       });
-      return { ok: true, status: 'ignored_not_offer' };
+      return 'ignored_not_offer';
     }
 
     const extracted = parsed.offer;
@@ -319,8 +380,10 @@ export class JobOfferWhatsappService {
         parsedJson: parsed as unknown as Prisma.InputJsonValue,
         error: 'Data de publicação inválida',
       });
-      return { ok: true, status: 'error_invalid_date' };
+      return 'error_invalid_date';
     }
+
+    const destJid = route.destGroupJid.trim();
 
     try {
       const offer = await this.prisma.jobOffer.create({
@@ -342,7 +405,7 @@ export class JobOfferWhatsappService {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         this.logger.error(
-          `Oferta ${offer.id} criada mas falha ao publicar no WhatsApp: ${msg}`,
+          `Oferta ${offer.id} criada mas falha WhatsApp (rota ${route.id}): ${msg}`,
         );
         await this.updateRecord(recordId, {
           status: JobOfferWhatsappMessageStatus.created,
@@ -350,7 +413,7 @@ export class JobOfferWhatsappService {
           createdJobOfferId: offer.id,
           error: `WhatsApp destino: ${msg.slice(0, 800)}`,
         });
-        return { ok: true, status: 'created_whatsapp_failed' };
+        return 'created_whatsapp_failed';
       }
 
       await this.updateRecord(recordId, {
@@ -358,7 +421,7 @@ export class JobOfferWhatsappService {
         parsedJson: parsed as unknown as Prisma.InputJsonValue,
         createdJobOfferId: offer.id,
       });
-      return { ok: true, status: 'created' };
+      return 'created';
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       await this.updateRecord(recordId, {
@@ -366,11 +429,12 @@ export class JobOfferWhatsappService {
         parsedJson: parsed as unknown as Prisma.InputJsonValue,
         error: msg.slice(0, 1000),
       });
-      return { ok: true, status: 'error_create' };
+      return 'error_create';
     }
   }
 
   private async claimMessage(input: {
+    routeId: string;
     senderNumber: string;
     externalMessageId: string | null;
     rawText: string;
@@ -380,6 +444,7 @@ export class JobOfferWhatsappService {
       try {
         const created = await this.prisma.jobOfferWhatsappMessage.create({
           data: {
+            routeId: input.routeId,
             senderNumber: input.senderNumber,
             externalMessageId: input.externalMessageId,
             rawText,
@@ -401,6 +466,7 @@ export class JobOfferWhatsappService {
 
     const recent = await this.prisma.jobOfferWhatsappMessage.findFirst({
       where: {
+        routeId: input.routeId,
         senderNumber: input.senderNumber,
         rawText,
         createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
@@ -411,6 +477,7 @@ export class JobOfferWhatsappService {
 
     const created = await this.prisma.jobOfferWhatsappMessage.create({
       data: {
+        routeId: input.routeId,
         senderNumber: input.senderNumber,
         rawText,
         status: JobOfferWhatsappMessageStatus.received,

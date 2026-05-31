@@ -802,32 +802,36 @@ model JobOffer {
   @@map("job_offers")
 }
 
-/// Configuração única da automação WhatsApp → ofertas de trabalho (origem, destino, filtros).
-model JobOfferWhatsappConfig {
-  id String @id @default("default")
+/// Rota de automação WhatsApp: grupo de origem → grupo de destino (ofertas de trabalho).
+model JobOfferWhatsappRoute {
+  id String @id @default(cuid())
 
-  /// Grupo/canal de onde as mensagens são lidas.
-  sourceGroupJid  String? @map("source_group_jid")
+  sourceGroupJid  String  @map("source_group_jid")
   sourceTitle     String? @map("source_title")
-  /// Grupo/canal onde as ofertas identificadas são republicadas.
-  destGroupJid    String? @map("dest_group_jid")
+  destGroupJid    String  @map("dest_group_jid")
   destTitle       String? @map("dest_title")
 
   monitoredNumbers  String[] @default([]) @map("monitored_numbers")
   monitorAllMembers Boolean  @default(false) @map("monitor_all_members")
-  active            Boolean  @default(false)
+  active            Boolean  @default(true)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@map("job_offer_whatsapp_config")
+  messages JobOfferWhatsappMessage[]
+
+  @@unique([sourceGroupJid, destGroupJid])
+  @@index([sourceGroupJid, active])
+  @@map("job_offer_whatsapp_routes")
 }
 
 /// Log de mensagens processadas pela automação de ofertas de trabalho via WhatsApp.
 model JobOfferWhatsappMessage {
   id                String                        @id @default(cuid())
+  routeId           String?                       @map("route_id")
+  route             JobOfferWhatsappRoute?        @relation(fields: [routeId], references: [id], onDelete: SetNull)
   senderNumber      String                        @map("sender_number")
-  externalMessageId String?                       @unique @map("external_message_id")
+  externalMessageId String?                       @map("external_message_id")
   rawText           String                        @map("raw_text") @db.Text
   status            JobOfferWhatsappMessageStatus @default(received)
   parsedJson        Json?                         @map("parsed_json")
@@ -836,7 +840,9 @@ model JobOfferWhatsappMessage {
   error             String?
   createdAt         DateTime                      @default(now()) @map("created_at")
 
+  @@unique([routeId, externalMessageId])
   @@index([createdAt(sort: Desc)])
+  @@index([routeId])
   @@map("job_offer_whatsapp_messages")
 }
 

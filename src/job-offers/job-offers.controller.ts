@@ -17,7 +17,8 @@ import { IngestMessageDto } from '../whatsapp-scan/dto/ingest-message.dto';
 import { CreateJobOfferDto } from './dto/create-job-offer.dto';
 import { ParseJobOfferFromTextDto } from './dto/parse-job-offer-from-text.dto';
 import { UpdateJobOfferDto } from './dto/update-job-offer.dto';
-import { UpdateJobOfferWhatsappConfigDto } from './dto/update-job-offer-whatsapp-config.dto';
+import { CreateJobOfferWhatsappRouteDto } from './dto/create-job-offer-whatsapp-route.dto';
+import { UpdateJobOfferWhatsappRouteDto } from './dto/update-job-offer-whatsapp-route.dto';
 import { JobOfferWhatsappService } from './job-offer-whatsapp.service';
 import { JobOffersService } from './job-offers.service';
 
@@ -66,16 +67,31 @@ export class JobOffersController {
 
   // ===== WhatsApp (ofertas de trabalho) =====
 
-  @Get('whatsapp/config')
+  @Get('whatsapp/routes')
   @Roles(Role.ADMIN)
-  whatsappGetConfig() {
-    return this.jobOfferWhatsapp.getConfig();
+  whatsappListRoutes() {
+    return this.jobOfferWhatsapp.listRoutes();
   }
 
-  @Patch('whatsapp/config')
+  @Post('whatsapp/routes')
   @Roles(Role.ADMIN)
-  whatsappUpdateConfig(@Body() dto: UpdateJobOfferWhatsappConfigDto) {
-    return this.jobOfferWhatsapp.updateConfig(dto);
+  whatsappCreateRoute(@Body() dto: CreateJobOfferWhatsappRouteDto) {
+    return this.jobOfferWhatsapp.createRoute(dto);
+  }
+
+  @Patch('whatsapp/routes/:id')
+  @Roles(Role.ADMIN)
+  whatsappUpdateRoute(
+    @Param('id') id: string,
+    @Body() dto: UpdateJobOfferWhatsappRouteDto,
+  ) {
+    return this.jobOfferWhatsapp.updateRoute(id, dto);
+  }
+
+  @Delete('whatsapp/routes/:id')
+  @Roles(Role.ADMIN)
+  whatsappDeleteRoute(@Param('id') id: string) {
+    return this.jobOfferWhatsapp.deleteRoute(id);
   }
 
   @Get('whatsapp/evolution-groups')
@@ -86,9 +102,15 @@ export class JobOffersController {
 
   @Get('whatsapp/messages')
   @Roles(Role.ADMIN)
-  whatsappListMessages(@Query('limit') limit?: string) {
+  whatsappListMessages(
+    @Query('limit') limit?: string,
+    @Query('routeId') routeId?: string,
+  ) {
     const n = limit ? parseInt(limit, 10) : 80;
-    return this.jobOfferWhatsapp.listMessages(Number.isFinite(n) ? n : 80);
+    return this.jobOfferWhatsapp.listMessages(
+      Number.isFinite(n) ? n : 80,
+      routeId?.trim() || undefined,
+    );
   }
 
   @Public()

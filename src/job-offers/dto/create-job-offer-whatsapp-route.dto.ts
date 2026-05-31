@@ -8,32 +8,30 @@ import {
   MaxLength,
 } from 'class-validator';
 
-export class UpdateJobOfferWhatsappConfigDto {
-  @IsOptional()
+export class CreateJobOfferWhatsappRouteDto {
   @IsString()
   @Matches(/@(g\.us|newsletter)$/i, {
     message: 'JID inválido (deve terminar em @g.us ou @newsletter).',
   })
   @MaxLength(120)
-  sourceGroupJid?: string | null;
+  sourceGroupJid!: string;
 
   @IsOptional()
   @IsString()
   @MaxLength(160)
-  sourceTitle?: string | null;
+  sourceTitle?: string;
 
-  @IsOptional()
   @IsString()
   @Matches(/@(g\.us|newsletter)$/i, {
     message: 'JID inválido (deve terminar em @g.us ou @newsletter).',
   })
   @MaxLength(120)
-  destGroupJid?: string | null;
+  destGroupJid!: string;
 
   @IsOptional()
   @IsString()
   @MaxLength(160)
-  destTitle?: string | null;
+  destTitle?: string;
 
   @IsOptional()
   @IsArray()
@@ -43,9 +41,9 @@ export class UpdateJobOfferWhatsappConfigDto {
 
   @IsOptional()
   @IsBoolean()
-  monitorAllMembers?: boolean;
+  active?: boolean;
 
   @IsOptional()
   @IsBoolean()
-  active?: boolean;
+  monitorAllMembers?: boolean;
 }
