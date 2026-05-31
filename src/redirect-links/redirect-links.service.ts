@@ -15,6 +15,10 @@ import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import { CreatePartnerShareLinkDto } from './dto/create-partner-share-link.dto';
 import { UpdatePartnerShareLinkDto } from './dto/update-partner-share-link.dto';
+import {
+  isIgnoredRedirectClickCountry,
+  mergeRedirectClickMetricsWhere,
+} from './redirect-click-metrics';
 
 function normalizeWhatsappDigits(raw: string): string {
   return String(raw ?? '')
@@ -374,6 +378,7 @@ export class RedirectLinksService {
         clickedAt: { gte: range.gte, lte: range.lte },
       };
     }
+    where = mergeRedirectClickMetricsWhere(where);
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.redirectClickEvent.findMany({
@@ -523,42 +528,6 @@ export class RedirectLinksService {
     const frontend = getFrontendBaseUrl();
     const range = this.parseOptionalDateRange(params?.from, params?.to);
 
-    let customCountMap = new Map<string, number>();
-    let houseCountMap = new Map<string, number>();
-
-    if (range) {
-      const [customGb, houseGb] = await Promise.all([
-        this.prisma.redirectClickEvent.groupBy({
-          by: ['partnerShareLinkId'],
-          where: {
-            kind: RedirectClickKind.CUSTOM_LINK,
-            partnerShareLinkId: { not: null },
-            clickedAt: { gte: range.gte, lte: range.lte },
-          },
-          _count: { _all: true },
-        }),
-        this.prisma.redirectClickEvent.groupBy({
-          by: ['partnerHouseId'],
-          where: {
-            kind: RedirectClickKind.HOUSE,
-            partnerHouseId: { not: null },
-            clickedAt: { gte: range.gte, lte: range.lte },
-          },
-          _count: { _all: true },
-        }),
-      ]);
-      for (const row of customGb) {
-        if (row.partnerShareLinkId) {
-          customCountMap.set(row.partnerShareLinkId, row._count._all);
-        }
-      }
-      for (const row of houseGb) {
-        if (row.partnerHouseId) {
-          houseCountMap.set(row.partnerHouseId, row._count._all);
-        }
-      }
-    }
-
     /** Exclui links gerados em Parceiros (contacto hero / serviços) — só links criados pelo admin aqui. */
     const customRows = await this.prisma.partnerShareLink.findMany({
       where: {
@@ -566,10 +535,29 @@ export class RedirectLinksService {
         serviceContact: null,
       },
       orderBy: { createdAt: 'desc' },
-      include: {
-        _count: { select: { clicks: true } },
-      },
     });
+
+    const customIds = customRows.map((c) => c.id);
+    const customGb =
+      customIds.length > 0
+        ? await this.prisma.redirectClickEvent.groupBy({
+            by: ['partnerShareLinkId'],
+            where: mergeRedirectClickMetricsWhere({
+              kind: RedirectClickKind.CUSTOM_LINK,
+              partnerShareLinkId: { in: customIds },
+              ...(range
+                ? { clickedAt: { gte: range.gte, lte: range.lte } }
+                : {}),
+            }),
+            _count: { _all: true },
+          })
+        : [];
+    const customCountMap = new Map<string, number>();
+    for (const row of customGb) {
+      if (row.partnerShareLinkId) {
+        customCountMap.set(row.partnerShareLinkId, row._count._all);
+      }
+    }
 
     const customLinks = customRows
       .map((c) => ({
@@ -580,9 +568,7 @@ export class RedirectLinksService {
         whatsappPhrase: c.whatsappPhrase,
         destinationUrl: c.destinationUrl,
         ogImageUrl: c.ogImageUrl,
-        clickCount: range
-          ? (customCountMap.get(c.id) ?? 0)
-          : c._count.clicks,
+        clickCount: customCountMap.get(c.id) ?? 0,
         createdAt: c.createdAt.toISOString(),
         entryUrl: `${frontend}/whatsapp?t=${encodeURIComponent(c.slug)}`,
         exitUrlPreview: shareLinkExitUrl(c),
@@ -604,9 +590,30 @@ export class RedirectLinksService {
         imageUrls: true,
         videoPosterUrl: true,
         partner: { select: { name: true } },
-        _count: { select: { redirectClicks: true } },
       },
     });
+
+    const houseIds = houseRows.map((h) => h.id);
+    const houseGb =
+      houseIds.length > 0
+        ? await this.prisma.redirectClickEvent.groupBy({
+            by: ['partnerHouseId'],
+            where: mergeRedirectClickMetricsWhere({
+              kind: RedirectClickKind.HOUSE,
+              partnerHouseId: { in: houseIds },
+              ...(range
+                ? { clickedAt: { gte: range.gte, lte: range.lte } }
+                : {}),
+            }),
+            _count: { _all: true },
+          })
+        : [];
+    const houseCountMap = new Map<string, number>();
+    for (const row of houseGb) {
+      if (row.partnerHouseId) {
+        houseCountMap.set(row.partnerHouseId, row._count._all);
+      }
+    }
 
     const houseLinks = houseRows
       .map((h) => ({
@@ -616,9 +623,7 @@ export class RedirectLinksService {
         priceEur: h.priceEur,
         partnerName: h.partner.name,
         previewImageUrl: partnerHousePreviewImageUrl(h),
-        clickCount: range
-          ? (houseCountMap.get(h.id) ?? 0)
-          : h._count.redirectClicks,
+        clickCount: houseCountMap.get(h.id) ?? 0,
         entryUrl: `${frontend}/imovel?id=${encodeURIComponent(String(h.houseId))}`,
         messagePreview: houseLeadWhatsAppMessage({
           houseId: h.houseId,
@@ -777,6 +782,9 @@ export class RedirectLinksService {
     partnerShareLinkId?: string;
     partnerHouseId?: string;
   }): Promise<void> {
+    if (isIgnoredRedirectClickCountry(params.visitorCountryCode)) {
+      return;
+    }
     try {
       await this.prisma.redirectClickEvent.create({
         data: {
