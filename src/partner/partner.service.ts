@@ -2478,8 +2478,8 @@ export class PartnerService {
     const requestedPageSize =
       typeof filters?.pageSize === 'string' && /^\d+$/.test(filters.pageSize)
         ? Math.max(1, Number(filters.pageSize))
-        : 10;
-    const pageSize = Math.min(10, requestedPageSize);
+        : 12;
+    const pageSize = Math.min(12, requestedPageSize);
 
     const now = new Date();
     const rows = (await this.prisma.partnerHouse.findMany({

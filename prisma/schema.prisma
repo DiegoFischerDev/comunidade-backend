@@ -772,6 +772,23 @@ model RecommendedService {
   @@map("recommended_services")
 }
 
+/**
+ * Oferta de trabalho exibida no dashboard público (/ofertas-trabalho).
+ */
+model JobOffer {
+  id          String   @id @default(cuid())
+  title       String
+  city        String
+  description String   @db.Text
+  publishedAt DateTime @map("published_at")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([active, publishedAt(sort: Desc)])
+  @@map("job_offers")
+}
+
 model RedirectClickEvent {
   id        String            @id @default(cuid())
   kind      RedirectClickKind

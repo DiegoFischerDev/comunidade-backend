@@ -21,6 +21,20 @@ export interface ScanExtractionResult {
   house: ScanExtractionHouse | null;
 }
 
+/** Campos de uma oferta de trabalho extraídos pela OpenAI. */
+export interface JobOfferExtraction {
+  title: string;
+  city: string;
+  description: string;
+  publishedAt: string;
+}
+
+export interface JobOfferParseResult {
+  isJobOffer: boolean;
+  confidence: number;
+  offer: JobOfferExtraction | null;
+}
+
 function parseEurAmount(raw: string): number | null {
   const cleaned = (raw ?? '').replace(/[^\d.,]/g, '').trim();
   if (!cleaned) return null;
@@ -70,6 +84,33 @@ A tua tarefa tem dois passos:
 Responde SEMPRE em JSON válido, sem texto adicional, no formato:
 {"isListing": boolean, "confidence": number (0..1), "house": {...} | null}
 Quando "isListing" for false, "house" deve ser null.`;
+}
+
+function buildJobOfferSystemPrompt(): string {
+  const now = new Date();
+  const todayIso = now.toISOString().slice(0, 10);
+  const year = now.getFullYear();
+  return `És um assistente que analisa mensagens e textos sobre emprego em Portugal.
+
+Contexto temporal: hoje é ${todayIso} (ano atual: ${year}).
+
+A tua tarefa tem dois passos:
+1) Classificar se o texto é uma OFERTA DE TRABALHO — ou seja, alguém (empresa, recrutador, agência) está a PUBLICAR uma vaga para contratar. NÃO é oferta de trabalho:
+   • mensagens de conversa, saudações, spam ou links genéricos;
+   • anúncios de imóveis, serviços, produtos ou eventos;
+   • candidatos à procura de emprego ("procuro trabalho", "disponível para...", CV de candidato);
+   • notícias, opiniões ou partilhas sem vaga concreta.
+2) Se e só se for oferta de trabalho, extrair os dados estruturados da vaga.
+
+Regras de extração (campo "offer", só quando isJobOffer for true):
+- "title": título curto da vaga (máx. ~120 caracteres), claro e específico (cargo + contexto se útil).
+- "city": cidade ou localidade principal em Portugal (ex.: "Lisboa", "Porto"). Se remoto sem cidade, "Remoto". Se várias, a principal ou "Várias".
+- "description": texto completo da oferta para o candidato — parágrafos com quebras de linha (\\n); mantém requisitos, benefícios, salário, horário e contacto do original. Não inventes dados.
+- "publishedAt": data de publicação AAAA-MM-DD; se não houver data no texto, usa ${todayIso}.
+
+Responde SEMPRE em JSON válido, sem texto adicional:
+{"isJobOffer": boolean, "confidence": number (0..1), "offer": {"title", "city", "description", "publishedAt"} | null}
+Quando "isJobOffer" for false, "offer" deve ser null.`;
 }
 
 function buildPartnerDescriptionSystemPrompt(): string {
@@ -236,6 +277,12 @@ export class HouseListingOpenAiService {
   /**
    * Extrai campos estruturados a partir da descrição escrita pelo parceiro (modal "Adicionar casa").
    */
+  async extractJobOfferFromText(rawText: string): Promise<JobOfferParseResult> {
+    const trimmed = rawText.trim();
+    const content = await this.chatJson(buildJobOfferSystemPrompt(), trimmed);
+    return this.normalizeJobOfferParseResponse(content, trimmed);
+  }
+
   async extractHouseFromDescription(
     rawText: string,
   ): Promise<ScanExtractionHouse> {
@@ -281,6 +328,65 @@ export class HouseListingOpenAiService {
     });
 
     return { isListing: true, confidence, house };
+  }
+
+  private normalizeJobOfferParseResponse(
+    content: string,
+    fallbackDescription: string,
+  ): JobOfferParseResult {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      this.logger.warn(
+        `Resposta da OpenAI (oferta) não é JSON válido: ${content.slice(0, 200)}`,
+      );
+      return { isJobOffer: false, confidence: 0, offer: null };
+    }
+
+    const obj = (parsed ?? {}) as Record<string, unknown>;
+    const isJobOffer = obj.isJobOffer === true;
+    const confidence =
+      typeof obj.confidence === 'number'
+        ? Math.min(1, Math.max(0, obj.confidence))
+        : 0;
+
+    if (!isJobOffer || obj.offer == null || typeof obj.offer !== 'object') {
+      return { isJobOffer, confidence, offer: null };
+    }
+
+    const offer = this.normalizeJobOfferFields(
+      obj.offer as Record<string, unknown>,
+      fallbackDescription,
+    );
+    if (!offer) {
+      return { isJobOffer: false, confidence, offer: null };
+    }
+
+    return { isJobOffer: true, confidence, offer };
+  }
+
+  private normalizeJobOfferFields(
+    raw: Record<string, unknown>,
+    fallbackDescription: string,
+  ): JobOfferExtraction | null {
+    const str = (v: unknown): string =>
+      typeof v === 'string' ? v.trim() : '';
+
+    const title = str(raw.title).slice(0, 200);
+    const city = str(raw.city).slice(0, 120);
+    const description = str(raw.description) || fallbackDescription;
+    if (!title || !city || !description) {
+      return null;
+    }
+
+    const publishedRaw = str(raw.publishedAt);
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const publishedAt = /^\d{4}-\d{2}-\d{2}/.test(publishedRaw)
+      ? publishedRaw.slice(0, 10)
+      : todayIso;
+
+    return { title, city, description, publishedAt };
   }
 
   private normalizePartnerHouseResponse(
