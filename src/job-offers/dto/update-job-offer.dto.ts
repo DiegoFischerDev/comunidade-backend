@@ -14,6 +14,11 @@ export class UpdateJobOfferDto {
 
   @IsOptional()
   @IsString()
+  @MinLength(1, { message: 'Função é obrigatória' })
+  jobFunction?: string;
+
+  @IsOptional()
+  @IsString()
   @MinLength(1, { message: 'Cidade é obrigatória' })
   city?: string;
 

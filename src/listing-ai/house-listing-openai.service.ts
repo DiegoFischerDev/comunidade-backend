@@ -24,6 +24,7 @@ export interface ScanExtractionResult {
 /** Campos de uma oferta de trabalho extraídos pela OpenAI. */
 export interface JobOfferExtraction {
   title: string;
+  jobFunction: string;
   city: string;
   description: string;
   publishedAt: string;
@@ -103,13 +104,14 @@ A tua tarefa tem dois passos:
 2) Se e só se for oferta de trabalho, extrair os dados estruturados da vaga.
 
 Regras de extração (campo "offer", só quando isJobOffer for true):
-- "title": título curto da vaga (máx. ~120 caracteres), claro e específico (cargo + contexto se útil).
+- "title": título curto da vaga (máx. ~120 caracteres) — empresa, contexto ou resumo da oportunidade.
+- "jobFunction": função/cargo a desempenhar (ex.: "Empregado de mesa", "Canalizador", "Assistente administrativo"). Obrigatório; máx. ~80 caracteres; só o cargo, sem cidade.
 - "city": cidade ou localidade principal em Portugal (ex.: "Lisboa", "Porto"). Se remoto sem cidade, "Remoto". Se várias, a principal ou "Várias".
 - "description": texto completo da oferta para o candidato — parágrafos com quebras de linha (\\n); mantém requisitos, benefícios, salário, horário e contacto do original. Não inventes dados.
 - "publishedAt": data de publicação AAAA-MM-DD; se não houver data no texto, usa ${todayIso}.
 
 Responde SEMPRE em JSON válido, sem texto adicional:
-{"isJobOffer": boolean, "confidence": number (0..1), "offer": {"title", "city", "description", "publishedAt"} | null}
+{"isJobOffer": boolean, "confidence": number (0..1), "offer": {"title", "jobFunction", "city", "description", "publishedAt"} | null}
 Quando "isJobOffer" for false, "offer" deve ser null.`;
 }
 
@@ -374,9 +376,10 @@ export class HouseListingOpenAiService {
       typeof v === 'string' ? v.trim() : '';
 
     const title = str(raw.title).slice(0, 200);
+    const jobFunction = str(raw.jobFunction).slice(0, 120);
     const city = str(raw.city).slice(0, 120);
     const description = str(raw.description) || fallbackDescription;
-    if (!title || !city || !description) {
+    if (!title || !jobFunction || !city || !description) {
       return null;
     }
 
@@ -386,7 +389,7 @@ export class HouseListingOpenAiService {
       ? publishedRaw.slice(0, 10)
       : todayIso;
 
-    return { title, city, description, publishedAt };
+    return { title, jobFunction, city, description, publishedAt };
   }
 
   private normalizePartnerHouseResponse(

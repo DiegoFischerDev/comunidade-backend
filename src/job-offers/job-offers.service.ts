@@ -12,6 +12,7 @@ import { UpdateJobOfferDto } from './dto/update-job-offer.dto';
 function mapPublicRow(r: {
   id: string;
   title: string;
+  jobFunction: string;
   city: string;
   description: string;
   publishedAt: Date;
@@ -19,6 +20,7 @@ function mapPublicRow(r: {
   return {
     id: r.id,
     title: r.title,
+    jobFunction: r.jobFunction,
     city: r.city,
     description: r.description,
     publishedAt: r.publishedAt.toISOString(),
@@ -28,6 +30,7 @@ function mapPublicRow(r: {
 function mapAdminRow(r: {
   id: string;
   title: string;
+  jobFunction: string;
   city: string;
   description: string;
   publishedAt: Date;
@@ -38,6 +41,7 @@ function mapAdminRow(r: {
   return {
     id: r.id,
     title: r.title,
+    jobFunction: r.jobFunction,
     city: r.city,
     description: r.description,
     publishedAt: r.publishedAt.toISOString(),
@@ -106,6 +110,7 @@ export class JobOffersService {
       select: {
         id: true,
         title: true,
+        jobFunction: true,
         city: true,
         description: true,
         publishedAt: true,
@@ -128,6 +133,7 @@ export class JobOffersService {
     const row = await this.prisma.jobOffer.create({
       data: {
         title: dto.title.trim(),
+        jobFunction: dto.jobFunction.trim(),
         city: dto.city.trim(),
         description: dto.description.trim(),
         publishedAt,
@@ -143,6 +149,9 @@ export class JobOffersService {
       where: { id },
       data: {
         ...(dto.title != null ? { title: dto.title.trim() } : {}),
+        ...(dto.jobFunction != null
+          ? { jobFunction: dto.jobFunction.trim() }
+          : {}),
         ...(dto.city != null ? { city: dto.city.trim() } : {}),
         ...(dto.description != null
           ? { description: dto.description.trim() }

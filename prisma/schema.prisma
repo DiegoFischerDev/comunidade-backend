@@ -778,6 +778,8 @@ model RecommendedService {
 model JobOffer {
   id          String   @id @default(cuid())
   title       String
+  /** Função / cargo da vaga (ex.: "Empregado de mesa"). */
+  jobFunction String   @map("job_function")
   city        String
   description String   @db.Text
   publishedAt DateTime @map("published_at")

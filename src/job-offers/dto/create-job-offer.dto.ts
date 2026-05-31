@@ -12,6 +12,10 @@ export class CreateJobOfferDto {
   title: string;
 
   @IsString()
+  @MinLength(1, { message: 'Função é obrigatória' })
+  jobFunction: string;
+
+  @IsString()
   @MinLength(1, { message: 'Cidade é obrigatória' })
   city: string;
 
