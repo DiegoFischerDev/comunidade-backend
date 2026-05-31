@@ -82,6 +82,7 @@ export class JobOffersService {
       }
       return {
         title: extracted.title,
+        jobFunction: extracted.jobFunction,
         city: extracted.city,
         description: extracted.description,
         publishedAt: publishedAt.toISOString(),

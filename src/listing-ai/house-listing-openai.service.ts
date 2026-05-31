@@ -105,7 +105,7 @@ A tua tarefa tem dois passos:
 
 Regras de extração (campo "offer", só quando isJobOffer for true):
 - "title": título curto da vaga (máx. ~120 caracteres) — empresa, contexto ou resumo da oportunidade.
-- "jobFunction": função/cargo a desempenhar (ex.: "Empregado de mesa", "Canalizador", "Assistente administrativo"). Obrigatório; máx. ~80 caracteres; só o cargo, sem cidade.
+- "jobFunction" (obrigatório): função/cargo a desempenhar (ex.: "Empregado de mesa", "Canalizador"). Máx. ~80 caracteres; usa SEMPRE a chave JSON "jobFunction", nunca "funcao" nem "cargo".
 - "city": cidade ou localidade principal em Portugal (ex.: "Lisboa", "Porto"). Se remoto sem cidade, "Remoto". Se várias, a principal ou "Várias".
 - "description": texto completo da oferta para o candidato — parágrafos com quebras de linha (\\n); mantém requisitos, benefícios, salário, horário e contacto do original. Não inventes dados.
 - "publishedAt": data de publicação AAAA-MM-DD; se não houver data no texto, usa ${todayIso}.
@@ -376,7 +376,14 @@ export class HouseListingOpenAiService {
       typeof v === 'string' ? v.trim() : '';
 
     const title = str(raw.title).slice(0, 200);
-    const jobFunction = str(raw.jobFunction).slice(0, 120);
+    const jobFunction = (
+      str(raw.jobFunction) ||
+      str(raw.funcao) ||
+      str(raw['função']) ||
+      str(raw.function) ||
+      str(raw.cargo) ||
+      str(raw.role)
+    ).slice(0, 120);
     const city = str(raw.city).slice(0, 120);
     const description = str(raw.description) || fallbackDescription;
     if (!title || !jobFunction || !city || !description) {
