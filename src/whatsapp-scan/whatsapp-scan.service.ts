@@ -167,9 +167,9 @@ export class WhatsappScanService {
       );
     }
 
-    // Sem título informado: tenta obter o nome do grupo na Evolution (best-effort).
+    // Sem título informado: tenta obter o nome na Evolution (só grupos @g.us).
     let title = dto.title?.trim() || null;
-    if (!title) {
+    if (!title && /@g\.us$/i.test(groupJid)) {
       title = await this.whatsapp.getGroupSubject(groupJid);
     }
 
@@ -192,19 +192,19 @@ export class WhatsappScanService {
   /** Grupos da instância principal na Evolution (para o dropdown no admin). */
   async listEvolutionGroups(): Promise<{
     instance: string;
-    items: { groupJid: string; title: string }[];
+    items: { groupJid: string; title: string; kind: 'group' | 'channel' }[];
   }> {
     const instance = this.whatsapp.getPrimaryInstanceName();
-    const items = await this.whatsapp.fetchInstanceGroups(instance);
+    const items = await this.whatsapp.fetchInstanceGroupTargets(instance);
     return { instance, items };
   }
 
   /** Obtém o nome do grupo na Evolution a partir do JID (para preencher o título no painel). */
   async fetchGroupSubject(groupJid: string): Promise<{ subject: string | null }> {
     const jid = (groupJid || '').trim();
-    if (!/@g\.us$/i.test(jid)) {
+    if (!/@(g\.us|newsletter)$/i.test(jid)) {
       throw new BadRequestException(
-        'JID do grupo inválido (deve terminar em @g.us).',
+        'JID inválido (deve terminar em @g.us ou @newsletter).',
       );
     }
     const subject = await this.whatsapp.getGroupSubject(jid);

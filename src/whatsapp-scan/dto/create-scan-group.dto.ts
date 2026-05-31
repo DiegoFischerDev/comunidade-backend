@@ -20,8 +20,8 @@ export class CreateScanGroupDto {
   title?: string;
 
   @IsString()
-  @Matches(/@g\.us$/i, {
-    message: 'JID do grupo inválido (deve terminar em @g.us).',
+  @Matches(/@(g\.us|newsletter)$/i, {
+    message: 'JID inválido (deve terminar em @g.us ou @newsletter).',
   })
   @MaxLength(120)
   groupJid!: string;
