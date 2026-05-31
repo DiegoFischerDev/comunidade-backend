@@ -120,6 +120,15 @@ enum WhatsappScanMediaKind {
   VIDEO
 }
 
+/// Estado do processamento de mensagens WhatsApp para ofertas de trabalho.
+enum JobOfferWhatsappMessageStatus {
+  received
+  ignored_sender
+  ignored_not_offer
+  created
+  error
+}
+
 enum RedirectClickKind {
   CUSTOM_LINK
   HOUSE
@@ -787,8 +796,48 @@ model JobOffer {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  whatsappMessages JobOfferWhatsappMessage[]
+
   @@index([active, publishedAt(sort: Desc)])
   @@map("job_offers")
+}
+
+/// Configuração única da automação WhatsApp → ofertas de trabalho (origem, destino, filtros).
+model JobOfferWhatsappConfig {
+  id String @id @default("default")
+
+  /// Grupo/canal de onde as mensagens são lidas.
+  sourceGroupJid  String? @map("source_group_jid")
+  sourceTitle     String? @map("source_title")
+  /// Grupo/canal onde as ofertas identificadas são republicadas.
+  destGroupJid    String? @map("dest_group_jid")
+  destTitle       String? @map("dest_title")
+
+  monitoredNumbers  String[] @default([]) @map("monitored_numbers")
+  monitorAllMembers Boolean  @default(false) @map("monitor_all_members")
+  active            Boolean  @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("job_offer_whatsapp_config")
+}
+
+/// Log de mensagens processadas pela automação de ofertas de trabalho via WhatsApp.
+model JobOfferWhatsappMessage {
+  id                String                        @id @default(cuid())
+  senderNumber      String                        @map("sender_number")
+  externalMessageId String?                       @unique @map("external_message_id")
+  rawText           String                        @map("raw_text") @db.Text
+  status            JobOfferWhatsappMessageStatus @default(received)
+  parsedJson        Json?                         @map("parsed_json")
+  createdJobOfferId String?                       @map("created_job_offer_id")
+  createdJobOffer   JobOffer?                     @relation(fields: [createdJobOfferId], references: [id], onDelete: SetNull)
+  error             String?
+  createdAt         DateTime                      @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@map("job_offer_whatsapp_messages")
 }
 
 model RedirectClickEvent {

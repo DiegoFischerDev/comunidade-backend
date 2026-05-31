@@ -2,22 +2,31 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Public } from '../auth/public.decorator';
 import { Roles } from '../auth/roles.decorator';
+import { IngestMessageDto } from '../whatsapp-scan/dto/ingest-message.dto';
 import { CreateJobOfferDto } from './dto/create-job-offer.dto';
 import { ParseJobOfferFromTextDto } from './dto/parse-job-offer-from-text.dto';
 import { UpdateJobOfferDto } from './dto/update-job-offer.dto';
+import { UpdateJobOfferWhatsappConfigDto } from './dto/update-job-offer-whatsapp-config.dto';
+import { JobOfferWhatsappService } from './job-offer-whatsapp.service';
 import { JobOffersService } from './job-offers.service';
 
 @Controller('job-offers')
 export class JobOffersController {
-  constructor(private readonly jobOffersService: JobOffersService) {}
+  constructor(
+    private readonly jobOffersService: JobOffersService,
+    private readonly jobOfferWhatsapp: JobOfferWhatsappService,
+  ) {}
 
   @Public()
   @Get()
@@ -53,5 +62,45 @@ export class JobOffersController {
   @Roles(Role.ADMIN)
   adminDelete(@Param('id') id: string) {
     return this.jobOffersService.adminDelete(id);
+  }
+
+  // ===== WhatsApp (ofertas de trabalho) =====
+
+  @Get('whatsapp/config')
+  @Roles(Role.ADMIN)
+  whatsappGetConfig() {
+    return this.jobOfferWhatsapp.getConfig();
+  }
+
+  @Patch('whatsapp/config')
+  @Roles(Role.ADMIN)
+  whatsappUpdateConfig(@Body() dto: UpdateJobOfferWhatsappConfigDto) {
+    return this.jobOfferWhatsapp.updateConfig(dto);
+  }
+
+  @Get('whatsapp/evolution-groups')
+  @Roles(Role.ADMIN)
+  whatsappEvolutionGroups() {
+    return this.jobOfferWhatsapp.listEvolutionGroups();
+  }
+
+  @Get('whatsapp/messages')
+  @Roles(Role.ADMIN)
+  whatsappListMessages(@Query('limit') limit?: string) {
+    const n = limit ? parseInt(limit, 10) : 80;
+    return this.jobOfferWhatsapp.listMessages(Number.isFinite(n) ? n : 80);
+  }
+
+  @Public()
+  @Post('whatsapp/ingest')
+  whatsappIngest(
+    @Body() dto: IngestMessageDto,
+    @Headers('x-internal-secret') internalSecret?: string,
+  ) {
+    const expected = (process.env.COMMUNITY_INTERNAL_SECRET || '').trim();
+    if (!expected || (internalSecret ?? '').trim() !== expected) {
+      throw new ForbiddenException('Segredo interno inválido.');
+    }
+    return this.jobOfferWhatsapp.ingest(dto);
   }
 }
