@@ -1270,15 +1270,11 @@ export class PartnerService {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
     const cityLabel = this.formatHouseCityLabel(params.city);
-    const businessTypeLabel = this.formatHouseBusinessTypeLabel(
-      params.businessType,
-    );
     const entrada = this.formatHouseEntradaShortLine(
       params.caucoesCount,
       params.rendasEntradaCount,
     );
     const fee = params.relocationFeeEur.trim();
-    const mobilado = params.furnished ? 'Sim' : 'Não';
     const priceLabel =
       params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
     const priceValue = `${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`;
@@ -1286,30 +1282,26 @@ export class PartnerService {
     /** Sem `https://` para o WhatsApp não gerar preview com metadados no grupo. */
     const frontendHostPath = frontendBase.replace(/^https?:\/\//i, '');
     const partnerWaLink = `${frontendHostPath}/imovel?id=${encodeURIComponent(String(params.houseId))}`;
+    const purposeLine =
+      params.businessType === 'SALE'
+        ? '*Casa para venda*'
+        : '*Casa para arrendamento*';
     const lines = [
       `👆 *${params.title.trim()}*`,
       ``,
       ...(params.featured ? ['⭐ *Esse imóvel está em Destaque!*', ``] : []),
       `💶 *${priceLabel}:* ${priceValue}`,
       ``,
-      `*Id:* ${params.houseId}`,
-      ``,
-      `*Casa para ${params.businessType === 'SALE' ? 'venda' : 'arrendamento'}*`,
-      `📍 *Cidade:* ${cityLabel}`,
-      `🏘️ *Tipologia:* ${typologyLabel}`,
-      `🏷️ *Finalidade:* ${businessTypeLabel}`,
-      `🛋️ *Mobilado:* ${mobilado}`,
+      purposeLine,
+      `📍 ${cityLabel}`,
+      `🏘️ ${typologyLabel}`,
+      ...(params.furnished ? ['🛋️ Mobilado'] : []),
       `📅 *Disponível em:* ${datePt}`,
       `*Taxa relocation:* ${fee} €`,
       ...(entrada ? [`*Entrada:* ${entrada}`] : []),
-    ];
-    lines.push(
-      ``,
-      `📝 *Descrição:*`,
-      params.description.trim(),
       ``,
       `📲 *Falar com ${params.partnerName.trim() || 'o parceiro'}:* ${partnerWaLink}`,
-    );
+    ];
     return lines.join('\n');
   }
 
