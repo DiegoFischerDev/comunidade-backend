@@ -650,8 +650,12 @@ export class WhatsappScanService {
     try {
       const result =
         await this.partnerService.publishScannedHouseAutoShare(houseId);
+      const balanceNote =
+        'balanceEurCents' in result
+          ? `, saldo ${result.balanceEurCents} cêntimos`
+          : '';
       this.logger.log(
-        `Compartilhamento automático imóvel ${houseId}: ${result.sentToGroups} grupo(s), saldo ${result.balanceEurCents} cêntimos.`,
+        `Compartilhamento automático imóvel ${houseId}: ${result.sentToGroups} grupo(s)${balanceNote}.`,
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
