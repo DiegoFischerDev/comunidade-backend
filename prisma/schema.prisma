@@ -125,6 +125,7 @@ enum JobOfferWhatsappMessageStatus {
   received
   ignored_sender
   ignored_not_offer
+  ignored_no_contact
   created
   error
 }

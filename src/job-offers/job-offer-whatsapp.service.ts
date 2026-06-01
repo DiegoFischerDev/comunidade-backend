@@ -19,6 +19,7 @@ import {
 import { IngestMessageDto } from '../whatsapp-scan/dto/ingest-message.dto';
 import { CreateJobOfferWhatsappRouteDto } from './dto/create-job-offer-whatsapp-route.dto';
 import { UpdateJobOfferWhatsappRouteDto } from './dto/update-job-offer-whatsapp-route.dto';
+import { messageHasAdvertiserContact } from './job-offer-contact.util';
 
 type RouteRow = {
   id: string;
@@ -342,6 +343,13 @@ export class JobOfferWhatsappService {
     });
     if (claim.duplicate) return 'ignored_duplicate';
     const recordId = claim.id;
+
+    if (!messageHasAdvertiserContact(text)) {
+      await this.updateRecord(recordId, {
+        status: JobOfferWhatsappMessageStatus.ignored_no_contact,
+      });
+      return 'ignored_no_contact';
+    }
 
     if (!this.listingOpenAi.isConfigured()) {
       await this.updateRecord(recordId, {
