@@ -1,15 +1,56 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PartnerAdvertisingLedgerType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { buildAdvertisingBalanceZeroWhatsAppText } from './partner-advertising-balance-zero.notify';
 import { HOUSE_PUBLICATION_COST_EUR_CENTS } from './house-publication.constants';
 
 @Injectable()
 export class PartnerAdvertisingService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(PartnerAdvertisingService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly whatsapp: WhatsAppService,
+  ) {}
+
+  /** Avisa o parceiro por WhatsApp quando o saldo passa de >0 para 0. */
+  private notifyBalanceReachedZeroIfNeeded(
+    partnerId: string,
+    balanceBefore: number,
+    balanceAfter: number,
+  ): void {
+    if (balanceAfter !== 0 || balanceBefore <= 0) return;
+    void this.sendBalanceZeroWhatsApp(partnerId);
+  }
+
+  private async sendBalanceZeroWhatsApp(partnerId: string): Promise<void> {
+    try {
+      const partner = await this.prisma.partner.findUnique({
+        where: { id: partnerId },
+        select: { name: true, whatsapp: true },
+      });
+      const to = (partner?.whatsapp ?? '').trim();
+      if (!to) {
+        this.logger.warn(
+          `Saldo 0: parceiro ${partnerId} sem WhatsApp — notificação não enviada.`,
+        );
+        return;
+      }
+      const text = buildAdvertisingBalanceZeroWhatsAppText(partner?.name);
+      await this.whatsapp.sendText(to, text);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `Falha ao enviar WhatsApp de saldo 0 ao parceiro ${partnerId}: ${msg}`,
+      );
+    }
+  }
 
   async getBalance(partnerId: string): Promise<{ balanceEurCents: number }> {
     const partner = await this.prisma.partner.findUnique({
@@ -102,9 +143,13 @@ export class PartnerAdvertisingService {
 
       const delta = balanceEurCents - current.advertisingBalanceEurCents;
       if (delta === 0) {
-        return { balanceEurCents: current.advertisingBalanceEurCents };
+        return {
+          balanceEurCents: current.advertisingBalanceEurCents,
+          balanceBefore: current.advertisingBalanceEurCents,
+        };
       }
 
+      const balanceBefore = current.advertisingBalanceEurCents;
       const partner = await tx.partner.update({
         where: { id: partnerId },
         data: { advertisingBalanceEurCents: balanceEurCents },
@@ -122,7 +167,17 @@ export class PartnerAdvertisingService {
         },
       });
 
-      return { balanceEurCents: partner.advertisingBalanceEurCents };
+      return {
+        balanceEurCents: partner.advertisingBalanceEurCents,
+        balanceBefore,
+      };
+    }).then((result) => {
+      this.notifyBalanceReachedZeroIfNeeded(
+        partnerId,
+        result.balanceBefore,
+        result.balanceEurCents,
+      );
+      return { balanceEurCents: result.balanceEurCents };
     });
   }
 
@@ -135,38 +190,51 @@ export class PartnerAdvertisingService {
       throw new BadRequestException('Valor de débito inválido.');
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const partner = await tx.partner.findUnique({
-        where: { id: partnerId },
-        select: { advertisingBalanceEurCents: true },
-      });
-      if (!partner) throw new NotFoundException('Parceiro não encontrado.');
-      if (partner.advertisingBalanceEurCents < amountEurCents) {
-        throw new BadRequestException(
-          'Saldo de publicidade insuficiente. Adiciona saldo para publicar este imóvel.',
-        );
-      }
+    return this.prisma
+      .$transaction(async (tx) => {
+        const partner = await tx.partner.findUnique({
+          where: { id: partnerId },
+          select: { advertisingBalanceEurCents: true },
+        });
+        if (!partner) throw new NotFoundException('Parceiro não encontrado.');
+        if (partner.advertisingBalanceEurCents < amountEurCents) {
+          throw new BadRequestException(
+            'Saldo de publicidade insuficiente. Adiciona saldo para publicar este imóvel.',
+          );
+        }
 
-      const updated = await tx.partner.update({
-        where: { id: partnerId },
-        data: {
-          advertisingBalanceEurCents: { decrement: amountEurCents },
-        },
-        select: { advertisingBalanceEurCents: true },
-      });
+        const balanceBefore = partner.advertisingBalanceEurCents;
+        const updated = await tx.partner.update({
+          where: { id: partnerId },
+          data: {
+            advertisingBalanceEurCents: { decrement: amountEurCents },
+          },
+          select: { advertisingBalanceEurCents: true },
+        });
 
-      await tx.partnerAdvertisingLedgerEntry.create({
-        data: {
+        await tx.partnerAdvertisingLedgerEntry.create({
+          data: {
+            partnerId,
+            type: PartnerAdvertisingLedgerType.PUBLICATION_DEBIT,
+            amountEurCents: -amountEurCents,
+            balanceAfterEurCents: updated.advertisingBalanceEurCents,
+            partnerHouseId: houseId,
+          },
+        });
+
+        return {
+          balanceEurCents: updated.advertisingBalanceEurCents,
+          balanceBefore,
+        };
+      })
+      .then((result) => {
+        this.notifyBalanceReachedZeroIfNeeded(
           partnerId,
-          type: PartnerAdvertisingLedgerType.PUBLICATION_DEBIT,
-          amountEurCents: -amountEurCents,
-          balanceAfterEurCents: updated.advertisingBalanceEurCents,
-          partnerHouseId: houseId,
-        },
+          result.balanceBefore,
+          result.balanceEurCents,
+        );
+        return { balanceEurCents: result.balanceEurCents };
       });
-
-      return { balanceEurCents: updated.advertisingBalanceEurCents };
-    });
   }
 
   async refundPublicationDebit(
