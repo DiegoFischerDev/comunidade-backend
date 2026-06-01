@@ -69,6 +69,22 @@ function postedAtFromTimestamp(messageTimestamp?: number): Date {
  * (saudações, agradecimentos, conversa) são descartadas sem custo.
  * Conservador de propósito: na dúvida, deixa passar para a IA decidir.
  */
+/** Atraso (ms) antes de enviar imóvel scaneado aos grupos WhatsApp (compartilhamento automático). */
+function autoShareDelayMs(): number {
+  const raw = process.env.WHATSAPP_SCAN_AUTO_SHARE_DELAY_MS?.trim();
+  if (raw && /^\d+$/.test(raw)) {
+    const n = parseInt(raw, 10);
+    if (n >= 1000 && n <= 120_000) return n;
+  }
+  return 10_000;
+}
+
+type ScanGroupCtx = {
+  id: string;
+  partnerId: string;
+  autoShareEnabled: boolean;
+};
+
 function looksLikePropertyListing(text: string): boolean {
   const t = (text ?? '').trim();
   if (t.length < 20) return false;
@@ -102,6 +118,9 @@ export class WhatsappScanService {
    */
   private attachChain: Promise<void> = Promise.resolve();
 
+  /** Debounce por imóvel: espera mídia anexar antes do envio automático aos grupos. */
+  private readonly autoShareTimers = new Map<string, NodeJS.Timeout>();
+
   private runSerialized<T>(fn: () => Promise<T>): Promise<T> {
     const result = this.attachChain.then(fn, fn);
     this.attachChain = result.then(
@@ -131,6 +150,7 @@ export class WhatsappScanService {
         monitoredNumbers: r.monitoredNumbers,
         monitorAllMembers: r.monitorAllMembers,
         active: r.active,
+        autoShareEnabled: r.autoShareEnabled,
         messagesCount: r._count.messages,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
@@ -185,6 +205,7 @@ export class WhatsappScanService {
         monitoredNumbers: monitorAllMembers ? [] : monitoredNumbers,
         monitorAllMembers,
         active: dto.active ?? true,
+        autoShareEnabled: dto.autoShareEnabled ?? false,
       },
     });
   }
@@ -264,6 +285,9 @@ export class WhatsappScanService {
     }
     if (typeof dto.active === 'boolean') {
       data.active = dto.active;
+    }
+    if (typeof dto.autoShareEnabled === 'boolean') {
+      data.autoShareEnabled = dto.autoShareEnabled;
     }
 
     return this.prisma.whatsappScanGroup.update({ where: { id }, data });
@@ -464,6 +488,7 @@ export class WhatsappScanService {
         partnerId: true,
         monitoredNumbers: true,
         monitorAllMembers: true,
+        autoShareEnabled: true,
       },
     });
     if (!group) return { ok: true, status: 'ignored_group_not_monitored' };
@@ -602,9 +627,47 @@ export class WhatsappScanService {
   }
 
   /** Texto do anúncio: classifica, cria imóvel e anexa a mídia pendente do mesmo remetente. */
+  private scheduleAutoShareIfEnabled(
+    houseId: string,
+    scanGroupId: string,
+  ): void {
+    const existing = this.autoShareTimers.get(houseId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.autoShareTimers.delete(houseId);
+      void this.runAutoShare(houseId, scanGroupId);
+    }, autoShareDelayMs());
+    this.autoShareTimers.set(houseId, timer);
+  }
+
+  private async runAutoShare(houseId: string, scanGroupId: string): Promise<void> {
+    const group = await this.prisma.whatsappScanGroup.findUnique({
+      where: { id: scanGroupId },
+      select: { autoShareEnabled: true, active: true },
+    });
+    if (!group?.active || !group.autoShareEnabled) return;
+
+    try {
+      const result =
+        await this.partnerService.sendScannedHouseToWhatsappGroups(houseId);
+      this.logger.log(
+        `Compartilhamento automático imóvel ${houseId}: ${result.sentToGroups} grupo(s).`,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `Compartilhamento automático falhou (imóvel ${houseId}): ${msg}`,
+      );
+      await this.prisma.partnerHouse.update({
+        where: { id: houseId },
+        data: { whatsappError: msg.slice(0, 4000) },
+      });
+    }
+  }
+
   private async handleListingText(input: {
     recordId: string;
-    group: { id: string; partnerId: string };
+    group: ScanGroupCtx;
     senderNumber: string;
     text: string;
     postedAt: Date;
@@ -658,7 +721,11 @@ export class WhatsappScanService {
         senderNumber,
         house.id,
         postedAt,
+        group,
       );
+      if (group.autoShareEnabled) {
+        this.scheduleAutoShareIfEnabled(house.id, group.id);
+      }
       return { ok: true, status: 'created' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -675,7 +742,7 @@ export class WhatsappScanService {
   /** Mídia: carrega o ficheiro, guarda como pendente e, se a legenda for anúncio, cria já o imóvel. */
   private async handleMedia(input: {
     recordId: string;
-    group: { id: string; partnerId: string };
+    group: ScanGroupCtx;
     senderNumber: string;
     externalMessageId: string | null;
     kind: 'image' | 'video';
@@ -799,7 +866,11 @@ export class WhatsappScanService {
             senderNumber,
             house.id,
             postedAt,
+            group,
           );
+          if (group.autoShareEnabled) {
+            this.scheduleAutoShareIfEnabled(house.id, group.id);
+          }
           return { ok: true, status: 'created' };
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -827,11 +898,15 @@ export class WhatsappScanService {
           senderNumber,
           recentHouse.houseId,
           recentHouse.listingPostedAt,
+          group,
         );
         await this.updateRecord(recordId, {
           status: WhatsappScanMessageStatus.media_attached,
           createdHouseId: recentHouse.houseId,
         });
+        if (group.autoShareEnabled) {
+          this.scheduleAutoShareIfEnabled(recentHouse.houseId, group.id);
+        }
         return { ok: true, status: 'media_attached' };
       }
     }
@@ -897,6 +972,7 @@ export class WhatsappScanService {
     senderNumber: string,
     houseId: string,
     listingPostedAt: Date,
+    group?: ScanGroupCtx,
   ): Promise<void> {
     return this.runSerialized(() =>
       this.attachPendingMediaToHouseInner(
@@ -904,6 +980,7 @@ export class WhatsappScanService {
         senderNumber,
         houseId,
         listingPostedAt,
+        group,
       ),
     );
   }
@@ -913,6 +990,7 @@ export class WhatsappScanService {
     senderNumber: string,
     houseId: string,
     listingPostedAt: Date,
+    group?: ScanGroupCtx,
   ): Promise<void> {
     const since = new Date(Date.now() - mediaWindowMinutes() * 60 * 1000);
     const candidates = await this.prisma.whatsappScanPendingMedia.findMany({
@@ -975,6 +1053,10 @@ export class WhatsappScanService {
           createdHouseId: houseId,
         },
       });
+    }
+
+    if (group?.autoShareEnabled) {
+      this.scheduleAutoShareIfEnabled(houseId, group.id);
     }
   }
 

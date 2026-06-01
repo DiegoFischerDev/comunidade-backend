@@ -39,5 +39,9 @@ export class CreateScanGroupDto {
 
   @IsOptional()
   @IsBoolean()
+  autoShareEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   monitorAllMembers?: boolean;
 }

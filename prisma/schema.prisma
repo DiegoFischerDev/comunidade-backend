@@ -916,7 +916,10 @@ model WhatsappScanGroup {
   monitoredNumbers String[] @default([]) @map("monitored_numbers")
   /// true = monitoriza todas as mensagens do grupo (ignora `monitoredNumbers`).
   monitorAllMembers Boolean  @default(false) @map("monitor_all_members")
+  /// Scan ativo: mensagens do grupo são analisadas e podem criar imóveis rascunho.
   active           Boolean  @default(true)
+  /// Após criar imóvel via scan, envia automaticamente aos grupos WhatsApp (RENT/SALE).
+  autoShareEnabled Boolean  @default(false) @map("auto_share_enabled")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 

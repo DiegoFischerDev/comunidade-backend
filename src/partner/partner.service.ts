@@ -2705,6 +2705,13 @@ export class PartnerService {
   }
 
   /**
+   * Whatsapp scan: envia aos grupos ativos (RENT/SALE) sem alterar publicação no site.
+   */
+  async sendScannedHouseToWhatsappGroups(houseId: string) {
+    return this.sendHouseToRelocationWhatsappGroups(houseId);
+  }
+
+  /**
    * Envia o anúncio aos grupos ativos: imagens (ordem), vídeo, texto (formato existente).
    */
   private async sendHouseToRelocationWhatsappGroups(houseId: string) {
