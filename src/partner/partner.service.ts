@@ -18,6 +18,7 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import {
+  PartnerAdvertisingLedgerType,
   PartnerHouse,
   PartnerHousePublicationStatus,
   PartnerHouseTypology,
@@ -55,6 +56,7 @@ import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-reloca
 import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
 import { PartnerAdvertisingService } from './partner-advertising.service';
 import {
+  HOUSE_PUBLICATION_COST_EUR_CENTS,
   isHousePubliclyVisible,
   nextPublishedUntil,
 } from './house-publication.constants';
@@ -1250,6 +1252,16 @@ export class PartnerService {
     return `${c} · ${r}`;
   }
 
+  /** Texto da taxa relocation nas mensagens WhatsApp (0 ou vazio → «Não informada»). */
+  private formatRelocationFeeForWhatsapp(relocationFeeEur: string): string {
+    const fee = relocationFeeEur.trim();
+    if (!fee) return 'Não informada';
+    const normalized = fee.replace(/\s/g, '').replace(',', '.');
+    const num = parseFloat(normalized);
+    if (!Number.isFinite(num) || num <= 0) return 'Não informada';
+    return `${fee} €`;
+  }
+
   private formatHousePostText(params: {
     houseId: number;
     title: string;
@@ -1274,7 +1286,9 @@ export class PartnerService {
       params.caucoesCount,
       params.rendasEntradaCount,
     );
-    const fee = params.relocationFeeEur.trim();
+    const relocationFeeLine = this.formatRelocationFeeForWhatsapp(
+      params.relocationFeeEur,
+    );
     const priceLabel =
       params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
     const priceValue = `${params.priceEur.trim()}${params.businessType === 'SALE' ? '' : ' / mês'}`;
@@ -1297,7 +1311,7 @@ export class PartnerService {
       `🏘️ ${typologyLabel}`,
       ...(params.furnished ? ['🛋️ Mobilado'] : []),
       `📅 *Disponível em:* ${datePt}`,
-      `*Taxa relocation:* ${fee} €`,
+      `*Taxa relocation:* ${relocationFeeLine}`,
       ...(entrada ? [`*Entrada:* ${entrada}`] : []),
       ``,
       `📲 *Falar com ${params.partnerName.trim() || 'o parceiro'}:* ${partnerWaLink}`,
@@ -1716,7 +1730,7 @@ export class PartnerService {
     imageFiles: Express.Multer.File[],
     videoFile: Express.Multer.File | null,
     thumbnailFile: Express.Multer.File | null,
-    options: { strict: boolean },
+    options: { strict: boolean; publishAsPublished?: boolean },
   ) {
     const payload = options.strict
       ? this.partnerHouseCreatePayloadFromStrictDto(
@@ -1804,6 +1818,8 @@ export class PartnerService {
       }
     }
 
+    const now = new Date();
+    const publishAsPublished = options.publishAsPublished === true;
     const created = await this.prisma.partnerHouse.create({
       data: {
         partnerId,
@@ -1822,7 +1838,15 @@ export class PartnerService {
         coverImageUrl,
         videoUrl,
         videoPosterUrl,
-        hiddenAt: new Date(),
+        ...(publishAsPublished
+          ? {
+              publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
+              publishedUntil: nextPublishedUntil(null),
+              lastPublishedAt: now,
+              hiddenAt: null,
+              trashedAt: null,
+            }
+          : { hiddenAt: now }),
       } as any,
     });
 
@@ -1962,8 +1986,9 @@ export class PartnerService {
   }
 
   /**
-   * Cria um imóvel rascunho (HIDDEN, sem ficheiros) a partir dos dados extraídos por IA de uma
-   * mensagem de WhatsApp (feature "Whatsapp scan"). Valida que o parceiro existe e é relocation.
+   * Cria um imóvel (sem ficheiros) a partir dos dados extraídos por IA de uma mensagem de
+   * WhatsApp (feature "Whatsapp scan"). Por defeito fica oculto (HIDDEN); com
+   * `publishAsPublished` fica publicado no site (ex.: grupo com compartilhamento automático).
    * Reutiliza a normalização do caminho admin (`strict: false`).
    */
   async createDraftHouseFromScan(input: {
@@ -1979,6 +2004,7 @@ export class PartnerService {
     caucoesCount?: number;
     rendasEntradaCount?: number;
     furnished?: boolean;
+    publishAsPublished?: boolean;
   }) {
     const partner = await this.prisma.partner.findFirst({
       where: { id: input.partnerId, categorySlug: RELOCATION_CATEGORY_SLUG },
@@ -1988,6 +2014,15 @@ export class PartnerService {
       throw new BadRequestException(
         'Parceiro não encontrado ou não pertence à categoria Relocation.',
       );
+    }
+
+    if (input.publishAsPublished) {
+      const { balanceEurCents } = await this.advertising.getBalance(partner.id);
+      if (balanceEurCents < HOUSE_PUBLICATION_COST_EUR_CENTS) {
+        throw new BadRequestException(
+          'Saldo de publicidade insuficiente. Adiciona saldo para publicar este imóvel.',
+        );
+      }
     }
 
     const dto: AdminCreatePartnerHouseDto = {
@@ -2012,6 +2047,7 @@ export class PartnerService {
 
     return this.createHousePostForPartner(partner.id, dto, [], null, null, {
       strict: false,
+      publishAsPublished: input.publishAsPublished === true,
     });
   }
 
@@ -2705,7 +2741,44 @@ export class PartnerService {
   }
 
   /**
-   * Whatsapp scan: envia aos grupos ativos (RENT/SALE) sem alterar publicação no site.
+   * Whatsapp scan + compartilhamento automático: debita saldo, prolonga publicação no site e
+   * envia aos grupos relocation (RENT/SALE).
+   */
+  async publishScannedHouseAutoShare(houseId: string) {
+    return this.publishHouseToChannels(houseId, { chargePartner: true });
+  }
+
+  /** Reverte publicação provisória no scan quando o débito/envio automático falha. */
+  async unpublishHouseAfterAutoShareFailure(houseId: string): Promise<void> {
+    const house = await this.prisma.partnerHouse.findUnique({
+      where: { id: houseId },
+      select: { publicationStatus: true },
+    });
+    if (house?.publicationStatus !== PartnerHousePublicationStatus.PUBLISHED) {
+      return;
+    }
+    const debited = await this.prisma.partnerAdvertisingLedgerEntry.findFirst({
+      where: {
+        partnerHouseId: houseId,
+        type: PartnerAdvertisingLedgerType.PUBLICATION_DEBIT,
+      },
+      select: { id: true },
+    });
+    if (debited) return;
+
+    await this.prisma.partnerHouse.update({
+      where: { id: houseId },
+      data: {
+        publicationStatus: PartnerHousePublicationStatus.HIDDEN,
+        hiddenAt: new Date(),
+        publishedUntil: null,
+        lastPublishedAt: null,
+      },
+    });
+  }
+
+  /**
+   * Whatsapp scan (manual): envia aos grupos ativos (RENT/SALE) sem alterar publicação no site.
    */
   async sendScannedHouseToWhatsappGroups(houseId: string) {
     return this.sendHouseToRelocationWhatsappGroups(houseId);

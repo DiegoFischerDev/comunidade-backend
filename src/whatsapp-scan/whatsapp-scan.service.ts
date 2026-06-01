@@ -649,15 +649,24 @@ export class WhatsappScanService {
 
     try {
       const result =
-        await this.partnerService.sendScannedHouseToWhatsappGroups(houseId);
+        await this.partnerService.publishScannedHouseAutoShare(houseId);
       this.logger.log(
-        `Compartilhamento automático imóvel ${houseId}: ${result.sentToGroups} grupo(s).`,
+        `Compartilhamento automático imóvel ${houseId}: ${result.sentToGroups} grupo(s), saldo ${result.balanceEurCents} cêntimos.`,
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(
         `Compartilhamento automático falhou (imóvel ${houseId}): ${msg}`,
       );
+      try {
+        await this.partnerService.unpublishHouseAfterAutoShareFailure(houseId);
+      } catch (revertErr) {
+        this.logger.warn(
+          `Não foi possível reverter publicação após falha no auto-share (${houseId}): ${
+            revertErr instanceof Error ? revertErr.message : String(revertErr)
+          }`,
+        );
+      }
       await this.prisma.partnerHouse.update({
         where: { id: houseId },
         data: { whatsappError: msg.slice(0, 4000) },
@@ -708,6 +717,7 @@ export class WhatsappScanService {
       const house = await this.createHouseFromExtraction(
         group.partnerId,
         extraction,
+        group.autoShareEnabled,
       );
       // Marca o imóvel como criado ANTES de anexar, para que mídia concorrente (imagens ainda
       // a ser processadas noutras requisições) o encontre e se anexe (findRecentCreatedHouseId).
@@ -855,6 +865,7 @@ export class WhatsappScanService {
           const house = await this.createHouseFromExtraction(
             group.partnerId,
             extraction,
+            group.autoShareEnabled,
           );
           await this.updateRecord(recordId, {
             status: WhatsappScanMessageStatus.created,
@@ -944,10 +955,12 @@ export class WhatsappScanService {
   private createHouseFromExtraction(
     partnerId: string,
     extraction: ScanExtractionResult,
+    publishAsPublished: boolean,
   ) {
     const house = extraction.house!;
     return this.partnerService.createDraftHouseFromScan({
       partnerId,
+      publishAsPublished,
       title: house.title,
       description: house.description,
       businessType: house.businessType,
