@@ -1242,24 +1242,19 @@ export class PartnerService {
     });
   }
 
-  /** Texto curto: «2 cauções · 1 renda» (alinhado à página pública). */
-  private formatHouseEntradaShortLine(caucoes: number, rendas: number): string {
+  /** Entrada nas mensagens WhatsApp: «2 cauções + 1 renda + taxa de relocation». */
+  private formatHouseEntradaWhatsappLine(caucoes: number, rendas: number): string {
     const cNum = Number.isFinite(caucoes) ? caucoes : 0;
     const rNum = Number.isFinite(rendas) ? rendas : 0;
-    if (cNum <= 0 && rNum <= 0) return '';
-    const c = cNum === 1 ? '1 caução' : `${cNum} cauções`;
-    const r = rNum === 1 ? '1 renda' : `${rNum} rendas`;
-    return `${c} · ${r}`;
-  }
-
-  /** Texto da taxa relocation nas mensagens WhatsApp (0 ou vazio → «Não informada»). */
-  private formatRelocationFeeForWhatsapp(relocationFeeEur: string): string {
-    const fee = relocationFeeEur.trim();
-    if (!fee) return 'Não informada';
-    const normalized = fee.replace(/\s/g, '').replace(',', '.');
-    const num = parseFloat(normalized);
-    if (!Number.isFinite(num) || num <= 0) return 'Não informada';
-    return `${fee} €`;
+    const parts: string[] = [];
+    if (cNum > 0) {
+      parts.push(cNum === 1 ? '1 caução' : `${cNum} cauções`);
+    }
+    if (rNum > 0) {
+      parts.push(rNum === 1 ? '1 renda' : `${rNum} rendas`);
+    }
+    parts.push('taxa de relocation');
+    return parts.join(' + ');
   }
 
   private formatHousePostText(params: {
@@ -1282,12 +1277,9 @@ export class PartnerService {
     const datePt = params.availableFrom.toLocaleDateString('pt-PT');
     const typologyLabel = this.formatHouseTypologyLabel(params.typology);
     const cityLabel = this.formatHouseCityLabel(params.city);
-    const entrada = this.formatHouseEntradaShortLine(
+    const entrada = this.formatHouseEntradaWhatsappLine(
       params.caucoesCount,
       params.rendasEntradaCount,
-    );
-    const relocationFeeLine = this.formatRelocationFeeForWhatsapp(
-      params.relocationFeeEur,
     );
     const priceLabel =
       params.businessType === 'SALE' ? 'Preço de venda' : 'Renda';
@@ -1311,8 +1303,7 @@ export class PartnerService {
       `🏘️ ${typologyLabel}`,
       ...(params.furnished ? ['🛋️ Mobilado'] : []),
       `📅 *Disponível em:* ${datePt}`,
-      `*Taxa relocation:* ${relocationFeeLine}`,
-      ...(entrada ? [`*Entrada:* ${entrada}`] : []),
+      `*Entrada:* ${entrada}`,
       ``,
       `📲 *Falar com ${params.partnerName.trim() || 'o parceiro'}:* ${partnerWaLink}`,
     ];
