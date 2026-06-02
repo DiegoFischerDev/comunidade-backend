@@ -721,7 +721,7 @@ export class WhatsappScanService {
       const house = await this.createHouseFromExtraction(
         group.partnerId,
         extraction,
-        group.autoShareEnabled,
+        false,
       );
       // Marca o imóvel como criado ANTES de anexar, para que mídia concorrente (imagens ainda
       // a ser processadas noutras requisições) o encontre e se anexe (findRecentCreatedHouseId).
@@ -869,7 +869,7 @@ export class WhatsappScanService {
           const house = await this.createHouseFromExtraction(
             group.partnerId,
             extraction,
-            group.autoShareEnabled,
+            false,
           );
           await this.updateRecord(recordId, {
             status: WhatsappScanMessageStatus.created,

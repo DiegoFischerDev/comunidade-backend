@@ -190,6 +190,24 @@ export class PartnerAdvertisingService {
       throw new BadRequestException('Valor de débito inválido.');
     }
 
+    const existingDebit =
+      await this.prisma.partnerAdvertisingLedgerEntry.findFirst({
+        where: {
+          partnerId,
+          partnerHouseId: houseId,
+          type: PartnerAdvertisingLedgerType.PUBLICATION_DEBIT,
+        },
+        select: { balanceAfterEurCents: true },
+      });
+    if (existingDebit) {
+      const partner = await this.prisma.partner.findUnique({
+        where: { id: partnerId },
+        select: { advertisingBalanceEurCents: true },
+      });
+      if (!partner) throw new NotFoundException('Parceiro não encontrado.');
+      return { balanceEurCents: partner.advertisingBalanceEurCents };
+    }
+
     return this.prisma
       .$transaction(async (tx) => {
         const partner = await tx.partner.findUnique({
@@ -242,6 +260,28 @@ export class PartnerAdvertisingService {
     houseId: string,
     amountEurCents: number = HOUSE_PUBLICATION_COST_EUR_CENTS,
   ): Promise<void> {
+    const debited = await this.prisma.partnerAdvertisingLedgerEntry.findFirst({
+      where: {
+        partnerId,
+        partnerHouseId: houseId,
+        type: PartnerAdvertisingLedgerType.PUBLICATION_DEBIT,
+      },
+      select: { id: true },
+    });
+    if (!debited) return;
+
+    const alreadyRefunded =
+      await this.prisma.partnerAdvertisingLedgerEntry.findFirst({
+        where: {
+          partnerId,
+          partnerHouseId: houseId,
+          type: PartnerAdvertisingLedgerType.ADMIN_CREDIT,
+          note: 'Reembolso automático — falha total no envio WhatsApp',
+        },
+        select: { id: true },
+      });
+    if (alreadyRefunded) return;
+
     await this.prisma.$transaction(async (tx) => {
       const partner = await tx.partner.update({
         where: { id: partnerId },

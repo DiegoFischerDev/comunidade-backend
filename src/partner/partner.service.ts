@@ -56,7 +56,6 @@ import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-reloca
 import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
 import { PartnerAdvertisingService } from './partner-advertising.service';
 import {
-  HOUSE_PUBLICATION_COST_EUR_CENTS,
   isHousePubliclyVisible,
   nextPublishedUntil,
 } from './house-publication.constants';
@@ -1979,7 +1978,8 @@ export class PartnerService {
   /**
    * Cria um imóvel (sem ficheiros) a partir dos dados extraídos por IA de uma mensagem de
    * WhatsApp (feature "Whatsapp scan"). Por defeito fica oculto (HIDDEN); com
-   * `publishAsPublished` fica publicado no site (ex.: grupo com compartilhamento automático).
+   * `publishAsPublished` fica publicado no site (uso interno; scan com auto-share publica via
+   * `publishScannedHouseAutoShare` após débito).
    * Reutiliza a normalização do caminho admin (`strict: false`).
    */
   async createDraftHouseFromScan(input: {
@@ -2005,15 +2005,6 @@ export class PartnerService {
       throw new BadRequestException(
         'Parceiro não encontrado ou não pertence à categoria Relocation.',
       );
-    }
-
-    if (input.publishAsPublished) {
-      const { balanceEurCents } = await this.advertising.getBalance(partner.id);
-      if (balanceEurCents < HOUSE_PUBLICATION_COST_EUR_CENTS) {
-        throw new BadRequestException(
-          'Saldo de publicidade insuficiente. Adiciona saldo para publicar este imóvel.',
-        );
-      }
     }
 
     const dto: AdminCreatePartnerHouseDto = {
@@ -2674,6 +2665,7 @@ export class PartnerService {
         lastPublishedAt: true,
         hiddenAt: true,
         trashedAt: true,
+        whatsappSentAt: true,
       },
     });
     if (!house) {
@@ -2695,6 +2687,26 @@ export class PartnerService {
     const publishedUntil = nextPublishedUntil(house.publishedUntil);
     const now = new Date();
 
+    if (options.chargePartner && house.whatsappSentAt) {
+      await this.prisma.partnerHouse.update({
+        where: { id: houseId },
+        data: {
+          publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
+          publishedUntil,
+          lastPublishedAt: now,
+          hiddenAt: null,
+          trashedAt: null,
+        },
+      });
+      const balance = await this.advertising.getBalance(house.partnerId);
+      return {
+        sentToGroups: 0,
+        publishedUntil,
+        balanceEurCents: balance.balanceEurCents,
+        alreadySentToWhatsapp: true as const,
+      };
+    }
+
     try {
       await this.prisma.partnerHouse.update({
         where: { id: houseId },
@@ -2709,19 +2721,26 @@ export class PartnerService {
 
       const result = await this.sendHouseToRelocationWhatsappGroups(houseId);
 
-      if (options.chargePartner) {
-        const balance = await this.advertising.getBalance(house.partnerId);
-        return {
-          ...result,
-          publishedUntil,
-          balanceEurCents: balance.balanceEurCents,
-        };
-      }
-
-      return { ...result, publishedUntil };
+      const balance = options.chargePartner
+        ? await this.advertising.getBalance(house.partnerId)
+        : null;
+      return {
+        ...result,
+        publishedUntil,
+        ...(balance ? { balanceEurCents: balance.balanceEurCents } : {}),
+      };
     } catch (err) {
       if (options.chargePartner) {
-        await this.advertising.refundPublicationDebit(house.partnerId, houseId);
+        const after = await this.prisma.partnerHouse.findUnique({
+          where: { id: houseId },
+          select: { whatsappSentAt: true },
+        });
+        if (!after?.whatsappSentAt) {
+          await this.advertising.refundPublicationDebit(
+            house.partnerId,
+            houseId,
+          );
+        }
       }
       await this.prisma.partnerHouse.update({
         where: { id: houseId },
