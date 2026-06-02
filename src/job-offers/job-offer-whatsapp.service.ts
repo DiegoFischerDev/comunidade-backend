@@ -294,12 +294,17 @@ export class JobOfferWhatsappService {
         status: true,
         createdJobOfferId: true,
         error: true,
+        parsedJson: true,
+        sourceImageUrl: true,
         createdAt: true,
         scan: {
           select: {
             sourceTitle: true,
             sourceGroupJid: true,
           },
+        },
+        createdJobOffer: {
+          select: { imageUrl: true },
         },
       },
     });
@@ -315,6 +320,9 @@ export class JobOfferWhatsappService {
         status: r.status,
         createdJobOfferId: r.createdJobOfferId,
         error: r.error,
+        parsedJson: r.parsedJson ?? null,
+        imageUrl:
+          r.sourceImageUrl ?? r.createdJobOffer?.imageUrl ?? null,
         createdAt: r.createdAt.toISOString(),
       })),
     };
@@ -323,15 +331,17 @@ export class JobOfferWhatsappService {
   async ingest(dto: IngestMessageDto): Promise<{ ok: true; status: string }> {
     const text = (dto.text ?? '').trim();
     const groupJid = (dto.groupJid ?? '').trim();
+    const kind = dto.kind ?? 'text';
     if (!groupJid) return { ok: true, status: 'ignored_no_group' };
 
     const scans = await this.prisma.jobOfferWhatsappScan.findMany({
       where: { sourceGroupJid: groupJid, active: true },
       select: scanSelect,
     });
-    if (!scans.length) return { ok: true, status: 'ignored_no_scan' };
-
-    const kind = dto.kind ?? 'text';
+    if (!scans.length) {
+      this.logIngestOutcome('ignored_no_scan', groupJid, kind, text);
+      return { ok: true, status: 'ignored_no_scan' };
+    }
     const hasBase64 = !!dto.base64?.length;
     const canFetchMedia = !!dto.externalMessageId?.trim();
     const isImage = kind === 'image';
@@ -354,7 +364,21 @@ export class JobOfferWhatsappService {
     for (const scan of scans) {
       lastStatus = await this.processForScan(dto, scan, destByRegion);
     }
+    this.logIngestOutcome(lastStatus, groupJid, kind, text);
     return { ok: true, status: lastStatus };
+  }
+
+  /** Ativa com JOB_OFFER_WHATSAPP_LOG_INGEST=1 no servidor. */
+  private logIngestOutcome(
+    status: string,
+    groupJid: string,
+    kind: string,
+    text: string,
+  ): void {
+    if (process.env.JOB_OFFER_WHATSAPP_LOG_INGEST !== '1') return;
+    this.logger.log(
+      `ingest status=${status} group=${groupJid} kind=${kind} textLen=${text.length}`,
+    );
   }
 
   private async resolveImagePayload(
@@ -432,6 +456,26 @@ export class JobOfferWhatsappService {
       return 'error_media_no_bytes';
     }
 
+    let storedImageUrl: string | null = null;
+    if (isImage && imageMedia) {
+      try {
+        const buf = Buffer.from(imageMedia.base64, 'base64');
+        const stored = await this.imageStorage.processJobOfferImageBuffer(buf);
+        storedImageUrl = stored.publicUrl;
+        await this.updateRecord(recordId, {
+          status: JobOfferWhatsappMessageStatus.received,
+          sourceImageUrl: storedImageUrl,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await this.updateRecord(recordId, {
+          status: JobOfferWhatsappMessageStatus.error,
+          error: msg.slice(0, 1000),
+        });
+        return 'error_media';
+      }
+    }
+
     let parsed;
     try {
       if (isImage && imageMedia) {
@@ -489,23 +533,6 @@ export class JobOfferWhatsappService {
     const region = resolveJobOfferRegionFromCity(city);
     const destination = destByRegion.get(region);
 
-    let imageUrl: string | null = null;
-    if (isImage && imageMedia) {
-      try {
-        const buf = Buffer.from(imageMedia.base64, 'base64');
-        const stored = await this.imageStorage.processJobOfferImageBuffer(buf);
-        imageUrl = stored.publicUrl;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await this.updateRecord(recordId, {
-          status: JobOfferWhatsappMessageStatus.error,
-          parsedJson: parsed as unknown as Prisma.InputJsonValue,
-          error: msg.slice(0, 1000),
-        });
-        return 'error_media';
-      }
-    }
-
     try {
       const offer = await this.prisma.jobOffer.create({
         data: {
@@ -518,7 +545,7 @@ export class JobOfferWhatsappService {
           advertiserContacts: advertiserContacts as unknown as Prisma.InputJsonValue,
           publishedAt,
           region,
-          imageUrl,
+          imageUrl: storedImageUrl,
           active: true,
         },
       });
@@ -631,6 +658,7 @@ export class JobOfferWhatsappService {
       status: JobOfferWhatsappMessageStatus;
       parsedJson?: Prisma.InputJsonValue;
       createdJobOfferId?: string;
+      sourceImageUrl?: string | null;
       error?: string;
     },
   ) {
@@ -641,6 +669,9 @@ export class JobOfferWhatsappService {
         ...(data.parsedJson !== undefined ? { parsedJson: data.parsedJson } : {}),
         ...(data.createdJobOfferId !== undefined
           ? { createdJobOfferId: data.createdJobOfferId }
+          : {}),
+        ...(data.sourceImageUrl !== undefined
+          ? { sourceImageUrl: data.sourceImageUrl }
           : {}),
         ...(data.error !== undefined ? { error: data.error } : {}),
       },

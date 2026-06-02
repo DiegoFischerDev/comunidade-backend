@@ -866,6 +866,8 @@ model JobOfferWhatsappMessage {
   rawText           String                        @map("raw_text") @db.Text
   status            JobOfferWhatsappMessageStatus @default(received)
   parsedJson        Json?                         @map("parsed_json")
+  /** Screenshot guardado para análise (mesmo se a oferta for rejeitada). */
+  sourceImageUrl    String?                       @map("source_image_url") @db.VarChar(2048)
   createdJobOfferId String?                       @map("created_job_offer_id")
   createdJobOffer   JobOffer?                     @relation(fields: [createdJobOfferId], references: [id], onDelete: SetNull)
   error             String?
