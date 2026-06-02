@@ -165,6 +165,40 @@ export class JobOffersService {
     return rows.map(mapPublicRow);
   }
 
+  /** Detalhe público de uma oferta ativa (inclui mensagem WhatsApp original, se existir). */
+  async getPublicById(id: string) {
+    const row = await this.prisma.jobOffer.findFirst({
+      where: { id, active: true },
+      select: {
+        id: true,
+        title: true,
+        jobFunction: true,
+        city: true,
+        company: true,
+        summary: true,
+        description: true,
+        advertiserContacts: true,
+        publishedAt: true,
+      },
+    });
+    if (!row) {
+      throw new NotFoundException('Oferta de trabalho não encontrada.');
+    }
+
+    const source = await this.prisma.jobOfferWhatsappMessage.findFirst({
+      where: { createdJobOfferId: id },
+      orderBy: { createdAt: 'desc' },
+      select: { rawText: true },
+    });
+    const raw = source?.rawText?.trim() || '';
+    const sourceMessage = raw || row.description.trim();
+
+    return {
+      ...mapPublicRow(row),
+      sourceMessage,
+    };
+  }
+
   async adminList() {
     const rows = await this.prisma.jobOffer.findMany({
       orderBy: { publishedAt: 'desc' },

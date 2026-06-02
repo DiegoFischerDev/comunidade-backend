@@ -125,4 +125,10 @@ export class JobOffersController {
     }
     return this.jobOfferWhatsapp.ingest(dto);
   }
+
+  @Public()
+  @Get(':id')
+  getPublicById(@Param('id') id: string) {
+    return this.jobOffersService.getPublicById(id);
+  }
 }
