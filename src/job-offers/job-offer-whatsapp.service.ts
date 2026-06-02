@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  JobOfferRegion,
   JobOfferWhatsappMessageStatus,
   Prisma,
 } from '@prisma/client';
@@ -25,6 +26,11 @@ import {
   mergeAdvertiserContacts,
 } from './job-offer-contacts.util';
 import { formatJobOfferWhatsappText } from './job-offer-format.util';
+import {
+  JOB_OFFER_REGION_LABELS,
+  resolveJobOfferRegionFromCity,
+  shouldPublishOfferToRoute,
+} from './job-offer-region.util';
 
 type RouteRow = {
   id: string;
@@ -35,6 +41,7 @@ type RouteRow = {
   monitoredNumbers: string[];
   monitorAllMembers: boolean;
   active: boolean;
+  publishRegion: JobOfferRegion | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -49,6 +56,10 @@ function mapRouteRow(r: RouteRow) {
     monitoredNumbers: r.monitoredNumbers,
     monitorAllMembers: r.monitorAllMembers,
     active: r.active,
+    publishRegion: r.publishRegion,
+    publishRegionLabel: r.publishRegion
+      ? JOB_OFFER_REGION_LABELS[r.publishRegion]
+      : 'Todas',
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
@@ -63,6 +74,7 @@ const routeSelect = {
   monitoredNumbers: true,
   monitorAllMembers: true,
   active: true,
+  publishRegion: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -120,6 +132,7 @@ export class JobOfferWhatsappService {
           monitoredNumbers: monitorAllMembers ? [] : monitoredNumbers,
           monitorAllMembers,
           active: dto.active ?? true,
+          publishRegion: dto.publishRegion ?? null,
         },
         select: routeSelect,
       });
@@ -173,6 +186,9 @@ export class JobOfferWhatsappService {
     }
     if (typeof dto.active === 'boolean') {
       data.active = dto.active;
+    }
+    if (dto.publishRegion !== undefined) {
+      data.publishRegion = dto.publishRegion;
     }
 
     const nextSource =
@@ -375,21 +391,38 @@ export class JobOfferWhatsappService {
     }
 
     const destJid = route.destGroupJid.trim();
+    const city = extracted.city.trim();
+    const region = resolveJobOfferRegionFromCity(city);
 
     try {
       const offer = await this.prisma.jobOffer.create({
         data: {
           title: extracted.title.trim(),
           jobFunction: extracted.jobFunction.trim(),
-          city: extracted.city.trim(),
+          city,
           company: extracted.company.trim(),
           summary: extracted.summary.trim().slice(0, 500),
           description: extracted.description.trim(),
           advertiserContacts: advertiserContacts as unknown as Prisma.InputJsonValue,
           publishedAt,
+          region,
           active: true,
         },
       });
+
+      if (!shouldPublishOfferToRoute(region, route.publishRegion)) {
+        const regionLabel = JOB_OFFER_REGION_LABELS[region];
+        const routeLabel = route.publishRegion
+          ? JOB_OFFER_REGION_LABELS[route.publishRegion]
+          : '—';
+        await this.updateRecord(recordId, {
+          status: JobOfferWhatsappMessageStatus.skipped_region,
+          parsedJson: parsed as unknown as Prisma.InputJsonValue,
+          createdJobOfferId: offer.id,
+          error: `Oferta guardada (${regionLabel}); destino exige ${routeLabel}.`,
+        });
+        return 'skipped_region';
+      }
 
       const waText = formatJobOfferWhatsappText(offer);
       try {

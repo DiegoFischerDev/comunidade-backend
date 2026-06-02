@@ -1,7 +1,9 @@
+import { JobOfferRegion } from '@prisma/client';
 import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsEnum,
   IsOptional,
   IsString,
   Matches,
@@ -46,4 +48,9 @@ export class CreateJobOfferWhatsappRouteDto {
   @IsOptional()
   @IsBoolean()
   monitorAllMembers?: boolean;
+
+  /** Ex.: NORTE — só republica vagas dessa região no destino. Omitir = todas as regiões. */
+  @IsOptional()
+  @IsEnum(JobOfferRegion)
+  publishRegion?: JobOfferRegion;
 }

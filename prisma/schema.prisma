@@ -120,12 +120,20 @@ enum WhatsappScanMediaKind {
   VIDEO
 }
 
+/// Região de Portugal para filtro de republicação WhatsApp por grupo.
+enum JobOfferRegion {
+  NORTE
+  CENTRO
+  SUL
+}
+
 /// Estado do processamento de mensagens WhatsApp para ofertas de trabalho.
 enum JobOfferWhatsappMessageStatus {
   received
   ignored_sender
   ignored_not_offer
   ignored_no_contact
+  skipped_region
   created
   error
 }
@@ -801,6 +809,8 @@ model JobOffer {
   /** Contactos para candidatura: [{ type: "email"|"phone"|"url", value: string }]. */
   advertiserContacts Json @default("[]") @map("advertiser_contacts")
   publishedAt DateTime @map("published_at")
+  /** Região inferida a partir de `city` (filtro WhatsApp e futuros grupos regionais). */
+  region      JobOfferRegion @default(SUL)
   active      Boolean  @default(true)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -823,6 +833,8 @@ model JobOfferWhatsappRoute {
   monitoredNumbers  String[] @default([]) @map("monitored_numbers")
   monitorAllMembers Boolean  @default(false) @map("monitor_all_members")
   active            Boolean  @default(true)
+  /** Se definido, só republica no destino ofertas cuja `region` coincida (ex.: NORTE). */
+  publishRegion     JobOfferRegion? @map("publish_region")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

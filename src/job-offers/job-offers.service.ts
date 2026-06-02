@@ -14,6 +14,7 @@ import {
   type JobOfferAdvertiserContact,
 } from './job-offer-contacts.util';
 import { parseJobOfferRouteId } from './job-offer-resolve-id.util';
+import { resolveJobOfferRegionFromCity } from './job-offer-region.util';
 import {
   getJobOfferListPublishedFrom,
   getJobOfferRetentionCutoff,
@@ -88,10 +89,12 @@ function buildCreateData(dto: CreateJobOfferDto) {
     (dto.summary ?? '').trim() ||
     dto.description.trim().replace(/\s+/g, ' ').slice(0, 500);
   const contacts = normalizeAdvertiserContacts(dto.advertiserContacts ?? []);
+  const city = dto.city.trim();
   return {
     title: dto.title.trim(),
     jobFunction: dto.jobFunction.trim(),
-    city: dto.city.trim(),
+    city,
+    region: resolveJobOfferRegionFromCity(city),
     company: (dto.company ?? '').trim(),
     summary: summary.slice(0, 500),
     description: dto.description.trim(),
@@ -262,7 +265,12 @@ export class JobOffersService {
         ...(dto.jobFunction != null
           ? { jobFunction: dto.jobFunction.trim() }
           : {}),
-        ...(dto.city != null ? { city: dto.city.trim() } : {}),
+        ...(dto.city != null
+          ? {
+              city: dto.city.trim(),
+              region: resolveJobOfferRegionFromCity(dto.city.trim()),
+            }
+          : {}),
         ...(dto.company != null ? { company: dto.company.trim() } : {}),
         ...(dto.summary != null
           ? { summary: dto.summary.trim().slice(0, 500) }
