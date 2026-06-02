@@ -1,4 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import {
+  extractAdvertiserContactsFromText,
+  mergeAdvertiserContacts,
+  normalizeAdvertiserContacts,
+} from '../job-offers/job-offer-contacts.util';
 
 /** Campos estruturados de um imóvel extraídos pela OpenAI. */
 export interface ScanExtractionHouse {
@@ -26,8 +31,11 @@ export interface JobOfferExtraction {
   title: string;
   jobFunction: string;
   city: string;
+  company: string;
+  summary: string;
   description: string;
   publishedAt: string;
+  advertiserContacts: { type: 'email' | 'phone' | 'url'; value: string }[];
 }
 
 export interface JobOfferParseResult {
@@ -104,14 +112,17 @@ A tua tarefa tem dois passos:
 2) Se e só se for oferta de trabalho, extrair os dados estruturados da vaga.
 
 Regras de extração (campo "offer", só quando isJobOffer for true):
-- "title": título curto da vaga (máx. ~120 caracteres) — empresa, contexto ou resumo da oportunidade.
+- "title": título curto da vaga (máx. ~120 caracteres) — contexto ou resumo da oportunidade (não repitas só o nome da empresa aqui).
 - "jobFunction" (obrigatório): função/cargo a desempenhar (ex.: "Empregado de mesa", "Canalizador"). Máx. ~80 caracteres; usa SEMPRE a chave JSON "jobFunction", nunca "funcao" nem "cargo".
 - "city": cidade ou localidade principal em Portugal (ex.: "Lisboa", "Porto"). Se remoto sem cidade, "Remoto". Se várias, a principal ou "Várias".
-- "description": texto completo da oferta para o candidato — parágrafos com quebras de linha (\\n); mantém requisitos, benefícios, salário, horário e contacto do original. Não inventes dados.
+- "company": nome da empresa empregadora se estiver explícito no texto; senão "".
+- "summary": resumo breve e apelativo da vaga para candidatos (máx. 500 caracteres), com requisitos/perfil principais; quebras de linha com \\n; não inventes dados.
+- "description": texto completo da oferta — parágrafos com quebras de linha (\\n); mantém requisitos, benefícios, salário, horário e contacto do original. Não inventes dados.
+- "advertiserContacts": array de meios de contacto com o anunciante para candidaturas. Cada item: {"type": "email"|"phone"|"url", "value": string}. Inclui TODOS os emails, telemóveis/telemóveis PT e URLs de candidatura (site, formulário, LinkedIn, etc.) presentes no texto. Telefone só com dígitos (ex.: 351912345678). Email em minúsculas. URL completa com https:// quando possível. Array vazio só se não houver qualquer contacto.
 - "publishedAt": data de publicação AAAA-MM-DD; se não houver data no texto, usa ${todayIso}.
 
 Responde SEMPRE em JSON válido, sem texto adicional:
-{"isJobOffer": boolean, "confidence": number (0..1), "offer": {"title", "jobFunction", "city", "description", "publishedAt"} | null}
+{"isJobOffer": boolean, "confidence": number (0..1), "offer": {"title", "jobFunction", "city", "company", "summary", "description", "advertiserContacts", "publishedAt"} | null}
 Quando "isJobOffer" for false, "offer" deve ser null.`;
 }
 
@@ -385,7 +396,22 @@ export class HouseListingOpenAiService {
       str(raw.role)
     ).slice(0, 120);
     const city = str(raw.city).slice(0, 120);
+    const company = (
+      str(raw.company) || str(raw.empresa) || str(raw.employer)
+    ).slice(0, 200);
     const description = str(raw.description) || fallbackDescription;
+    let summary =
+      str(raw.summary) || str(raw.resumo) || str(raw.briefDescription);
+    if (!summary) {
+      summary = description.replace(/\s+/g, ' ').trim().slice(0, 500);
+    }
+    summary = summary.slice(0, 500);
+
+    const advertiserContacts = mergeAdvertiserContacts(
+      normalizeAdvertiserContacts(raw.advertiserContacts),
+      extractAdvertiserContactsFromText(fallbackDescription),
+    );
+
     if (!title || !jobFunction || !city || !description) {
       return null;
     }
@@ -396,7 +422,16 @@ export class HouseListingOpenAiService {
       ? publishedRaw.slice(0, 10)
       : todayIso;
 
-    return { title, jobFunction, city, description, publishedAt };
+    return {
+      title,
+      jobFunction,
+      city,
+      company,
+      summary,
+      description,
+      publishedAt,
+      advertiserContacts,
+    };
   }
 
   private normalizePartnerHouseResponse(

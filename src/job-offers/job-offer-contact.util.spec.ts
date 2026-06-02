@@ -1,4 +1,4 @@
-import { messageHasAdvertiserContact } from './job-offer-contact.util';
+import { messageHasAdvertiserContact } from './job-offer-contacts.util';
 
 describe('messageHasAdvertiserContact', () => {
   it('aceita e-mail', () => {

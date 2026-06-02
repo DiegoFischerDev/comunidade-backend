@@ -19,7 +19,12 @@ import {
 import { IngestMessageDto } from '../whatsapp-scan/dto/ingest-message.dto';
 import { CreateJobOfferWhatsappRouteDto } from './dto/create-job-offer-whatsapp-route.dto';
 import { UpdateJobOfferWhatsappRouteDto } from './dto/update-job-offer-whatsapp-route.dto';
-import { messageHasAdvertiserContact } from './job-offer-contact.util';
+import {
+  extractAdvertiserContactsFromText,
+  hasAdvertiserContact,
+  mergeAdvertiserContacts,
+} from './job-offer-contacts.util';
+import { formatJobOfferWhatsappText } from './job-offer-format.util';
 
 type RouteRow = {
   id: string;
@@ -61,33 +66,6 @@ const routeSelect = {
   createdAt: true,
   updatedAt: true,
 } as const;
-
-/** Texto republicado no grupo de destino. */
-export function formatJobOfferWhatsappText(offer: {
-  jobFunction: string;
-  title: string;
-  city: string;
-  description: string;
-}): string {
-  const lines: string[] = [];
-  const fn = offer.jobFunction.trim();
-  const city = offer.city.trim();
-  if (fn) {
-    lines.push(city ? `💼 *${fn}* — ${city}` : `💼 *${fn}*`);
-  } else if (city) {
-    lines.push(`💼 ${city}`);
-  } else {
-    lines.push('💼 Oferta de trabalho');
-  }
-  const title = offer.title.trim();
-  if (title) lines.push(title);
-  const desc = offer.description.trim();
-  if (desc) {
-    if (lines.length) lines.push('');
-    lines.push(desc);
-  }
-  return lines.join('\n').slice(0, 4000);
-}
 
 @Injectable()
 export class JobOfferWhatsappService {
@@ -344,13 +322,6 @@ export class JobOfferWhatsappService {
     if (claim.duplicate) return 'ignored_duplicate';
     const recordId = claim.id;
 
-    if (!messageHasAdvertiserContact(text)) {
-      await this.updateRecord(recordId, {
-        status: JobOfferWhatsappMessageStatus.ignored_no_contact,
-      });
-      return 'ignored_no_contact';
-    }
-
     if (!this.listingOpenAi.isConfigured()) {
       await this.updateRecord(recordId, {
         status: JobOfferWhatsappMessageStatus.error,
@@ -381,6 +352,18 @@ export class JobOfferWhatsappService {
     }
 
     const extracted = parsed.offer;
+    const advertiserContacts = mergeAdvertiserContacts(
+      extracted.advertiserContacts,
+      extractAdvertiserContactsFromText(text),
+    );
+    if (!hasAdvertiserContact(text, advertiserContacts)) {
+      await this.updateRecord(recordId, {
+        status: JobOfferWhatsappMessageStatus.ignored_no_contact,
+        parsedJson: parsed as unknown as Prisma.InputJsonValue,
+      });
+      return 'ignored_no_contact';
+    }
+
     const publishedAt = new Date(`${extracted.publishedAt}T12:00:00.000Z`);
     if (Number.isNaN(publishedAt.getTime())) {
       await this.updateRecord(recordId, {
@@ -399,7 +382,10 @@ export class JobOfferWhatsappService {
           title: extracted.title.trim(),
           jobFunction: extracted.jobFunction.trim(),
           city: extracted.city.trim(),
+          company: extracted.company.trim(),
+          summary: extracted.summary.trim().slice(0, 500),
           description: extracted.description.trim(),
+          advertiserContacts: advertiserContacts as unknown as Prisma.InputJsonValue,
           publishedAt,
           active: true,
         },

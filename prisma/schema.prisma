@@ -791,7 +791,13 @@ model JobOffer {
   /** Função / cargo da vaga (ex.: "Empregado de mesa"). */
   jobFunction String   @map("job_function")
   city        String
+  /** Empresa empregadora, se identificada no anúncio. */
+  company     String   @default("")
+  /** Resumo breve (máx. 500 caracteres) para WhatsApp e listagem. */
+  summary     String   @default("") @db.VarChar(500)
   description String   @db.Text
+  /** Contactos para candidatura: [{ type: "email"|"phone"|"url", value: string }]. */
+  advertiserContacts Json @default("[]") @map("advertiser_contacts")
   publishedAt DateTime @map("published_at")
   active      Boolean  @default(true)
   createdAt   DateTime @default(now()) @map("created_at")
