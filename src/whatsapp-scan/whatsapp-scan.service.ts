@@ -213,19 +213,19 @@ export class WhatsappScanService {
   /** Grupos da instância principal na Evolution (para o dropdown no admin). */
   async listEvolutionGroups(): Promise<{
     instance: string;
-    items: { groupJid: string; title: string; kind: 'group' | 'channel' }[];
+    items: { groupJid: string; title: string }[];
   }> {
     const instance = this.whatsapp.getPrimaryInstanceName();
-    const items = await this.whatsapp.fetchInstanceGroupTargets(instance);
+    const items = await this.whatsapp.fetchInstanceGroups(instance);
     return { instance, items };
   }
 
   /** Obtém o nome do grupo na Evolution a partir do JID (para preencher o título no painel). */
   async fetchGroupSubject(groupJid: string): Promise<{ subject: string | null }> {
     const jid = (groupJid || '').trim();
-    if (!/@(g\.us|newsletter)$/i.test(jid)) {
+    if (!/@g\.us$/i.test(jid)) {
       throw new BadRequestException(
-        'JID inválido (deve terminar em @g.us ou @newsletter).',
+        'JID inválido (deve terminar em @g.us).',
       );
     }
     const subject = await this.whatsapp.getGroupSubject(jid);

@@ -21,16 +21,16 @@ export class UpdateJobOfferWhatsappRouteDto {
 
   @IsOptional()
   @IsString()
-  @Matches(/@(g\.us|newsletter)$/i, {
-    message: 'JID inválido (deve terminar em @g.us ou @newsletter).',
+  @Matches(/@g\.us$/i, {
+    message: 'JID inválido (deve terminar em @g.us).',
   })
   @MaxLength(120)
   sourceGroupJid?: string;
 
   @IsOptional()
   @IsString()
-  @Matches(/@(g\.us|newsletter)$/i, {
-    message: 'JID inválido (deve terminar em @g.us ou @newsletter).',
+  @Matches(/@g\.us$/i, {
+    message: 'JID inválido (deve terminar em @g.us).',
   })
   @MaxLength(120)
   destGroupJid?: string;

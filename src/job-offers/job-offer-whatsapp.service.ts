@@ -221,7 +221,7 @@ export class JobOfferWhatsappService {
 
   async listEvolutionGroups() {
     const instance = this.whatsapp.getPrimaryInstanceName();
-    const items = await this.whatsapp.fetchInstanceGroupTargets(instance);
+    const items = await this.whatsapp.fetchInstanceGroups(instance);
     return { instance, items };
   }
 
