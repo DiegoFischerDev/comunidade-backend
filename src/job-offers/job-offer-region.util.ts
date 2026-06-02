@@ -206,11 +206,3 @@ export function resolveJobOfferRegionFromCity(city: string): JobOfferRegion {
   return best?.region ?? 'SUL';
 }
 
-/** Se a rota não define região (`null`), republica todas as ofertas. */
-export function shouldPublishOfferToRoute(
-  offerRegion: JobOfferRegion,
-  routePublishRegion: JobOfferRegion | null | undefined,
-): boolean {
-  if (routePublishRegion == null) return true;
-  return offerRegion === routePublishRegion;
-}

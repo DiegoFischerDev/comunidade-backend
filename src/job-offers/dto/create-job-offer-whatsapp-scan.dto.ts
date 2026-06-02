@@ -1,0 +1,37 @@
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+} from 'class-validator';
+
+export class CreateJobOfferWhatsappScanDto {
+  @IsString()
+  @Matches(/@g\.us$/i, {
+    message: 'JID inválido (deve terminar em @g.us).',
+  })
+  @MaxLength(120)
+  sourceGroupJid!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  sourceTitle?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  monitoredNumbers?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  monitorAllMembers?: boolean;
+}

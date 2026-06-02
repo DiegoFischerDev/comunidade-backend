@@ -17,8 +17,10 @@ import { IngestMessageDto } from '../whatsapp-scan/dto/ingest-message.dto';
 import { CreateJobOfferDto } from './dto/create-job-offer.dto';
 import { ParseJobOfferFromTextDto } from './dto/parse-job-offer-from-text.dto';
 import { UpdateJobOfferDto } from './dto/update-job-offer.dto';
-import { CreateJobOfferWhatsappRouteDto } from './dto/create-job-offer-whatsapp-route.dto';
-import { UpdateJobOfferWhatsappRouteDto } from './dto/update-job-offer-whatsapp-route.dto';
+import { JobOfferRegion } from '@prisma/client';
+import { CreateJobOfferWhatsappScanDto } from './dto/create-job-offer-whatsapp-scan.dto';
+import { UpdateJobOfferWhatsappScanDto } from './dto/update-job-offer-whatsapp-scan.dto';
+import { UpdateJobOfferWhatsappDestinationDto } from './dto/update-job-offer-whatsapp-destination.dto';
 import { JobOfferWhatsappService } from './job-offer-whatsapp.service';
 import { JobOffersService } from './job-offers.service';
 
@@ -67,31 +69,46 @@ export class JobOffersController {
 
   // ===== WhatsApp (ofertas de trabalho) =====
 
-  @Get('whatsapp/routes')
+  @Get('whatsapp/scans')
   @Roles(Role.ADMIN)
-  whatsappListRoutes() {
-    return this.jobOfferWhatsapp.listRoutes();
+  whatsappListScans() {
+    return this.jobOfferWhatsapp.listScans();
   }
 
-  @Post('whatsapp/routes')
+  @Post('whatsapp/scans')
   @Roles(Role.ADMIN)
-  whatsappCreateRoute(@Body() dto: CreateJobOfferWhatsappRouteDto) {
-    return this.jobOfferWhatsapp.createRoute(dto);
+  whatsappCreateScan(@Body() dto: CreateJobOfferWhatsappScanDto) {
+    return this.jobOfferWhatsapp.createScan(dto);
   }
 
-  @Patch('whatsapp/routes/:id')
+  @Patch('whatsapp/scans/:id')
   @Roles(Role.ADMIN)
-  whatsappUpdateRoute(
+  whatsappUpdateScan(
     @Param('id') id: string,
-    @Body() dto: UpdateJobOfferWhatsappRouteDto,
+    @Body() dto: UpdateJobOfferWhatsappScanDto,
   ) {
-    return this.jobOfferWhatsapp.updateRoute(id, dto);
+    return this.jobOfferWhatsapp.updateScan(id, dto);
   }
 
-  @Delete('whatsapp/routes/:id')
+  @Delete('whatsapp/scans/:id')
   @Roles(Role.ADMIN)
-  whatsappDeleteRoute(@Param('id') id: string) {
-    return this.jobOfferWhatsapp.deleteRoute(id);
+  whatsappDeleteScan(@Param('id') id: string) {
+    return this.jobOfferWhatsapp.deleteScan(id);
+  }
+
+  @Get('whatsapp/destinations')
+  @Roles(Role.ADMIN)
+  whatsappListDestinations() {
+    return this.jobOfferWhatsapp.listDestinations();
+  }
+
+  @Patch('whatsapp/destinations/:region')
+  @Roles(Role.ADMIN)
+  whatsappUpdateDestination(
+    @Param('region') region: JobOfferRegion,
+    @Body() dto: UpdateJobOfferWhatsappDestinationDto,
+  ) {
+    return this.jobOfferWhatsapp.updateDestination(region, dto);
   }
 
   @Get('whatsapp/evolution-groups')
@@ -104,12 +121,12 @@ export class JobOffersController {
   @Roles(Role.ADMIN)
   whatsappListMessages(
     @Query('limit') limit?: string,
-    @Query('routeId') routeId?: string,
+    @Query('scanId') scanId?: string,
   ) {
     const n = limit ? parseInt(limit, 10) : 80;
     return this.jobOfferWhatsapp.listMessages(
       Number.isFinite(n) ? n : 80,
-      routeId?.trim() || undefined,
+      scanId?.trim() || undefined,
     );
   }
 

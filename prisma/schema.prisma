@@ -134,6 +134,7 @@ enum JobOfferWhatsappMessageStatus {
   ignored_not_offer
   ignored_no_contact
   skipped_region
+  skipped_no_destination
   created
   error
 }
@@ -821,36 +822,42 @@ model JobOffer {
   @@map("job_offers")
 }
 
-/// Rota de automação WhatsApp: grupo de origem → grupo de destino (ofertas de trabalho).
-model JobOfferWhatsappRoute {
+/// Grupo WhatsApp monitorizado (origem) — mensagens viram ofertas no site.
+model JobOfferWhatsappScan {
   id String @id @default(cuid())
 
-  sourceGroupJid  String  @map("source_group_jid")
+  sourceGroupJid  String  @unique @map("source_group_jid")
   sourceTitle     String? @map("source_title")
-  destGroupJid    String  @map("dest_group_jid")
-  destTitle       String? @map("dest_title")
 
   monitoredNumbers  String[] @default([]) @map("monitored_numbers")
   monitorAllMembers Boolean  @default(false) @map("monitor_all_members")
   active            Boolean  @default(true)
-  /** Se definido, só republica no destino ofertas cuja `region` coincida (ex.: NORTE). */
-  publishRegion     JobOfferRegion? @map("publish_region")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   messages JobOfferWhatsappMessage[]
 
-  @@unique([sourceGroupJid, destGroupJid])
   @@index([sourceGroupJid, active])
-  @@map("job_offer_whatsapp_routes")
+  @@map("job_offer_whatsapp_scans")
+}
+
+/// Grupo de destino fixo por região (NORTE, CENTRO, SUL).
+model JobOfferWhatsappDestination {
+  region       JobOfferRegion @id
+  destGroupJid String?        @map("dest_group_jid")
+  destTitle    String?        @map("dest_title")
+  active       Boolean        @default(true)
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  @@map("job_offer_whatsapp_destinations")
 }
 
 /// Log de mensagens processadas pela automação de ofertas de trabalho via WhatsApp.
 model JobOfferWhatsappMessage {
   id                String                        @id @default(cuid())
-  routeId           String?                       @map("route_id")
-  route             JobOfferWhatsappRoute?        @relation(fields: [routeId], references: [id], onDelete: SetNull)
+  scanId            String?                       @map("scan_id")
+  scan              JobOfferWhatsappScan?         @relation(fields: [scanId], references: [id], onDelete: SetNull)
   senderNumber      String                        @map("sender_number")
   externalMessageId String?                       @map("external_message_id")
   rawText           String                        @map("raw_text") @db.Text
@@ -861,9 +868,9 @@ model JobOfferWhatsappMessage {
   error             String?
   createdAt         DateTime                      @default(now()) @map("created_at")
 
-  @@unique([routeId, externalMessageId])
+  @@unique([scanId, externalMessageId])
   @@index([createdAt(sort: Desc)])
-  @@index([routeId])
+  @@index([scanId])
   @@map("job_offer_whatsapp_messages")
 }
 

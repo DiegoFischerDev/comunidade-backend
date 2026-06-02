@@ -1,8 +1,4 @@
-import { JobOfferRegion } from '@prisma/client';
-import {
-  resolveJobOfferRegionFromCity,
-  shouldPublishOfferToRoute,
-} from './job-offer-region.util';
+import { resolveJobOfferRegionFromCity } from './job-offer-region.util';
 
 describe('resolveJobOfferRegionFromCity', () => {
   it('classifica cidades do Norte', () => {
@@ -26,13 +22,3 @@ describe('resolveJobOfferRegionFromCity', () => {
   });
 });
 
-describe('shouldPublishOfferToRoute', () => {
-  it('rota sem filtro publica tudo', () => {
-    expect(shouldPublishOfferToRoute('SUL', null)).toBe(true);
-  });
-
-  it('rota Norte só aceita Norte', () => {
-    expect(shouldPublishOfferToRoute('NORTE', 'NORTE')).toBe(true);
-    expect(shouldPublishOfferToRoute('SUL', 'NORTE')).toBe(false);
-  });
-});

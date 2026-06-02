@@ -4,7 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { JobOfferRegion, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { HouseListingOpenAiService } from '../listing-ai/house-listing-openai.service';
 import { CreateJobOfferDto } from './dto/create-job-offer.dto';
@@ -37,6 +37,7 @@ function mapPublicRow(r: {
   description: string;
   advertiserContacts: Prisma.JsonValue;
   publishedAt: Date;
+  region: JobOfferRegion;
 }) {
   return {
     id: r.id,
@@ -49,6 +50,7 @@ function mapPublicRow(r: {
     description: r.description,
     advertiserContacts: mapContactsJson(r.advertiserContacts),
     publishedAt: r.publishedAt.toISOString(),
+    region: r.region,
   };
 }
 
@@ -177,6 +179,7 @@ export class JobOffersService {
         description: true,
         advertiserContacts: true,
         publishedAt: true,
+        region: true,
       },
     });
     return rows.map(mapPublicRow);
@@ -215,6 +218,7 @@ export class JobOffersService {
         description: true,
         advertiserContacts: true,
         publishedAt: true,
+        region: true,
       },
     });
     if (!row) {

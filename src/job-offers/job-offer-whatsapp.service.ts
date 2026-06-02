@@ -18,8 +18,9 @@ import {
   phonesMatchMonitored,
 } from '../whatsapp-scan/phone-match.util';
 import { IngestMessageDto } from '../whatsapp-scan/dto/ingest-message.dto';
-import { CreateJobOfferWhatsappRouteDto } from './dto/create-job-offer-whatsapp-route.dto';
-import { UpdateJobOfferWhatsappRouteDto } from './dto/update-job-offer-whatsapp-route.dto';
+import { CreateJobOfferWhatsappScanDto } from './dto/create-job-offer-whatsapp-scan.dto';
+import { UpdateJobOfferWhatsappScanDto } from './dto/update-job-offer-whatsapp-scan.dto';
+import { UpdateJobOfferWhatsappDestinationDto } from './dto/update-job-offer-whatsapp-destination.dto';
 import {
   extractAdvertiserContactsFromText,
   hasAdvertiserContact,
@@ -29,53 +30,71 @@ import { formatJobOfferWhatsappText } from './job-offer-format.util';
 import {
   JOB_OFFER_REGION_LABELS,
   resolveJobOfferRegionFromCity,
-  shouldPublishOfferToRoute,
 } from './job-offer-region.util';
 
-type RouteRow = {
+const REGIONS: JobOfferRegion[] = ['NORTE', 'CENTRO', 'SUL'];
+
+type ScanRow = {
   id: string;
   sourceGroupJid: string;
   sourceTitle: string | null;
-  destGroupJid: string;
-  destTitle: string | null;
   monitoredNumbers: string[];
   monitorAllMembers: boolean;
   active: boolean;
-  publishRegion: JobOfferRegion | null;
   createdAt: Date;
   updatedAt: Date;
 };
 
-function mapRouteRow(r: RouteRow) {
+type DestinationRow = {
+  region: JobOfferRegion;
+  destGroupJid: string | null;
+  destTitle: string | null;
+  active: boolean;
+  updatedAt: Date;
+};
+
+function mapScanRow(r: ScanRow) {
   return {
     id: r.id,
     sourceGroupJid: r.sourceGroupJid,
     sourceTitle: r.sourceTitle,
-    destGroupJid: r.destGroupJid,
-    destTitle: r.destTitle,
     monitoredNumbers: r.monitoredNumbers,
     monitorAllMembers: r.monitorAllMembers,
     active: r.active,
-    publishRegion: r.publishRegion,
-    publishRegionLabel: r.publishRegion
-      ? JOB_OFFER_REGION_LABELS[r.publishRegion]
-      : 'Todas',
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
 }
 
-const routeSelect = {
+function mapDestinationRow(r: DestinationRow) {
+  const configured = Boolean(r.destGroupJid?.trim());
+  return {
+    region: r.region,
+    regionLabel: JOB_OFFER_REGION_LABELS[r.region],
+    destGroupJid: r.destGroupJid,
+    destTitle: r.destTitle,
+    active: r.active,
+    configured,
+    updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
+const scanSelect = {
   id: true,
   sourceGroupJid: true,
   sourceTitle: true,
-  destGroupJid: true,
-  destTitle: true,
   monitoredNumbers: true,
   monitorAllMembers: true,
   active: true,
-  publishRegion: true,
   createdAt: true,
+  updatedAt: true,
+} as const;
+
+const destinationSelect = {
+  region: true,
+  destGroupJid: true,
+  destTitle: true,
+  active: true,
   updatedAt: true,
 } as const;
 
@@ -89,23 +108,27 @@ export class JobOfferWhatsappService {
     private readonly whatsapp: WhatsAppService,
   ) {}
 
-  async listRoutes() {
-    const rows = await this.prisma.jobOfferWhatsappRoute.findMany({
-      orderBy: { createdAt: 'asc' },
-      select: routeSelect,
+  private async ensureDestinations(): Promise<DestinationRow[]> {
+    await this.prisma.jobOfferWhatsappDestination.createMany({
+      data: REGIONS.map((region) => ({ region, active: false })),
+      skipDuplicates: true,
     });
-    return { items: rows.map(mapRouteRow) };
+    return this.prisma.jobOfferWhatsappDestination.findMany({
+      orderBy: { region: 'asc' },
+      select: destinationSelect,
+    });
   }
 
-  async createRoute(dto: CreateJobOfferWhatsappRouteDto) {
-    const sourceGroupJid = dto.sourceGroupJid.trim();
-    const destGroupJid = dto.destGroupJid.trim();
-    if (sourceGroupJid === destGroupJid) {
-      throw new BadRequestException(
-        'O grupo de origem e o de destino não podem ser o mesmo.',
-      );
-    }
+  async listScans() {
+    const rows = await this.prisma.jobOfferWhatsappScan.findMany({
+      orderBy: { createdAt: 'asc' },
+      select: scanSelect,
+    });
+    return { items: rows.map(mapScanRow) };
+  }
 
+  async createScan(dto: CreateJobOfferWhatsappScanDto) {
+    const sourceGroupJid = dto.sourceGroupJid.trim();
     const monitoredNumbers = (dto.monitoredNumbers ?? [])
       .map((n) => canonicalPhoneDigits(n) || digitsOnly(n))
       .filter((n) => n.length > 0);
@@ -114,61 +137,48 @@ export class JobOfferWhatsappService {
       (dto.monitorAllMembers !== false && monitoredNumbers.length === 0);
 
     let sourceTitle = dto.sourceTitle?.trim() || null;
-    let destTitle = dto.destTitle?.trim() || null;
     if (!sourceTitle) {
       sourceTitle = await this.whatsapp.getGroupSubject(sourceGroupJid);
     }
-    if (!destTitle) {
-      destTitle = await this.whatsapp.getGroupSubject(destGroupJid);
-    }
 
     try {
-      const row = await this.prisma.jobOfferWhatsappRoute.create({
+      const row = await this.prisma.jobOfferWhatsappScan.create({
         data: {
           sourceGroupJid,
           sourceTitle,
-          destGroupJid,
-          destTitle,
           monitoredNumbers: monitorAllMembers ? [] : monitoredNumbers,
           monitorAllMembers,
           active: dto.active ?? true,
-          publishRegion: dto.publishRegion ?? null,
         },
-        select: routeSelect,
+        select: scanSelect,
       });
-      return mapRouteRow(row);
+      return mapScanRow(row);
     } catch (e) {
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === 'P2002'
       ) {
         throw new BadRequestException(
-          'Já existe uma rota com este par origem → destino.',
+          'Este grupo de origem já está configurado para scan.',
         );
       }
       throw e;
     }
   }
 
-  async updateRoute(id: string, dto: UpdateJobOfferWhatsappRouteDto) {
-    const existing = await this.prisma.jobOfferWhatsappRoute.findUnique({
+  async updateScan(id: string, dto: UpdateJobOfferWhatsappScanDto) {
+    const existing = await this.prisma.jobOfferWhatsappScan.findUnique({
       where: { id },
-      select: routeSelect,
+      select: scanSelect,
     });
-    if (!existing) throw new NotFoundException('Rota não encontrada.');
+    if (!existing) throw new NotFoundException('Grupo de scan não encontrado.');
 
-    const data: Prisma.JobOfferWhatsappRouteUpdateInput = {};
+    const data: Prisma.JobOfferWhatsappScanUpdateInput = {};
     if (typeof dto.sourceTitle === 'string') {
       data.sourceTitle = dto.sourceTitle.trim() || null;
     }
-    if (typeof dto.destTitle === 'string') {
-      data.destTitle = dto.destTitle.trim() || null;
-    }
     if (typeof dto.sourceGroupJid === 'string') {
       data.sourceGroupJid = dto.sourceGroupJid.trim();
-    }
-    if (typeof dto.destGroupJid === 'string') {
-      data.destGroupJid = dto.destGroupJid.trim();
     }
     if (Array.isArray(dto.monitoredNumbers)) {
       const nums = dto.monitoredNumbers
@@ -187,52 +197,84 @@ export class JobOfferWhatsappService {
     if (typeof dto.active === 'boolean') {
       data.active = dto.active;
     }
-    if (dto.publishRegion !== undefined) {
-      data.publishRegion = dto.publishRegion;
-    }
-
-    const nextSource =
-      typeof dto.sourceGroupJid === 'string'
-        ? dto.sourceGroupJid.trim()
-        : existing.sourceGroupJid;
-    const nextDest =
-      typeof dto.destGroupJid === 'string'
-        ? dto.destGroupJid.trim()
-        : existing.destGroupJid;
-    if (nextSource === nextDest) {
-      throw new BadRequestException(
-        'O grupo de origem e o de destino não podem ser o mesmo.',
-      );
-    }
 
     try {
-      const row = await this.prisma.jobOfferWhatsappRoute.update({
+      const row = await this.prisma.jobOfferWhatsappScan.update({
         where: { id },
         data,
-        select: routeSelect,
+        select: scanSelect,
       });
-      return mapRouteRow(row);
+      return mapScanRow(row);
     } catch (e) {
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === 'P2002'
       ) {
         throw new BadRequestException(
-          'Já existe uma rota com este par origem → destino.',
+          'Já existe outro scan com este grupo de origem.',
         );
       }
       throw e;
     }
   }
 
-  async deleteRoute(id: string) {
-    const existing = await this.prisma.jobOfferWhatsappRoute.findUnique({
+  async deleteScan(id: string) {
+    const existing = await this.prisma.jobOfferWhatsappScan.findUnique({
       where: { id },
       select: { id: true },
     });
-    if (!existing) throw new NotFoundException('Rota não encontrada.');
-    await this.prisma.jobOfferWhatsappRoute.delete({ where: { id } });
+    if (!existing) throw new NotFoundException('Grupo de scan não encontrado.');
+    await this.prisma.jobOfferWhatsappScan.delete({ where: { id } });
     return { ok: true as const };
+  }
+
+  async listDestinations() {
+    const rows = await this.ensureDestinations();
+    return { items: rows.map(mapDestinationRow) };
+  }
+
+  async updateDestination(
+    region: JobOfferRegion,
+    dto: UpdateJobOfferWhatsappDestinationDto,
+  ) {
+    if (!REGIONS.includes(region)) {
+      throw new BadRequestException('Região inválida.');
+    }
+    await this.ensureDestinations();
+
+    const data: Prisma.JobOfferWhatsappDestinationUpdateInput = {};
+    if (dto.destGroupJid !== undefined) {
+      const jid = dto.destGroupJid?.trim() || null;
+      data.destGroupJid = jid;
+    }
+    if (typeof dto.destTitle === 'string') {
+      data.destTitle = dto.destTitle.trim() || null;
+    }
+    if (typeof dto.active === 'boolean') {
+      data.active = dto.active;
+    }
+
+    const existing = await this.prisma.jobOfferWhatsappDestination.findUnique({
+      where: { region },
+      select: destinationSelect,
+    });
+    if (!existing) throw new NotFoundException('Destino não encontrado.');
+
+    let destGroupJid =
+      dto.destGroupJid !== undefined
+        ? dto.destGroupJid?.trim() || null
+        : existing.destGroupJid;
+    if (destGroupJid && !dto.destTitle?.trim() && dto.destGroupJid !== undefined) {
+      const title = await this.whatsapp.getGroupSubject(destGroupJid);
+      data.destTitle = title;
+    }
+
+    const row = await this.prisma.jobOfferWhatsappDestination.update({
+      where: { region },
+      data,
+      select: destinationSelect,
+    });
+    return mapDestinationRow(row);
   }
 
   async listEvolutionGroups() {
@@ -241,26 +283,24 @@ export class JobOfferWhatsappService {
     return { instance, items };
   }
 
-  async listMessages(limit = 80, routeId?: string) {
+  async listMessages(limit = 80, scanId?: string) {
     const rows = await this.prisma.jobOfferWhatsappMessage.findMany({
-      where: routeId ? { routeId } : undefined,
+      where: scanId ? { scanId } : undefined,
       orderBy: { createdAt: 'desc' },
       take: Math.min(200, Math.max(1, limit)),
       select: {
         id: true,
-        routeId: true,
+        scanId: true,
         senderNumber: true,
         rawText: true,
         status: true,
         createdJobOfferId: true,
         error: true,
         createdAt: true,
-        route: {
+        scan: {
           select: {
             sourceTitle: true,
-            destTitle: true,
             sourceGroupJid: true,
-            destGroupJid: true,
           },
         },
       },
@@ -268,9 +308,9 @@ export class JobOfferWhatsappService {
     return {
       items: rows.map((r) => ({
         id: r.id,
-        routeId: r.routeId,
-        routeLabel: r.route
-          ? `${r.route.sourceTitle ?? r.route.sourceGroupJid} → ${r.route.destTitle ?? r.route.destGroupJid}`
+        scanId: r.scanId,
+        scanLabel: r.scan
+          ? (r.scan.sourceTitle ?? r.scan.sourceGroupJid)
           : null,
         senderNumber: r.senderNumber,
         rawText: r.rawText.slice(0, 500),
@@ -287,11 +327,11 @@ export class JobOfferWhatsappService {
     const groupJid = (dto.groupJid ?? '').trim();
     if (!groupJid) return { ok: true, status: 'ignored_no_group' };
 
-    const routes = await this.prisma.jobOfferWhatsappRoute.findMany({
+    const scans = await this.prisma.jobOfferWhatsappScan.findMany({
       where: { sourceGroupJid: groupJid, active: true },
-      select: routeSelect,
+      select: scanSelect,
     });
-    if (!routes.length) return { ok: true, status: 'ignored_no_route' };
+    if (!scans.length) return { ok: true, status: 'ignored_no_scan' };
 
     const kind = dto.kind ?? 'text';
     if ((kind === 'image' || kind === 'video') && !text) {
@@ -299,30 +339,41 @@ export class JobOfferWhatsappService {
     }
     if (!text) return { ok: true, status: 'ignored_empty' };
 
-    let lastStatus = 'ignored_no_route';
-    for (const route of routes) {
-      lastStatus = await this.processForRoute(dto, route, text);
+    const destinations = await this.ensureDestinations();
+    const destByRegion = new Map(
+      destinations.map((d) => [d.region, d]),
+    );
+
+    let lastStatus = 'ignored_no_scan';
+    for (const scan of scans) {
+      lastStatus = await this.processForScan(
+        dto,
+        scan,
+        text,
+        destByRegion,
+      );
     }
     return { ok: true, status: lastStatus };
   }
 
-  private async processForRoute(
+  private async processForScan(
     dto: IngestMessageDto,
-    route: RouteRow,
+    scan: ScanRow,
     text: string,
+    destByRegion: Map<JobOfferRegion, DestinationRow>,
   ): Promise<string> {
     const senderNumber =
       canonicalPhoneDigits(dto.senderNumber) || digitsOnly(dto.senderNumber);
     const externalMessageId = dto.externalMessageId?.trim() || null;
 
-    if (!route.monitorAllMembers) {
+    if (!scan.monitorAllMembers) {
       if (
-        route.monitoredNumbers.length === 0 ||
-        !phonesMatchMonitored(senderNumber, route.monitoredNumbers)
+        scan.monitoredNumbers.length === 0 ||
+        !phonesMatchMonitored(senderNumber, scan.monitoredNumbers)
       ) {
         if (process.env.JOB_OFFER_WHATSAPP_LOG_SENDER === '1') {
           this.logger.warn(
-            `ignored_sender route=${route.id} sender=${senderNumber}`,
+            `ignored_sender scan=${scan.id} sender=${senderNumber}`,
           );
         }
         return 'ignored_sender';
@@ -330,7 +381,7 @@ export class JobOfferWhatsappService {
     }
 
     const claim = await this.claimMessage({
-      routeId: route.id,
+      scanId: scan.id,
       senderNumber,
       externalMessageId,
       rawText: text,
@@ -390,9 +441,9 @@ export class JobOfferWhatsappService {
       return 'error_invalid_date';
     }
 
-    const destJid = route.destGroupJid.trim();
     const city = extracted.city.trim();
     const region = resolveJobOfferRegionFromCity(city);
+    const destination = destByRegion.get(region);
 
     try {
       const offer = await this.prisma.jobOffer.create({
@@ -410,18 +461,16 @@ export class JobOfferWhatsappService {
         },
       });
 
-      if (!shouldPublishOfferToRoute(region, route.publishRegion)) {
+      const destJid = destination?.destGroupJid?.trim();
+      if (!destination?.active || !destJid) {
         const regionLabel = JOB_OFFER_REGION_LABELS[region];
-        const routeLabel = route.publishRegion
-          ? JOB_OFFER_REGION_LABELS[route.publishRegion]
-          : '—';
         await this.updateRecord(recordId, {
-          status: JobOfferWhatsappMessageStatus.skipped_region,
+          status: JobOfferWhatsappMessageStatus.skipped_no_destination,
           parsedJson: parsed as unknown as Prisma.InputJsonValue,
           createdJobOfferId: offer.id,
-          error: `Oferta guardada (${regionLabel}); destino exige ${routeLabel}.`,
+          error: `Oferta guardada (${regionLabel}); grupo de destino ${regionLabel} não configurado ou inativo.`,
         });
-        return 'skipped_region';
+        return 'skipped_no_destination';
       }
 
       const waText = formatJobOfferWhatsappText(offer);
@@ -432,13 +481,13 @@ export class JobOfferWhatsappService {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         this.logger.error(
-          `Oferta ${offer.id} criada mas falha WhatsApp (rota ${route.id}): ${msg}`,
+          `Oferta ${offer.id} criada mas falha WhatsApp (${region}): ${msg}`,
         );
         await this.updateRecord(recordId, {
           status: JobOfferWhatsappMessageStatus.created,
           parsedJson: parsed as unknown as Prisma.InputJsonValue,
           createdJobOfferId: offer.id,
-          error: `WhatsApp destino: ${msg.slice(0, 800)}`,
+          error: `WhatsApp destino (${JOB_OFFER_REGION_LABELS[region]}): ${msg.slice(0, 800)}`,
         });
         return 'created_whatsapp_failed';
       }
@@ -461,7 +510,7 @@ export class JobOfferWhatsappService {
   }
 
   private async claimMessage(input: {
-    routeId: string;
+    scanId: string;
     senderNumber: string;
     externalMessageId: string | null;
     rawText: string;
@@ -471,7 +520,7 @@ export class JobOfferWhatsappService {
       try {
         const created = await this.prisma.jobOfferWhatsappMessage.create({
           data: {
-            routeId: input.routeId,
+            scanId: input.scanId,
             senderNumber: input.senderNumber,
             externalMessageId: input.externalMessageId,
             rawText,
@@ -493,7 +542,7 @@ export class JobOfferWhatsappService {
 
     const recent = await this.prisma.jobOfferWhatsappMessage.findFirst({
       where: {
-        routeId: input.routeId,
+        scanId: input.scanId,
         senderNumber: input.senderNumber,
         rawText,
         createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
@@ -504,7 +553,7 @@ export class JobOfferWhatsappService {
 
     const created = await this.prisma.jobOfferWhatsappMessage.create({
       data: {
-        routeId: input.routeId,
+        scanId: input.scanId,
         senderNumber: input.senderNumber,
         rawText,
         status: JobOfferWhatsappMessageStatus.received,

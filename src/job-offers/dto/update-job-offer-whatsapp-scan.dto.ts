@@ -1,39 +1,26 @@
-import { JobOfferRegion } from '@prisma/client';
 import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
-  IsEnum,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
 } from 'class-validator';
 
-export class CreateJobOfferWhatsappRouteDto {
-  @IsString()
-  @Matches(/@g\.us$/i, {
-    message: 'JID inválido (deve terminar em @g.us).',
-  })
-  @MaxLength(120)
-  sourceGroupJid!: string;
-
+export class UpdateJobOfferWhatsappScanDto {
   @IsOptional()
   @IsString()
   @MaxLength(160)
   sourceTitle?: string;
 
+  @IsOptional()
   @IsString()
   @Matches(/@g\.us$/i, {
     message: 'JID inválido (deve terminar em @g.us).',
   })
   @MaxLength(120)
-  destGroupJid!: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(160)
-  destTitle?: string;
+  sourceGroupJid?: string;
 
   @IsOptional()
   @IsArray()
@@ -48,9 +35,4 @@ export class CreateJobOfferWhatsappRouteDto {
   @IsOptional()
   @IsBoolean()
   monitorAllMembers?: boolean;
-
-  /** Ex.: NORTE — só republica vagas dessa região no destino. Omitir = todas as regiões. */
-  @IsOptional()
-  @IsEnum(JobOfferRegion)
-  publishRegion?: JobOfferRegion;
 }
