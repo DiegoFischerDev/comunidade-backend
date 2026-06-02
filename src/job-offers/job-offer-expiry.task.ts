@@ -2,12 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { JOB_OFFER_RETENTION_DAYS } from './job-offer-expiry.constants';
-
-function publishedBeforeRetentionCutoff(days: number): Date {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d;
-}
+import { getJobOfferRetentionCutoff } from './job-offer-published-window.util';
 
 @Injectable()
 export class JobOfferExpiryTask {
@@ -15,10 +10,10 @@ export class JobOfferExpiryTask {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Remove ofertas publicadas há mais de 7 dias (`publishedAt`). */
+  /** Remove ofertas publicadas há mais de 15 dias (`publishedAt`). */
   @Cron(CronExpression.EVERY_HOUR)
   async purgeExpiredJobOffers(): Promise<void> {
-    const cutoff = publishedBeforeRetentionCutoff(JOB_OFFER_RETENTION_DAYS);
+    const cutoff = getJobOfferRetentionCutoff();
     const result = await this.prisma.jobOffer.deleteMany({
       where: { publishedAt: { lt: cutoff } },
     });

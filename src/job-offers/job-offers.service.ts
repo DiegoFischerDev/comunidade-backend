@@ -13,6 +13,11 @@ import {
   normalizeAdvertiserContacts,
   type JobOfferAdvertiserContact,
 } from './job-offer-contacts.util';
+import { parseJobOfferRouteId } from './job-offer-resolve-id.util';
+import {
+  getJobOfferListPublishedFrom,
+  getJobOfferRetentionCutoff,
+} from './job-offer-published-window.util';
 
 function mapContactsJson(
   value: Prisma.JsonValue | null | undefined,
@@ -22,6 +27,7 @@ function mapContactsJson(
 
 function mapPublicRow(r: {
   id: string;
+  publicNumber: number;
   title: string;
   jobFunction: string;
   city: string;
@@ -33,6 +39,7 @@ function mapPublicRow(r: {
 }) {
   return {
     id: r.id,
+    publicNumber: r.publicNumber,
     title: r.title,
     jobFunction: r.jobFunction,
     city: r.city,
@@ -46,6 +53,7 @@ function mapPublicRow(r: {
 
 function mapAdminRow(r: {
   id: string;
+  publicNumber: number;
   title: string;
   jobFunction: string;
   city: string;
@@ -60,6 +68,7 @@ function mapAdminRow(r: {
 }) {
   return {
     id: r.id,
+    publicNumber: r.publicNumber,
     title: r.title,
     jobFunction: r.jobFunction,
     city: r.city,
@@ -147,11 +156,16 @@ export class JobOffersService {
   }
 
   async listPublic() {
+    const listFrom = getJobOfferListPublishedFrom();
     const rows = await this.prisma.jobOffer.findMany({
-      where: { active: true },
+      where: {
+        active: true,
+        publishedAt: { gte: listFrom },
+      },
       orderBy: { publishedAt: 'desc' },
       select: {
         id: true,
+        publicNumber: true,
         title: true,
         jobFunction: true,
         city: true,
@@ -165,12 +179,31 @@ export class JobOffersService {
     return rows.map(mapPublicRow);
   }
 
-  /** Detalhe público de uma oferta ativa (inclui mensagem WhatsApp original, se existir). */
-  async getPublicById(id: string) {
+  /**
+   * Detalhe público por número (12) ou id interno legado (cuid).
+   * Inclui ofertas fora da listagem (mais de 2 dias) até à retenção de 15 dias.
+   */
+  async getPublicById(routeId: string) {
+    const parsed = parseJobOfferRouteId(routeId);
+    const retentionFrom = getJobOfferRetentionCutoff();
+    const where =
+      parsed.kind === 'publicNumber'
+        ? {
+            publicNumber: parseInt(parsed.value, 10),
+            active: true,
+            publishedAt: { gte: retentionFrom },
+          }
+        : {
+            id: parsed.value,
+            active: true,
+            publishedAt: { gte: retentionFrom },
+          };
+
     const row = await this.prisma.jobOffer.findFirst({
-      where: { id, active: true },
+      where,
       select: {
         id: true,
+        publicNumber: true,
         title: true,
         jobFunction: true,
         city: true,
@@ -186,7 +219,7 @@ export class JobOffersService {
     }
 
     const source = await this.prisma.jobOfferWhatsappMessage.findFirst({
-      where: { createdJobOfferId: id },
+      where: { createdJobOfferId: row.id },
       orderBy: { createdAt: 'desc' },
       select: { rawText: true },
     });

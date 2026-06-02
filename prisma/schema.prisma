@@ -787,6 +787,8 @@ model RecommendedService {
  */
 model JobOffer {
   id          String   @id @default(cuid())
+  /** Número público para URLs curtas (ex. /ofertas-trabalho/12). */
+  publicNumber Int     @unique @default(autoincrement()) @map("public_number")
   title       String
   /** Função / cargo da vaga (ex.: "Empregado de mesa"). */
   jobFunction String   @map("job_function")

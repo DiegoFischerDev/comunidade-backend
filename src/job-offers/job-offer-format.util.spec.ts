@@ -3,6 +3,7 @@ import { formatJobOfferWhatsappText } from './job-offer-format.util';
 describe('formatJobOfferWhatsappText', () => {
   it('formata mensagem padronizada com empresa e contactos', () => {
     const text = formatJobOfferWhatsappText({
+      publicNumber: 12,
       jobFunction: 'Gestor de Amostras',
       city: 'Braga',
       company: 'BECRI GROUP',
@@ -19,5 +20,7 @@ describe('formatJobOfferWhatsappText', () => {
     expect(text).toContain('rh@becrigroup.pt');
     expect(text).toContain('351666555888');
     expect(text).toContain('Perfil Pretendido');
+    expect(text).toContain('Mais detalhes:');
+    expect(text).toContain('/ofertas-trabalho/12');
   });
 });

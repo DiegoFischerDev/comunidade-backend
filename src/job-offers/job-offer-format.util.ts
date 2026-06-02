@@ -2,9 +2,11 @@ import {
   formatAdvertiserContactsLine,
   type JobOfferAdvertiserContact,
 } from './job-offer-contacts.util';
+import { formatJobOfferDetailsUrl } from './job-offer-public-url.util';
 
 /** Mensagem padronizada republicada no grupo WhatsApp de destino. */
 export function formatJobOfferWhatsappText(offer: {
+  publicNumber: number;
   jobFunction: string;
   city: string;
   company?: string | null;
@@ -38,11 +40,19 @@ export function formatJobOfferWhatsappText(offer: {
     lines.push(candidaturas);
   }
 
-  const summary = (offer.summary ?? '').trim();
-  if (summary) {
-    if (lines.length) lines.push('');
-    lines.push(summary);
+  const detailsLine = `Mais detalhes: ${formatJobOfferDetailsUrl(offer.publicNumber)}`;
+  const footer = `\n\n${detailsLine}`;
+  const header = lines.join('\n');
+  let summary = (offer.summary ?? '').trim();
+  const headerBlock = header.length ? `${header}\n\n` : '';
+  const maxSummaryLen = 4000 - headerBlock.length - footer.length;
+  if (summary && summary.length > maxSummaryLen && maxSummaryLen > 80) {
+    summary = `${summary.slice(0, maxSummaryLen - 1).trimEnd()}…`;
   }
 
-  return lines.join('\n').slice(0, 4000);
+  const parts: string[] = [];
+  if (header) parts.push(header);
+  if (summary) parts.push(summary);
+  parts.push(detailsLine);
+  return parts.join('\n\n').slice(0, 4000);
 }
