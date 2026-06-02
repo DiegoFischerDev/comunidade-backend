@@ -10,6 +10,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { HouseListingOpenAiService } from '../listing-ai/house-listing-openai.service';
+import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import {
@@ -21,12 +22,8 @@ import { IngestMessageDto } from '../whatsapp-scan/dto/ingest-message.dto';
 import { CreateJobOfferWhatsappScanDto } from './dto/create-job-offer-whatsapp-scan.dto';
 import { UpdateJobOfferWhatsappScanDto } from './dto/update-job-offer-whatsapp-scan.dto';
 import { UpdateJobOfferWhatsappDestinationDto } from './dto/update-job-offer-whatsapp-destination.dto';
-import {
-  extractAdvertiserContactsFromText,
-  hasAdvertiserContact,
-  mergeAdvertiserContacts,
-} from './job-offer-contacts.util';
 import { formatJobOfferWhatsappText } from './job-offer-format.util';
+import { validateParsedJobOffer } from './job-offer-parse-validation.util';
 import {
   JOB_OFFER_REGION_LABELS,
   resolveJobOfferRegionFromCity,
@@ -106,6 +103,7 @@ export class JobOfferWhatsappService {
     private readonly prisma: PrismaService,
     private readonly listingOpenAi: HouseListingOpenAiService,
     private readonly whatsapp: WhatsAppService,
+    private readonly imageStorage: HouseImageStorageService,
   ) {}
 
   private async ensureDestinations(): Promise<DestinationRow[]> {
@@ -334,10 +332,18 @@ export class JobOfferWhatsappService {
     if (!scans.length) return { ok: true, status: 'ignored_no_scan' };
 
     const kind = dto.kind ?? 'text';
-    if ((kind === 'image' || kind === 'video') && !text) {
-      return { ok: true, status: 'ignored_media_no_caption' };
+    const hasBase64 = !!dto.base64?.length;
+    const canFetchMedia = !!dto.externalMessageId?.trim();
+    const isImage = kind === 'image';
+    const processableImage =
+      isImage && (hasBase64 || canFetchMedia);
+
+    if (kind === 'video' && !text) {
+      return { ok: true, status: 'ignored_media_video' };
     }
-    if (!text) return { ok: true, status: 'ignored_empty' };
+    if (!text && !processableImage) {
+      return { ok: true, status: 'ignored_empty' };
+    }
 
     const destinations = await this.ensureDestinations();
     const destByRegion = new Map(
@@ -346,22 +352,41 @@ export class JobOfferWhatsappService {
 
     let lastStatus = 'ignored_no_scan';
     for (const scan of scans) {
-      lastStatus = await this.processForScan(
-        dto,
-        scan,
-        text,
-        destByRegion,
-      );
+      lastStatus = await this.processForScan(dto, scan, destByRegion);
     }
     return { ok: true, status: lastStatus };
+  }
+
+  private async resolveImagePayload(
+    dto: IngestMessageDto,
+  ): Promise<{ base64: string; mimeType: string } | null> {
+    let base64 = dto.base64?.trim() || '';
+    let mimeType = dto.mimeType?.trim() || 'image/jpeg';
+
+    if (!base64 && dto.externalMessageId?.trim()) {
+      const instance = dto.instance?.trim() || this.whatsapp.getPrimaryInstanceName();
+      const fetched = await this.whatsapp.getMediaBase64(
+        instance,
+        dto.externalMessageId.trim(),
+      );
+      if (fetched) {
+        base64 = fetched.base64;
+        mimeType = mimeType || fetched.mimetype || 'image/jpeg';
+      }
+    }
+
+    if (!base64) return null;
+    return { base64, mimeType };
   }
 
   private async processForScan(
     dto: IngestMessageDto,
     scan: ScanRow,
-    text: string,
     destByRegion: Map<JobOfferRegion, DestinationRow>,
   ): Promise<string> {
+    const text = (dto.text ?? '').trim();
+    const kind = dto.kind ?? 'text';
+    const isImage = kind === 'image';
     const senderNumber =
       canonicalPhoneDigits(dto.senderNumber) || digitsOnly(dto.senderNumber);
     const externalMessageId = dto.externalMessageId?.trim() || null;
@@ -380,11 +405,12 @@ export class JobOfferWhatsappService {
       }
     }
 
+    const claimRaw = text || (isImage ? '[image]' : '');
     const claim = await this.claimMessage({
       scanId: scan.id,
       senderNumber,
       externalMessageId,
-      rawText: text,
+      rawText: claimRaw,
     });
     if (claim.duplicate) return 'ignored_duplicate';
     const recordId = claim.id;
@@ -397,9 +423,26 @@ export class JobOfferWhatsappService {
       return 'error_openai_config';
     }
 
+    const imageMedia = isImage ? await this.resolveImagePayload(dto) : null;
+    if (isImage && !imageMedia) {
+      await this.updateRecord(recordId, {
+        status: JobOfferWhatsappMessageStatus.error,
+        error: 'Imagem sem bytes (Webhook Base64 / Evolution getBase64).',
+      });
+      return 'error_media_no_bytes';
+    }
+
     let parsed;
     try {
-      parsed = await this.listingOpenAi.extractJobOfferFromText(text);
+      if (isImage && imageMedia) {
+        parsed = await this.listingOpenAi.extractJobOfferFromImage(
+          imageMedia.base64,
+          imageMedia.mimeType,
+          text,
+        );
+      } else {
+        parsed = await this.listingOpenAi.extractJobOfferFromText(text);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.error(`OpenAI (job offer whatsapp): ${msg}`);
@@ -410,40 +453,58 @@ export class JobOfferWhatsappService {
       return 'error_openai';
     }
 
-    if (!parsed.isJobOffer || !parsed.offer) {
+    const textForContacts = [text, parsed.offer?.description ?? '']
+      .filter(Boolean)
+      .join('\n');
+    const validation = validateParsedJobOffer(parsed, textForContacts);
+
+    if (!validation.ok) {
+      const statusByReason: Record<
+        typeof validation.reason,
+        JobOfferWhatsappMessageStatus
+      > = {
+        not_offer: JobOfferWhatsappMessageStatus.ignored_not_offer,
+        no_city: JobOfferWhatsappMessageStatus.ignored_no_city,
+        no_contact: JobOfferWhatsappMessageStatus.ignored_no_contact,
+        invalid_date: JobOfferWhatsappMessageStatus.error,
+      };
       await this.updateRecord(recordId, {
-        status: JobOfferWhatsappMessageStatus.ignored_not_offer,
+        status: statusByReason[validation.reason],
         parsedJson: parsed as unknown as Prisma.InputJsonValue,
+        ...(validation.reason === 'invalid_date'
+          ? { error: 'Data de publicação inválida' }
+          : {}),
       });
-      return 'ignored_not_offer';
+      return validation.reason === 'invalid_date'
+        ? 'error_invalid_date'
+        : validation.reason === 'no_city'
+          ? 'ignored_no_city'
+          : validation.reason === 'no_contact'
+            ? 'ignored_no_contact'
+            : 'ignored_not_offer';
     }
 
-    const extracted = parsed.offer;
-    const advertiserContacts = mergeAdvertiserContacts(
-      extracted.advertiserContacts,
-      extractAdvertiserContactsFromText(text),
-    );
-    if (!hasAdvertiserContact(text, advertiserContacts)) {
-      await this.updateRecord(recordId, {
-        status: JobOfferWhatsappMessageStatus.ignored_no_contact,
-        parsedJson: parsed as unknown as Prisma.InputJsonValue,
-      });
-      return 'ignored_no_contact';
-    }
-
+    const { offer: extracted, advertiserContacts, city } = validation;
     const publishedAt = new Date(`${extracted.publishedAt}T12:00:00.000Z`);
-    if (Number.isNaN(publishedAt.getTime())) {
-      await this.updateRecord(recordId, {
-        status: JobOfferWhatsappMessageStatus.error,
-        parsedJson: parsed as unknown as Prisma.InputJsonValue,
-        error: 'Data de publicação inválida',
-      });
-      return 'error_invalid_date';
-    }
-
-    const city = extracted.city.trim();
     const region = resolveJobOfferRegionFromCity(city);
     const destination = destByRegion.get(region);
+
+    let imageUrl: string | null = null;
+    if (isImage && imageMedia) {
+      try {
+        const buf = Buffer.from(imageMedia.base64, 'base64');
+        const stored = await this.imageStorage.processJobOfferImageBuffer(buf);
+        imageUrl = stored.publicUrl;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await this.updateRecord(recordId, {
+          status: JobOfferWhatsappMessageStatus.error,
+          parsedJson: parsed as unknown as Prisma.InputJsonValue,
+          error: msg.slice(0, 1000),
+        });
+        return 'error_media';
+      }
+    }
 
     try {
       const offer = await this.prisma.jobOffer.create({
@@ -457,6 +518,7 @@ export class JobOfferWhatsappService {
           advertiserContacts: advertiserContacts as unknown as Prisma.InputJsonValue,
           publishedAt,
           region,
+          imageUrl,
           active: true,
         },
       });

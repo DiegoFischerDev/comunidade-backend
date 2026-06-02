@@ -255,6 +255,25 @@ export class HouseImageStorageService {
     return this.processHouseImageBuffer(buf);
   }
 
+  /** Imagem de oferta de trabalho (screenshot WhatsApp) → WebP em `job-offers/`. */
+  async processJobOfferImageBuffer(buf: Buffer): Promise<{ publicUrl: string }> {
+    if (!buf?.length) {
+      throw new Error('Imagem inválida (sem conteúdo).');
+    }
+    let webp: Buffer;
+    try {
+      webp = await sharp(buf)
+        .rotate()
+        .resize(1600, 1600, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 80 })
+        .toBuffer();
+    } catch (e) {
+      this.logger.warn(`sharp falhou (oferta): ${e}`);
+      throw new Error('Não foi possível processar esta imagem.');
+    }
+    return { publicUrl: await this.uploadWebpToPrefix(webp, 'job-offers') };
+  }
+
   /** Converte um buffer de imagem para WebP e grava (R2/disco). Para mídia capturada (scan). */
   async processHouseImageBuffer(buf: Buffer): Promise<{ publicUrl: string }> {
     if (!buf?.length) {
@@ -271,12 +290,19 @@ export class HouseImageStorageService {
       this.logger.warn(`sharp falhou ao processar imagem: ${e}`);
       throw new Error('Não foi possível processar esta imagem.');
     }
-    const publicUrl = await this.uploadWebp(webp);
+    const publicUrl = await this.uploadWebpToPrefix(webp, 'houses');
     return { publicUrl };
   }
 
   private async uploadWebp(webp: Buffer): Promise<string> {
-    const key = `houses/${Date.now()}-${randomBytes(8).toString('hex')}.webp`;
+    return this.uploadWebpToPrefix(webp, 'houses');
+  }
+
+  private async uploadWebpToPrefix(
+    webp: Buffer,
+    folder: 'houses' | 'job-offers',
+  ): Promise<string> {
+    const key = `${folder}/${Date.now()}-${randomBytes(8).toString('hex')}.webp`;
     const r2 = this.getR2Context();
     if (r2) {
       await r2.client.send(
@@ -291,12 +317,12 @@ export class HouseImageStorageService {
       return `${r2.publicBase}/${key}`;
     }
 
-    const dir = join(process.cwd(), 'uploads', 'houses');
+    const dir = join(process.cwd(), 'uploads', folder);
     await mkdir(dir, { recursive: true });
     const name = `${Date.now()}-${randomBytes(8).toString('hex')}.webp`;
     await writeFile(join(dir, name), webp);
     // Caminho relativo: o browser usa NEXT_PUBLIC_API_URL + path (evita localhost na BD em stage/prod).
-    return `/uploads/houses/${name}`;
+    return `/uploads/${folder}/${name}`;
   }
 
   private async uploadOgJpeg(jpeg: Buffer): Promise<string> {

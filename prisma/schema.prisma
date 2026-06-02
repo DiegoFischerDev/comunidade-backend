@@ -133,6 +133,7 @@ enum JobOfferWhatsappMessageStatus {
   ignored_sender
   ignored_not_offer
   ignored_no_contact
+  ignored_no_city
   skipped_region
   skipped_no_destination
   created
@@ -812,6 +813,8 @@ model JobOffer {
   publishedAt DateTime @map("published_at")
   /** Região inferida a partir de `city` (filtro WhatsApp e futuros grupos regionais). */
   region      JobOfferRegion @default(SUL)
+  /** Imagem do anúncio (screenshot WhatsApp), quando a vaga veio em foto. */
+  imageUrl    String?  @map("image_url") @db.VarChar(2048)
   active      Boolean  @default(true)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")

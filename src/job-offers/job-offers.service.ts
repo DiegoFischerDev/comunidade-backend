@@ -14,6 +14,7 @@ import {
   type JobOfferAdvertiserContact,
 } from './job-offer-contacts.util';
 import { parseJobOfferRouteId } from './job-offer-resolve-id.util';
+import { validateParsedJobOffer } from './job-offer-parse-validation.util';
 import { resolveJobOfferRegionFromCity } from './job-offer-region.util';
 import {
   getJobOfferListPublishedFrom,
@@ -38,6 +39,7 @@ function mapPublicRow(r: {
   advertiserContacts: Prisma.JsonValue;
   publishedAt: Date;
   region: JobOfferRegion;
+  imageUrl: string | null;
 }) {
   return {
     id: r.id,
@@ -51,6 +53,7 @@ function mapPublicRow(r: {
     advertiserContacts: mapContactsJson(r.advertiserContacts),
     publishedAt: r.publishedAt.toISOString(),
     region: r.region,
+    imageUrl: r.imageUrl,
   };
 }
 
@@ -122,17 +125,28 @@ export class JobOffersService {
 
     try {
       const parsed = await this.listingOpenAi.extractJobOfferFromText(text);
-      if (!parsed.isJobOffer || parsed.offer == null) {
-        throw new BadRequestException(
-          'O texto não foi identificado como uma oferta de trabalho. Só podes publicar vagas (empresa ou recrutador a contratar). Conversas, imóveis, serviços ou candidatos à procura de emprego não entram na lista.',
-        );
+      const validation = validateParsedJobOffer(parsed, text);
+      if (!validation.ok) {
+        if (validation.reason === 'not_offer') {
+          throw new BadRequestException(
+            'O texto não foi identificado como uma oferta de trabalho. Só podes publicar vagas (empresa ou recrutador a contratar). Conversas, imóveis, serviços ou candidatos à procura de emprego não entram na lista.',
+          );
+        }
+        if (validation.reason === 'no_city') {
+          throw new BadRequestException(
+            'Não foi possível identificar a cidade/local da vaga. Indica a localização no anúncio.',
+          );
+        }
+        if (validation.reason === 'no_contact') {
+          throw new BadRequestException(
+            'Não foi possível identificar um contacto do empregador (email, telefone ou link de candidatura).',
+          );
+        }
+        throw new BadRequestException('Data de publicação inválida.');
       }
 
-      const extracted = parsed.offer;
+      const { offer: extracted, advertiserContacts } = validation;
       const publishedAt = new Date(`${extracted.publishedAt}T12:00:00.000Z`);
-      if (Number.isNaN(publishedAt.getTime())) {
-        throw new Error('Data de publicação inválida.');
-      }
       return {
         title: extracted.title,
         jobFunction: extracted.jobFunction,
@@ -140,7 +154,7 @@ export class JobOffersService {
         company: extracted.company,
         summary: extracted.summary,
         description: extracted.description,
-        advertiserContacts: extracted.advertiserContacts,
+        advertiserContacts,
         publishedAt: publishedAt.toISOString(),
       };
     } catch (e: unknown) {
@@ -180,6 +194,7 @@ export class JobOffersService {
         advertiserContacts: true,
         publishedAt: true,
         region: true,
+        imageUrl: true,
       },
     });
     return rows.map(mapPublicRow);
@@ -219,6 +234,7 @@ export class JobOffersService {
         advertiserContacts: true,
         publishedAt: true,
         region: true,
+        imageUrl: true,
       },
     });
     if (!row) {

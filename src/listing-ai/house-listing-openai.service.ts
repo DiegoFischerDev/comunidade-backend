@@ -296,6 +296,93 @@ export class HouseListingOpenAiService {
     return this.normalizeJobOfferParseResponse(content, trimmed);
   }
 
+  /**
+   * Analisa screenshot/imagem de anúncio de emprego (WhatsApp) com visão.
+   * `caption` é a legenda WhatsApp, se existir.
+   */
+  async extractJobOfferFromImage(
+    imageBase64: string,
+    mimeType: string,
+    caption = '',
+  ): Promise<JobOfferParseResult> {
+    const cap = caption.trim();
+    const content = await this.chatJsonWithImage(
+      buildJobOfferSystemPrompt(),
+      imageBase64,
+      mimeType,
+      cap ||
+        'Analisa esta imagem: é um anúncio de oferta de trabalho em Portugal? Extrai todos os textos visíveis (cidade, função, contactos).',
+    );
+    const fallbackText = cap || '[imagem de oferta de trabalho]';
+    return this.normalizeJobOfferParseResponse(content, fallbackText);
+  }
+
+  private async chatJsonWithImage(
+    systemPrompt: string,
+    imageBase64: string,
+    mimeType: string,
+    userText: string,
+  ): Promise<string> {
+    if (!this.isConfigured()) {
+      throw new Error('OPENAI_API_KEY não está configurada.');
+    }
+
+    const mime =
+      mimeType?.trim() && mimeType.startsWith('image/')
+        ? mimeType.trim()
+        : 'image/jpeg';
+    const dataUrl = `data:${mime};base64,${imageBase64.replace(/\s/g, '')}`;
+
+    const controller = new AbortController();
+    const timeoutMs = Number(
+      process.env.OPENAI_REQUEST_TIMEOUT_MS || 60000,
+    );
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.model,
+          temperature: 0,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: userText },
+                {
+                  type: 'image_url',
+                  image_url: { url: dataUrl, detail: 'low' },
+                },
+              ],
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(
+          `OpenAI respondeu ${res.status}: ${body.slice(0, 500)}`,
+        );
+      }
+
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      return data.choices?.[0]?.message?.content ?? '';
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async extractHouseFromDescription(
     rawText: string,
   ): Promise<ScanExtractionHouse> {
