@@ -25,6 +25,12 @@ import { UpdateJobOfferWhatsappDestinationDto } from './dto/update-job-offer-wha
 import { formatJobOfferWhatsappText } from './job-offer-format.util';
 import { validateParsedJobOffer } from './job-offer-parse-validation.util';
 import {
+  type JobOfferDuplicateCompareInput,
+  isNearDuplicateJobOffer,
+  jobOfferDuplicateCheckEnabled,
+  jobOfferDuplicateLookbackDays,
+} from './job-offer-duplicate.util';
+import {
   JOB_OFFER_REGION_LABELS,
   resolveJobOfferRegionFromCity,
 } from './job-offer-region.util';
@@ -533,6 +539,31 @@ export class JobOfferWhatsappService {
     const region = resolveJobOfferRegionFromCity(city);
     const destination = destByRegion.get(region);
 
+    const candidate: JobOfferDuplicateCompareInput = {
+      title: extracted.title.trim(),
+      jobFunction: extracted.jobFunction.trim(),
+      city,
+      company: extracted.company.trim(),
+      summary: extracted.summary.trim(),
+      description: extracted.description.trim(),
+    };
+
+    if (jobOfferDuplicateCheckEnabled()) {
+      const duplicate = await this.findRecentDuplicateOffer(candidate);
+      if (duplicate) {
+        const days = jobOfferDuplicateLookbackDays();
+        await this.updateRecord(recordId, {
+          status: JobOfferWhatsappMessageStatus.ignored_duplicate_offer,
+          parsedJson: parsed as unknown as Prisma.InputJsonValue,
+          error: `Oferta muito semelhante à #${duplicate.publicNumber} publicada nos últimos ${days} dias (mesma empresa/vaga).`,
+        });
+        this.logger.log(
+          `Oferta ignorada (duplicada): semelhante a ${duplicate.id} (#${duplicate.publicNumber})`,
+        );
+        return 'ignored_duplicate_offer';
+      }
+    }
+
     try {
       const offer = await this.prisma.jobOffer.create({
         data: {
@@ -596,6 +627,36 @@ export class JobOfferWhatsappService {
       });
       return 'error_create';
     }
+  }
+
+  /** Ofertas criadas nos últimos N dias com perfil semelhante (republicação no grupo). */
+  private async findRecentDuplicateOffer(
+    candidate: JobOfferDuplicateCompareInput,
+  ): Promise<{ id: string; publicNumber: number } | null> {
+    const days = jobOfferDuplicateLookbackDays();
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const recent = await this.prisma.jobOffer.findMany({
+      where: { createdAt: { gte: since } },
+      select: {
+        id: true,
+        publicNumber: true,
+        title: true,
+        jobFunction: true,
+        city: true,
+        company: true,
+        summary: true,
+        description: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 400,
+    });
+
+    for (const row of recent) {
+      if (isNearDuplicateJobOffer(candidate, row)) {
+        return { id: row.id, publicNumber: row.publicNumber };
+      }
+    }
+    return null;
   }
 
   private async claimMessage(input: {

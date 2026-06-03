@@ -134,6 +134,7 @@ enum JobOfferWhatsappMessageStatus {
   ignored_not_offer
   ignored_no_contact
   ignored_no_city
+  ignored_duplicate_offer
   skipped_region
   skipped_no_destination
   created
