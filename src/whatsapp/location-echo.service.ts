@@ -20,13 +20,9 @@ export class LocationEchoService {
 
   private buildDedupeKey(dto: IngestLocationEchoDto): string {
     const id = dto.externalMessageId?.trim();
-    if (id) {
-      if (dto.locationKind === 'live' && dto.sequenceNumber != null) {
-        return `${id}:${dto.sequenceNumber}`;
-      }
-      return id;
-    }
-    return `${dto.chatJid}|${dto.locationKind}|${dto.latitude}|${dto.longitude}|${dto.sequenceNumber ?? ''}`;
+    // Live location reutiliza o mesmo message id em cada update GPS — só uma resposta.
+    if (id) return id;
+    return `${dto.chatJid}|${dto.locationKind}|${dto.latitude}|${dto.longitude}`;
   }
 
   /** true se já processámos esta mensagem (webhook duplicado / duas instâncias). */
