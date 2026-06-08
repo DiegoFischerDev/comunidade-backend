@@ -7,7 +7,9 @@ Este guia configura a aplicação **Comunidade Rafa Portugal** na mesma VPS onde
 | Ambiente | Frontend (app) | Backend (API) |
 |----------|----------------|---------------|
 | Produção | comunidade.rafaapelomundo.com | api-comunidade.rafaapelomundo.com |
-| Stage    | stage.rafaapelomundo.com      | api-stage.rafaapelomundo.com      |
+| Produção | comunidade.rafaportugal.com | api-comunidade.rafaportugal.com |
+
+> **Nota:** o ambiente **stage** foi descontinuado (Jun 2026). Mantém-se apenas produção em `/opt/comunidade-prod`.
 
 
 ---
