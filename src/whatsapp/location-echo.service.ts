@@ -2,9 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { IngestLocationEchoDto } from './dto/ingest-location-echo.dto';
 import { WhatsAppService } from './whatsapp.service';
 
+const STATIC_LOCATION_REPLY = 'Envie sua localização em tempo real';
+const DEDUPE_TTL_MS = 10 * 60 * 1000;
+
 @Injectable()
 export class LocationEchoService {
   private readonly logger = new Logger(LocationEchoService.name);
+  /** messageId (ou chave composta) → timestamp ms */
+  private readonly processedKeys = new Map<string, number>();
 
   constructor(private readonly wa: WhatsAppService) {}
 
@@ -13,13 +18,34 @@ export class LocationEchoService {
     return ['1', 'true', 'yes', 'on'].includes(raw);
   }
 
-  private formatEchoMessage(dto: IngestLocationEchoDto): string {
-    const kindLabel =
-      dto.locationKind === 'live' ? 'em tempo real' : 'estática';
+  private buildDedupeKey(dto: IngestLocationEchoDto): string {
+    const id = dto.externalMessageId?.trim();
+    if (id) {
+      if (dto.locationKind === 'live' && dto.sequenceNumber != null) {
+        return `${id}:${dto.sequenceNumber}`;
+      }
+      return id;
+    }
+    return `${dto.chatJid}|${dto.locationKind}|${dto.latitude}|${dto.longitude}|${dto.sequenceNumber ?? ''}`;
+  }
+
+  /** true se já processámos esta mensagem (webhook duplicado / duas instâncias). */
+  private isDuplicate(key: string): boolean {
+    if (!key) return false;
+    const now = Date.now();
+    for (const [k, ts] of this.processedKeys) {
+      if (now - ts > DEDUPE_TTL_MS) this.processedKeys.delete(k);
+    }
+    const prev = this.processedKeys.get(key);
+    if (prev != null && now - prev < DEDUPE_TTL_MS) return true;
+    this.processedKeys.set(key, now);
+    return false;
+  }
+
+  private formatLiveEchoMessage(dto: IngestLocationEchoDto): string {
     const lines = [
-      '📍 *Localização recebida (teste)*',
+      '📍 *Localização em tempo real (teste)*',
       '',
-      `Tipo: ${kindLabel}`,
       `Latitude: ${dto.latitude}`,
       `Longitude: ${dto.longitude}`,
     ];
@@ -34,16 +60,8 @@ export class LocationEchoService {
       lines.push(`Precisão: ${dto.accuracyInMeters} m`);
     }
     if (dto.sequenceNumber != null && Number.isFinite(dto.sequenceNumber)) {
-      lines.push(`Sequência (live): ${dto.sequenceNumber}`);
+      lines.push(`Sequência: ${dto.sequenceNumber}`);
     }
-    if (dto.senderNumber?.trim()) {
-      lines.push(`Remetente: ${dto.senderNumber.trim()}`);
-    }
-
-    lines.push(
-      '',
-      `Maps: https://www.google.com/maps?q=${dto.latitude},${dto.longitude}`,
-    );
 
     return lines.join('\n');
   }
@@ -60,15 +78,34 @@ export class LocationEchoService {
       return { ok: true, status: 'ignored_no_chat' };
     }
 
-    const text = this.formatEchoMessage(dto);
+    const dedupeKey = this.buildDedupeKey(dto);
+    if (this.isDuplicate(dedupeKey)) {
+      return { ok: true, status: 'ignored_duplicate' };
+    }
+
+    const sendOpts = {
+      requireDelivery: false as const,
+      preferredInstance: dto.instance?.trim() || undefined,
+    };
+
+    if (dto.locationKind !== 'live') {
+      try {
+        await this.wa.sendText(chatJid, STATIC_LOCATION_REPLY, sendOpts);
+        this.logger.log(`Localização estática rejeitada (${chatJid})`);
+        return { ok: true, status: 'rejected_static', echoed: true };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Erro desconhecido';
+        this.logger.warn(`Rejeição estática falhou (${chatJid}): ${message}`);
+        return { ok: true, status: 'send_failed' };
+      }
+    }
+
+    const text = this.formatLiveEchoMessage(dto);
 
     try {
-      await this.wa.sendText(chatJid, text, {
-        requireDelivery: false,
-        preferredInstance: dto.instance?.trim() || undefined,
-      });
+      await this.wa.sendText(chatJid, text, sendOpts);
       this.logger.log(
-        `Location echo enviado para ${chatJid} (${dto.locationKind}, ${dto.latitude}, ${dto.longitude})`,
+        `Location echo enviado para ${chatJid} (live, ${dto.latitude}, ${dto.longitude})`,
       );
       return { ok: true, status: 'echoed', echoed: true };
     } catch (err: unknown) {
