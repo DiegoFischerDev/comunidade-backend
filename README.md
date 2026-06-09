@@ -33,7 +33,7 @@ $ npm install
 
 Copia `backend/.env.example` para `backend/.env` e preenche os valores.
 
-**Docker Compose** (`deploy/docker-compose*.yml`): o serviço `backend` usa `env_file: .env` — não é preciso repetir cada variável no YAML; só `PORT`, `NODE_ENV` e `DATABASE_URL` ficam explícitos (esta última aponta para o serviço `postgres`)
+**Docker Compose** (`deploy/docker-compose*.yml`): o serviço `backend` usa `env_file: .env` — não é preciso repetir cada variável no YAML; só `PORT`, `NODE_ENV` e `DATABASE_URL` ficam explícitos (esta última aponta para o serviço `postgres`).
 
 ## Variáveis de ambiente (essenciais)
 
