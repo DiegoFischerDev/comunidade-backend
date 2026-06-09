@@ -11,23 +11,27 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
   });
-  // Webhook Stripe precisa do body em raw para verificar assinatura.
-  // O ingest do Whatsapp scan recebe mídia em base64 (Webhook Base64), que pode ser grande
-  // (vídeos), por isso usa um limite de JSON maior. Configurável via WHATSAPP_SCAN_INGEST_BODY_LIMIT.
-  const scanIngestBodyLimit =
+  // Endpoints internos de ingest WhatsApp (receiver → backend): mídia em base64 pode ser grande.
+  // Configurável via WHATSAPP_SCAN_INGEST_BODY_LIMIT (default: 256mb).
+  const whatsappIngestBodyLimit =
     process.env.WHATSAPP_SCAN_INGEST_BODY_LIMIT?.trim() || '256mb';
+  const whatsappIngestPaths = new Set([
+    '/whatsapp-scan/ingest',
+    '/job-offers/whatsapp/ingest',
+  ]);
   const jsonDefault = express.json();
-  const jsonLarge = express.json({ limit: scanIngestBodyLimit });
+  const jsonWhatsappIngest = express.json({ limit: whatsappIngestBodyLimit });
   app.use(
     (
       req: express.Request,
       res: express.Response,
       next: express.NextFunction,
     ) => {
+      const path = req.originalUrl.split('?')[0] ?? req.originalUrl;
       if (req.originalUrl === '/stripe/webhook') {
         express.raw({ type: 'application/json' })(req, res, next);
-      } else if (req.originalUrl === '/whatsapp-scan/ingest') {
-        jsonLarge(req, res, next);
+      } else if (whatsappIngestPaths.has(path)) {
+        jsonWhatsappIngest(req, res, next);
       } else {
         jsonDefault(req, res, next);
       }
