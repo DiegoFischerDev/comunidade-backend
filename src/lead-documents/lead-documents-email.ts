@@ -77,12 +77,12 @@ function buildDeclaredFieldsHtml(input: {
   if (input.semDocsLabels.length) {
     addRow(
       'Documentos em falta',
-      'O lead não consegue obter, neste momento, os seguintes documentos:\n- ' +
+      'O solicitante não consegue obter, neste momento, os seguintes documentos:\n- ' +
         input.semDocsLabels.join('\n- '),
     );
   }
   if (input.mensagem.trim()) {
-    addRow('Mensagem do lead', input.mensagem);
+    addRow('Mensagem do solicitante', input.mensagem);
   }
 
   if (!rows.length) return '';
@@ -152,7 +152,7 @@ export function buildLeadDocumentsEmailHtml(input: {
         <table role="presentation" style="border-collapse:separate;border-spacing:0;width:100%;margin:0 0 18px;">
           <tr>
             <td style="vertical-align:top;width:50%;padding-right:6px;">
-              <p style="margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:${TEXT_MUTED};font-weight:600;">Enviado por (lead)</p>
+              <p style="margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:${TEXT_MUTED};font-weight:600;">Enviado por (solicitante)</p>
               <div style="background:${SOFT_BG};border-left:4px solid ${PRIMARY};border-radius:6px;padding:14px 16px;">
                 <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:${TEXT_DARK};">${escapeHtml(input.leadName || 'Lead sem nome')}</p>
                 ${input.leadEmail ? `<p style="margin:0;font-size:13px;color:${TEXT_DARK};"><a href="mailto:${escapeHtml(input.leadEmail)}" style="color:${TEXT_DARK};text-decoration:underline;">${escapeHtml(input.leadEmail)}</a></p>` : ''}
@@ -238,12 +238,12 @@ export function buildLeadDocumentsEmailText(input: {
   }
   if (input.semDocsLabels.length) {
     lines.push('');
-    lines.push('Documentos que o lead não conseguiu obter:');
+    lines.push('Documentos que o solicitante não conseguiu obter:');
     input.semDocsLabels.forEach((label) => lines.push(`- ${label}`));
   }
   if (input.mensagem.trim()) {
     lines.push('');
-    lines.push('Mensagem do lead:');
+    lines.push('Mensagem do solicitante:');
     lines.push(input.mensagem.trim());
   }
   if (input.attachmentNames.length) {
