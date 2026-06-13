@@ -23,4 +23,45 @@ describe('formatJobOfferWhatsappText', () => {
     expect(text).toContain('Mais detalhes:');
     expect(text).toContain('/ofertas-trabalho/12');
   });
+
+  it('exclui URLs e links WhatsApp dos contactos na mensagem do grupo', () => {
+    const text = formatJobOfferWhatsappText({
+      publicNumber: 5,
+      jobFunction: 'Barista',
+      city: 'Lisboa',
+      company: 'Café Central',
+      summary:
+        'Vaga em tempo integral. Candidaturas em https://empresa.pt/vaga ou chat.whatsapp.com/AbCdEf',
+      advertiserContacts: [
+        { type: 'email', value: 'rh@cafe.pt' },
+        { type: 'phone', value: '912345678' },
+        { type: 'url', value: 'https://empresa.pt/candidaturas' },
+        { type: 'url', value: 'https://chat.whatsapp.com/invite123' },
+        { type: 'url', value: 'https://whatsapp.com/channel/abc' },
+      ],
+    });
+    expect(text).toContain('rh@cafe.pt');
+    expect(text).toContain('351912345678');
+    expect(text).not.toContain('empresa.pt/candidaturas');
+    expect(text).not.toContain('chat.whatsapp.com');
+    expect(text).not.toContain('whatsapp.com/channel');
+    expect(text).not.toContain('🔗');
+    expect(text).toContain('Vaga em tempo integral');
+    expect(text).not.toContain('https://empresa.pt/vaga');
+  });
+
+  it('omite linha Candidaturas quando só há URLs', () => {
+    const text = formatJobOfferWhatsappText({
+      publicNumber: 1,
+      jobFunction: 'Empregado',
+      city: 'Porto',
+      company: '',
+      summary: 'Descrição da vaga.',
+      advertiserContacts: [
+        { type: 'url', value: 'https://site-externo.com/jobs' },
+      ],
+    });
+    expect(text).not.toContain('*Candidaturas:*');
+    expect(text).not.toContain('site-externo.com');
+  });
 });

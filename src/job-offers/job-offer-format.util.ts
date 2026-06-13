@@ -1,5 +1,7 @@
 import {
+  filterAdvertiserContactsForWhatsappShare,
   formatAdvertiserContactsLine,
+  stripUrlsForWhatsappJobShare,
   type JobOfferAdvertiserContact,
 } from './job-offer-contacts.util';
 import { formatJobOfferDetailsUrl } from './job-offer-public-url.util';
@@ -32,9 +34,11 @@ export function formatJobOfferWhatsappText(offer: {
     lines.push(`🏢 ${company}`);
   }
 
-  const contacts = Array.isArray(offer.advertiserContacts)
-    ? (offer.advertiserContacts as JobOfferAdvertiserContact[])
-    : [];
+  const contacts = filterAdvertiserContactsForWhatsappShare(
+    Array.isArray(offer.advertiserContacts)
+      ? (offer.advertiserContacts as JobOfferAdvertiserContact[])
+      : [],
+  );
   const candidaturas = formatAdvertiserContactsLine(contacts);
   if (candidaturas) {
     lines.push(candidaturas);
@@ -43,7 +47,7 @@ export function formatJobOfferWhatsappText(offer: {
   const detailsLine = `Mais detalhes: ${formatJobOfferDetailsUrl(offer.publicNumber)}`;
   const footer = `\n\n${detailsLine}`;
   const header = lines.join('\n');
-  let summary = (offer.summary ?? '').trim();
+  let summary = stripUrlsForWhatsappJobShare(offer.summary ?? '');
   const headerBlock = header.length ? `${header}\n\n` : '';
   const maxSummaryLen = 4000 - headerBlock.length - footer.length;
   if (summary && summary.length > maxSummaryLen && maxSummaryLen > 80) {

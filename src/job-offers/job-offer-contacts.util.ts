@@ -135,6 +135,28 @@ export function formatContactForWhatsapp(c: JobOfferAdvertiserContact): string {
   return c.value.replace(/^https?:\/\//i, '');
 }
 
+/** Contactos permitidos na republicação WhatsApp (sem URLs externas / grupos / canais). */
+export function filterAdvertiserContactsForWhatsappShare(
+  contacts: JobOfferAdvertiserContact[],
+): JobOfferAdvertiserContact[] {
+  return contacts.filter((c) => c.type === 'email' || c.type === 'phone');
+}
+
+const WHATSAPP_GROUP_OR_CHANNEL_RE =
+  /(?:https?:\/\/)?(?:chat\.whatsapp\.com|whatsapp\.com\/channel)\/\S+/gi;
+
+/** Remove links externos do resumo antes de republicar no grupo (contacto fica na linha Candidaturas). */
+export function stripUrlsForWhatsappJobShare(text: string): string {
+  let out = text.trim();
+  if (!out) return '';
+  out = out.replace(WHATSAPP_GROUP_OR_CHANNEL_RE, '');
+  out = out.replace(URL_RE, '');
+  return out
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function formatAdvertiserContactsLine(
   contacts: JobOfferAdvertiserContact[],
 ): string {
@@ -142,7 +164,6 @@ export function formatAdvertiserContactsLine(
   const parts = contacts.map(formatContactForWhatsapp);
   const hasEmail = contacts.some((c) => c.type === 'email');
   const hasPhone = contacts.some((c) => c.type === 'phone');
-  const emoji =
-    hasEmail && hasPhone ? '📧' : hasPhone ? '📲' : hasEmail ? '📧' : '🔗';
+  const emoji = hasEmail && hasPhone ? '📧' : hasPhone ? '📲' : '📧';
   return `${emoji} *Candidaturas:* ${parts.join(' ou ')}`;
 }
