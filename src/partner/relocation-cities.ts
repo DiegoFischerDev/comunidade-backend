@@ -1,6 +1,6 @@
 /**
- * Principais cidades de Portugal — valores canónicos em `partner_house.city`.
- * O admin pode gravar texto livre fora desta lista (`normalizeRelocationCityForAdminStorage`).
+ * Principais cidades de Portugal — sugestões em formulários e filtros.
+ * `partner_house.city` aceita texto livre (ex.: Nelas); a lista não é restritiva.
  * Manter alinhado com `frontend/src/lib/relocation-portugal-cities.ts`.
  */
 export const PARTNER_HOUSE_RELOCATION_CITIES = [
@@ -102,31 +102,29 @@ const RELOCATION_CITIES_SET = new Set<string>(
   PARTNER_HOUSE_RELOCATION_CITIES as unknown as string[],
 );
 
-/** Valor canónico para gravar em `partner_house.city` (rascunhos admin / omissões). */
-export function normalizeRelocationCityForStorage(
-  raw: string | undefined | null,
-): (typeof PARTNER_HOUSE_RELOCATION_CITIES)[number] {
+function normalizeRelocationCityText(raw: string | undefined | null): string {
   const t = (raw ?? '').trim();
-  if (!t) return 'Lisboa';
-  const fromLegacy = LEGACY_TO_CANONICAL[t];
-  if (fromLegacy) return fromLegacy;
-  if (RELOCATION_CITIES_SET.has(t)) return t as (typeof PARTNER_HOUSE_RELOCATION_CITIES)[number];
-  return 'Lisboa';
-}
-
-/**
- * Criação de anúncio pelo admin: aceita cidades fora da lista fixa (texto livre),
- * mantendo legados e nomes canónicos alinhados com a lista.
- */
-export function normalizeRelocationCityForAdminStorage(
-  raw: string | undefined | null,
-): string {
-  const t = (raw ?? '').trim();
-  if (!t) return 'Lisboa';
+  if (!t) return '';
   const fromLegacy = LEGACY_TO_CANONICAL[t];
   if (fromLegacy) return fromLegacy;
   if (RELOCATION_CITIES_SET.has(t)) return t;
   return t;
+}
+
+/** Normaliza códigos legados; aceita texto livre. Nunca inventa cidade por omissão. */
+export function normalizeRelocationCityForStorage(
+  raw: string | undefined | null,
+): string {
+  return normalizeRelocationCityText(raw);
+}
+
+/**
+ * Criação/edição de anúncio (admin, scan WhatsApp, IA): aceita cidades fora da lista fixa.
+ */
+export function normalizeRelocationCityForAdminStorage(
+  raw: string | undefined | null,
+): string {
+  return normalizeRelocationCityText(raw);
 }
 
 const CANONICAL_TO_LEGACY: Partial<Record<string, string>> = {};

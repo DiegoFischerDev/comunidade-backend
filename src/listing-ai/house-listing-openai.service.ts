@@ -61,7 +61,7 @@ function extractionRulesBlock(todayIso: string, year: number): string {
 Regras de extração:
 - "businessType": "RENT" para arrendamento/aluguer, "SALE" para venda. POR DEFEITO usa "RENT". Só usa "SALE" se o texto deixar claro que é para venda (ex.: "vende-se", "para venda", "à venda"). Valores acima de 5000€ normalmente indicam venda; valores até 5000€ indicam arrendamento (renda mensal).
 - "typology": uma de T0, T1, T2, T3, T4, T5 ou QUARTO_AP_COMPARTILHADO (quarto/quarto em apartamento partilhado). Se não souberes, usa "T2".
-- "city": nome da cidade/localidade em Portugal mencionada (ex.: "Lisboa", "Porto"). Se não houver, usa "".
+- "city": cidade ou localidade em Portugal onde o imóvel está (concelho, vila ou cidade). Inclui localidades pequenas (ex.: "Nelas", "Peniche"). Expressões de proximidade como "10 min de Nelas", "a 5 minutos de Guimarães" ou "perto de Coimbra" devem usar essa localidade em "city" (ex.: "Nelas"). Não uses a capital ou uma cidade grande por defeito. Se não houver qualquer indicação de localização, usa "".
 - "priceEur": valor da renda/preço APENAS com números (ex.: "750" ou "750,50"). Sem símbolos nem texto. Se não houver, usa "".
 - "relocationFeeEur": taxa de relocation/serviço se mencionada; caso contrário "0".
 - "caucoesCount": nº de cauções exigidas (inteiro 0–12). Se não souberes, 0.

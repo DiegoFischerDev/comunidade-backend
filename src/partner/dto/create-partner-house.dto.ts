@@ -6,7 +6,6 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { PARTNER_HOUSE_RELOCATION_CITIES } from '../relocation-cities';
 
 /** Multipart envia "true" | "false" como texto. */
 export const PARTNER_HOUSE_FURNISHED_VALUES = ['true', 'false'] as const;
@@ -43,9 +42,8 @@ export class CreatePartnerHouseDto {
   description!: string;
 
   @IsString({ message: 'Indica a cidade.' })
-  @IsIn([...PARTNER_HOUSE_RELOCATION_CITIES] as unknown as string[], {
-    message: 'Cidade inválida. Escolhe uma cidade da lista.',
-  })
+  @MinLength(1, { message: 'Indica a cidade.' })
+  @MaxLength(120, { message: 'Cidade demasiado longa.' })
   city!: string;
 
   @IsString({ message: 'Indica uma tipologia válida.' })

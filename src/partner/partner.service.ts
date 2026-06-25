@@ -1646,7 +1646,7 @@ export class PartnerService {
       description: dto.description.trim(),
       businessType: (dto.businessType ?? 'RENT') as HouseBusinessType,
       typology: dto.typology,
-      city: dto.city.trim(),
+      city: normalizeRelocationCityForAdminStorage(dto.city),
       availableFrom,
       priceEur: dto.priceEur.trim(),
       relocationFeeEur: dto.relocationFeeEur.trim(),
@@ -2411,7 +2411,9 @@ export class PartnerService {
         ...(opts?.partnerId != null && { partnerId: opts.partnerId }),
         ...(dto.title != null && { title: dto.title.trim() }),
         ...(dto.description != null && { description: dto.description.trim() }),
-        ...(dto.city != null && { city: dto.city.trim() }),
+        ...(dto.city != null && {
+          city: normalizeRelocationCityForAdminStorage(dto.city),
+        }),
         ...(dto.typology != null && { typology: dto.typology }),
         ...(dto.businessType != null && { businessType: dto.businessType }),
         ...(dto.availableFrom != null && {
