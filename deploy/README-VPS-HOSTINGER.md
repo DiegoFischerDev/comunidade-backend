@@ -34,11 +34,14 @@ O **JS do browser** (`NEXT_PUBLIC_*`) vem do **build** da imagem Docker. Após m
 | `NEXT_PUBLIC_API_URL` | `https://api.movecasa.pt` |
 | `NEXT_PUBLIC_SITE_URL` | `https://movecasa.pt` |
 
-**wa-verify** (`/opt/wa-verify/.env`):
+**wa-verify** (`/opt/wa-verify/.env`) — ponte Evolution API → backend (mensagens de grupos):
 
 ```env
 COMMUNITY_API_URL=https://api.movecasa.pt
+COMMUNITY_INTERNAL_SECRET=<igual ao backend>
 ```
+
+Ver `whatsapp-evolution-verify/README.md` para `WEBHOOK_PUBLIC_URL`, `WEBHOOK_SECRET` e restante stack Evolution.
 
 ---
 

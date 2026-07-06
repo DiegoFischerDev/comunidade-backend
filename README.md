@@ -44,7 +44,7 @@ Copia `backend/.env.example` para `backend/.env` e preenche os valores.
 | `JWT_SECRET` | Segredo JWT (produção: longo e aleatório). |
 | `FRONTEND_URL` | URL do Next.js (CORS, links). |
 | `PUBLIC_API_BASE_URL` | URL pública desta API (links a `/uploads/...` em imóveis; alinhar com `NEXT_PUBLIC_API_URL`). |
-| `COMMUNITY_INTERNAL_SECRET` | Igual ao **wa-verify-receiver** (confirmação de registo WhatsApp). |
+| `COMMUNITY_INTERNAL_SECRET` | Igual ao **wa-verify-receiver**; autentica `POST /whatsapp-scan/ingest` e `POST /job-offers/whatsapp/ingest`. |
 | `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE` (+ secundária / ativa / failover, opcional) | Evolution API. |
 | `EVOLUTION_VIDEO_REQUEST_TIMEOUT_MS` | (Opcional) Timeout ms para `sendMedia` de **vídeo** (omissão 600000). Texto/imagem: `EVOLUTION_REQUEST_TIMEOUT_MS` (omissão 180000). |
 | `EVOLUTION_HOUSES_RELOCATION_GROUP_JID` | (Opcional / legado) JID único; o envio de anúncios relocation para WhatsApp passa a ser **manual** pelo admin (`/dashboard/admin/houses` → grupos configuráveis + «Enviar nos grupos»). |
