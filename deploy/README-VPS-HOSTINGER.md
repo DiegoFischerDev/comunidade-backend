@@ -1,16 +1,57 @@
-# Configurar VPS Hostinger para Comunidade Rafa Portugal (sem afetar o evo)
+# Configurar VPS Hostinger — Move Casa (movecasa.pt)
 
-Este guia configura a aplicação **Comunidade Rafa Portugal** na mesma VPS onde já roda o **evo** (RPM/evo), usando subdomínios e portas internas para não interferir no projeto existente.
+Produção única em `/opt/comunidade-prod`. Nginx no host (portas 13000 frontend, 13001 API).
 
-**Subdomínios usados:**
+**Domínios:**
 
-| Ambiente | Frontend (app) | Backend (API) |
-|----------|----------------|---------------|
-| Produção | comunidade.rafaapelomundo.com | api-comunidade.rafaapelomundo.com |
-| Produção | comunidade.rafaportugal.com | api-comunidade.rafaportugal.com |
+| Serviço | URL |
+|---------|-----|
+| Frontend | https://movecasa.pt |
+| API | https://api.movecasa.pt |
 
-> **Nota:** o ambiente **stage** foi descontinuado (Jun 2026). Mantém-se apenas produção em `/opt/comunidade-prod`.
+Domínios legados (`comunidade.rafaportugal.com`, `api-comunidade.*`, `comunidade.rafaapelomundo.com`) redirecionam 301 para Move Casa.
 
+> **Nota:** o ambiente **stage** foi descontinuado. Não recriar `stage` / `api-stage`.
+
+---
+
+## Variáveis na VPS (`/opt/comunidade-prod/.env`)
+
+```env
+FRONTEND_URL=https://movecasa.pt
+PUBLIC_API_BASE_URL=https://api.movecasa.pt
+NEXT_PUBLIC_API_URL=https://api.movecasa.pt
+NEXT_PUBLIC_SITE_URL=https://movecasa.pt
+CORS_ORIGINS=https://movecasa.pt,https://www.movecasa.pt,http://localhost:3000,http://127.0.0.1:3000
+```
+
+O **JS do browser** (`NEXT_PUBLIC_*`) vem do **build** da imagem Docker. Após mudar domínio, reconstruir o frontend com os build-args corretos (CI ou `docker build` na VPS).
+
+**GitHub Actions secrets** (para próximos deploys automáticos):
+
+| Secret | Valor |
+|--------|-------|
+| `NEXT_PUBLIC_API_URL` | `https://api.movecasa.pt` |
+| `NEXT_PUBLIC_SITE_URL` | `https://movecasa.pt` |
+
+**wa-verify** (`/opt/wa-verify/.env`):
+
+```env
+COMMUNITY_API_URL=https://api.movecasa.pt
+```
+
+---
+
+## Nginx
+
+Ficheiros no repositório:
+
+- `backend/deploy/nginx-movecasa.host.conf` — produção
+- `backend/deploy/nginx-redirects-legacy-comunidade.conf` — 301 dos domínios antigos
+
+Na VPS: `/etc/nginx/sites-enabled/movecasa` e `comunidade-legacy-redirects`.
+
+Certificado Let's Encrypt: `live/movecasa.pt` (SAN: `movecasa.pt`, `api.movecasa.pt`).
 
 ---
 
