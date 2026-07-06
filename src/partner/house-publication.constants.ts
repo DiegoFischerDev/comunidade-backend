@@ -1,7 +1,4 @@
-export const HOUSE_PUBLICATION_COST_EUR_CENTS = 100;
 export const HOUSE_PUBLICATION_DURATION_DAYS = 7;
-export const ADVERTISING_TOPUP_MIN_EUR_CENTS = 500;
-export const ADVERTISING_TOPUP_MAX_EUR_CENTS = 500_00;
 
 /** Dias que um imóvel oculto aguarda antes de ir automaticamente para a lixeira. */
 export const HOUSE_HIDDEN_TO_TRASH_DAYS = 3;

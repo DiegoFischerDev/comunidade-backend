@@ -43,7 +43,6 @@ import { SetPartnerReactionDto } from './dto/set-partner-reaction.dto';
 import { CreatePartnerCommentDto } from './dto/create-partner-comment.dto';
 import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-relocation-whatsapp-group.dto';
 import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
-import { StartAdvertisingTopupDto } from './dto/start-advertising-topup.dto';
 
 @Controller('partners')
 export class PartnerController {
@@ -87,43 +86,6 @@ export class PartnerController {
     @Body() dto: UpdatePartnerAdminDto,
   ) {
     return this.partnerService.updatePartnerAdmin(id, dto);
-  }
-
-  @Get('admin/:id/advertising-balance')
-  @Roles(Role.ADMIN)
-  async adminGetPartnerAdvertisingBalance(@Param('id') id: string) {
-    return this.partnerService.adminGetPartnerAdvertisingBalance(id);
-  }
-
-  @Post('admin/:id/advertising-balance/credit')
-  @Roles(Role.ADMIN)
-  @HttpCode(200)
-  async adminCreditPartnerAdvertisingBalance(
-    @CurrentUser() user: { id: string },
-    @Param('id') id: string,
-    @Body() body: { amountEurCents: number; note?: string },
-  ) {
-    return this.partnerService.adminCreditPartnerAdvertisingBalance(
-      user.id,
-      id,
-      body.amountEurCents,
-      body.note,
-    );
-  }
-
-  @Patch('admin/:id/advertising-balance')
-  @Roles(Role.ADMIN)
-  async adminSetPartnerAdvertisingBalance(
-    @CurrentUser() user: { id: string },
-    @Param('id') id: string,
-    @Body() body: { balanceEurCents: number; note?: string },
-  ) {
-    return this.partnerService.adminSetPartnerAdvertisingBalance(
-      user.id,
-      id,
-      body.balanceEurCents,
-      body.note,
-    );
   }
 
   @Get('admin/services')
@@ -373,21 +335,6 @@ export class PartnerController {
       files?.video?.[0] ?? null,
       files?.thumbnail?.[0] ?? null,
     );
-  }
-
-  @Get('me/advertising-balance')
-  @Roles(Role.PARTNER)
-  async getMyAdvertisingBalance(@CurrentUser() user: { id: string }) {
-    return this.partnerService.getMyAdvertisingBalance(user.id);
-  }
-
-  @Post('me/advertising-topup-checkout')
-  @Roles(Role.PARTNER)
-  async startAdvertisingTopupCheckout(
-    @CurrentUser() user: { id: string; email?: string | null },
-    @Body() dto: StartAdvertisingTopupDto,
-  ) {
-    return this.partnerService.startAdvertisingBalanceTopup(user.id, user.email, dto);
   }
 
   @Post('me/houses/:id/publish')

@@ -1,11 +1,4 @@
-import {
-  IsEmail,
-  IsIn,
-  IsOptional,
-  IsString,
-  IsUrl,
-  MinLength,
-} from 'class-validator';
+import { IsEmail, IsIn, IsString, IsUrl, MinLength } from 'class-validator';
 
 export class CreateGuestMembershipCheckoutDto {
   @IsString()
@@ -37,8 +30,4 @@ export class CreateGuestMembershipCheckoutDto {
 
   @IsIn(['card', 'mbway', 'pix'])
   paymentMethod!: 'card' | 'mbway' | 'pix';
-
-  @IsOptional()
-  @IsString()
-  affiliateCode?: string;
 }

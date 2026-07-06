@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthModule } from '../auth/auth.module';
 import { PartnerService } from './partner.service';
@@ -7,7 +7,6 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { StripeModule } from '../stripe/stripe.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { HouseImageStorageService } from './house-image-storage.service';
-import { PartnerAdvertisingService } from './partner-advertising.service';
 import { PartnerHousePublicationExpiryTask } from './partner-house-publication-expiry.task';
 import { PartnerContactLinksService } from './partner-contact-links.service';
 import { ListingOpenAiModule } from '../listing-ai/listing-openai.module';
@@ -16,7 +15,7 @@ import { ListingOpenAiModule } from '../listing-ai/listing-openai.module';
   imports: [
     AuthModule,
     PrismaModule,
-    forwardRef(() => StripeModule),
+    StripeModule,
     WhatsAppModule,
     ListingOpenAiModule,
     JwtModule.register({
@@ -28,14 +27,12 @@ import { ListingOpenAiModule } from '../listing-ai/listing-openai.module';
   providers: [
     PartnerService,
     HouseImageStorageService,
-    PartnerAdvertisingService,
     PartnerHousePublicationExpiryTask,
     PartnerContactLinksService,
   ],
   exports: [
     PartnerService,
     HouseImageStorageService,
-    PartnerAdvertisingService,
     PartnerContactLinksService,
   ],
 })

@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,11 +17,6 @@ import { isMembershipActive } from '../membership/membership-access.util';
 import { CreateGuestMembershipCheckoutDto } from './dto/create-guest-membership-checkout.dto';
 import { CreateGuestRafacallCheckoutDto } from './dto/create-guest-rafacall-checkout.dto';
 import { CreateGuestRafacallSessionDto } from './dto/create-guest-rafacall-session.dto';
-import { PartnerAdvertisingService } from '../partner/partner-advertising.service';
-import {
-  ADVERTISING_TOPUP_MAX_EUR_CENTS,
-  ADVERTISING_TOPUP_MIN_EUR_CENTS,
-} from '../partner/house-publication.constants';
 
 const MEMBERSHIP_DURATION_YEARS = 1;
 const GUEST_SIGNUP_SALT_ROUNDS = 10;
@@ -36,8 +31,6 @@ export class StripeService {
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsAppService,
     private readonly authService: AuthService,
-    @Inject(forwardRef(() => PartnerAdvertisingService))
-    private readonly partnerAdvertising: PartnerAdvertisingService,
   ) {}
 
   private formatMoney(amountMinor: number, currency: string): string {
@@ -188,127 +181,6 @@ export class StripeService {
     const pixBase = this.pixAmountCentavos;
     const scaled = Math.round((eurCents / eurBase) * pixBase);
     return Math.max(100, scaled);
-  }
-
-  private assertAdvertisingTopupAmount(amountEurCents: number): void {
-    if (
-      !Number.isInteger(amountEurCents) ||
-      amountEurCents < ADVERTISING_TOPUP_MIN_EUR_CENTS ||
-      amountEurCents > ADVERTISING_TOPUP_MAX_EUR_CENTS
-    ) {
-      throw new BadRequestException(
-        `Valor inválido. Escolhe entre ${(ADVERTISING_TOPUP_MIN_EUR_CENTS / 100).toFixed(2)} € e ${(ADVERTISING_TOPUP_MAX_EUR_CENTS / 100).toFixed(2)} €.`,
-      );
-    }
-  }
-
-  async createPartnerAdvertisingTopupCheckout(input: {
-    partnerUserId: string;
-    partnerId: string;
-    partnerEmail: string | null | undefined;
-    amountEurCents: number;
-    successUrl: string;
-    cancelUrl: string;
-  }): Promise<{ url: string; sessionId: string }> {
-    this.assertAdvertisingTopupAmount(input.amountEurCents);
-
-    const partner = await this.prisma.partner.findFirst({
-      where: { id: input.partnerId, userId: input.partnerUserId },
-      select: { id: true },
-    });
-    if (!partner) {
-      throw new BadRequestException('Parceiro não encontrado.');
-    }
-
-    return this.createPartnerAdvertisingTopupMbWaySession(input);
-  }
-
-  private async createPartnerAdvertisingTopupMbWaySession(input: {
-    partnerUserId: string;
-    partnerId: string;
-    partnerEmail: string | null | undefined;
-    amountEurCents: number;
-    successUrl: string;
-    cancelUrl: string;
-  }): Promise<{ url: string; sessionId: string }> {
-    const stripe = this.getClient();
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      customer_email: this.stripeCustomerEmail(input.partnerUserId, input.partnerEmail),
-      line_items: [
-        {
-          price_data: {
-            currency: 'eur',
-            unit_amount: input.amountEurCents,
-            product_data: {
-              name: 'Saldo de publicidade (MB WAY)',
-              description: 'Recarga para publicar imóveis na comunidade',
-            },
-          },
-          quantity: 1,
-        },
-      ],
-      payment_method_types: ['mb_way'],
-      success_url: input.successUrl,
-      cancel_url: input.cancelUrl,
-      client_reference_id: input.partnerUserId,
-      metadata: {
-        userId: input.partnerUserId,
-        partnerId: input.partnerId,
-        checkoutType: 'partner_advertising_topup',
-        amountEurCents: String(input.amountEurCents),
-      },
-    });
-    if (!session.url || !session.id) {
-      throw new BadRequestException('Não foi possível criar a sessão MB WAY.');
-    }
-    return { url: session.url, sessionId: session.id };
-  }
-
-  private async createAffiliateCommissionIfEligible(
-    referredUserId: string,
-  ): Promise<void> {
-    const referredUser = await this.prisma.user.findUnique({
-      where: { id: referredUserId },
-      select: {
-        id: true,
-        referredByAffiliateId: true,
-      },
-    });
-    const affiliateId = referredUser?.referredByAffiliateId;
-    if (!affiliateId) return;
-
-    const affiliate = await this.prisma.affiliateProfile.findUnique({
-      where: { id: affiliateId },
-      include: {
-        user: {
-          select: { role: true },
-        },
-      },
-    });
-    if (!affiliate || !affiliate.isActive) return;
-    // Regra de negócio: admin pode ser afiliado, mas não recebe comissão.
-    if (affiliate.user.role === 'ADMIN') return;
-
-    const amount =
-      affiliate.payoutMethod === 'PIX' ? 60 : 10;
-    const currency = affiliate.payoutMethod === 'PIX' ? 'BRL' : 'EUR';
-
-    try {
-      await this.prisma.affiliateCommission.create({
-        data: {
-          affiliateId,
-          referredUserId,
-          amount,
-          currency,
-          status: 'PENDING',
-        },
-      });
-    } catch (error: any) {
-      // idempotência: se já existe comissão para esse indicado, ignorar
-      if (error?.code === 'P2002') return;
-      throw error;
-    }
   }
 
   /** Valores atuais da anuidade (para exibir no frontend). */
@@ -782,20 +654,6 @@ export class StripeService {
       );
     }
 
-    const rawAffiliateCode = (dto.affiliateCode ?? '').trim().toLowerCase();
-    let referredByAffiliateId: string | null = null;
-    let referredByCodeSnapshot: string | null = null;
-    if (rawAffiliateCode && rawAffiliateCode !== 'nenhum') {
-      const affiliate = await this.prisma.affiliateProfile.findUnique({
-        where: { affiliateCode: rawAffiliateCode },
-        select: { id: true, isActive: true },
-      });
-      if (affiliate?.isActive) {
-        referredByAffiliateId = affiliate.id;
-        referredByCodeSnapshot = rawAffiliateCode;
-      }
-    }
-
     const passwordHash = await bcrypt.hash(dto.password, GUEST_SIGNUP_SALT_ROUNDS);
     const pending = await this.prisma.pendingMembershipSignup.create({
       data: {
@@ -803,9 +661,6 @@ export class StripeService {
         email,
         whatsapp,
         passwordHash,
-        affiliateCodeSnapshot: referredByCodeSnapshot,
-        indicadoPor: referredByCodeSnapshot,
-        referredByAffiliateId,
         existingUserId: existingByWhatsapp?.id ?? existingByEmail?.id ?? null,
         expiresAt: this.getGuestSignupExpiry(),
       },
@@ -1608,7 +1463,6 @@ export class StripeService {
       meta.rafacallFeeEurCents != null ||
       checkoutType === 'rafa_call_unlock' ||
       checkoutType === 'partner_sale_commission' ||
-      checkoutType === 'partner_advertising_topup' ||
       checkoutType === 'membership_guest' ||
       checkoutType === 'rafacall_guest' ||
       checkoutType === 'rafacall_guest_v2'
@@ -1645,10 +1499,6 @@ export class StripeService {
           membershipExpiresAt: validUntil,
           emailVerifiedAt: new Date(),
           registrationChannel: RegistrationChannel.EMAIL,
-          indicadoPor: pending.indicadoPor,
-          referredByAffiliateId: pending.referredByAffiliateId,
-          referredByCodeSnapshot: pending.affiliateCodeSnapshot,
-          referredAt: pending.referredByAffiliateId ? new Date() : null,
         },
       });
       userId = created.id;
@@ -1694,7 +1544,6 @@ export class StripeService {
     ]);
 
     await this.recordMembershipPaymentFromCheckoutSession(userId, session);
-    await this.createAffiliateCommissionIfEligible(userId);
 
     const handoffExpires = new Date();
     handoffExpires.setHours(handoffExpires.getHours() + 2);
@@ -1761,70 +1610,6 @@ export class StripeService {
     });
   }
 
-  private async handlePartnerAdvertisingTopupCompleted(
-    session: Stripe.Checkout.Session,
-  ): Promise<void> {
-    const sess = session as any;
-    const partnerId = sess.metadata?.partnerId as string | undefined;
-    const amountRaw = sess.metadata?.amountEurCents as string | undefined;
-    const userId = (sess.metadata?.userId as string | undefined) || sess.client_reference_id;
-    if (!partnerId || !amountRaw || !userId) return;
-
-    const amountEurCents = parseInt(amountRaw, 10);
-    if (!Number.isFinite(amountEurCents) || amountEurCents < 1) return;
-
-    const { balanceEurCents } = await this.partnerAdvertising.credit(
-      partnerId,
-      amountEurCents,
-      'STRIPE_TOP_UP',
-      { stripeCheckoutSessionId: sess.id as string },
-    );
-
-    const amountLabel = this.formatMoney(amountEurCents, 'eur');
-    const balanceLabel = this.formatMoney(balanceEurCents, 'eur');
-    const methodLabel = this.formatPaymentMethodFromSession(session);
-    const paidAt = new Date();
-
-    try {
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-        select: { name: true, email: true },
-      });
-      if (user?.email) {
-        await sendEmailBase({
-          to: user.email,
-          subject: 'Saldo de publicidade adicionado — Comunidade Rafa Portugal',
-          text: `Olá ${user.name},\n\nConfirmámos o pagamento de ${amountLabel} (${methodLabel}). O teu saldo de publicidade atual é ${balanceLabel}.\n\nObrigado!\nA equipa Comunidade Rafa Portugal`,
-          html: `
-            <motion-div style="max-width:640px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827;padding:24px;">
-              <p>Olá <strong>${user.name}</strong>,</p>
-              <p>Confirmámos o pagamento de <strong>${amountLabel}</strong> (${methodLabel}).</p>
-              <p>O teu <strong>saldo de publicidade</strong> atual é <strong>${balanceLabel}</strong>.</p>
-              <p style="margin-top:24px;">Obrigado!<br/>A equipa Comunidade Rafa Portugal</p>
-            </motion-div>
-          `.replaceAll('motion-div', 'div'),
-        });
-      }
-    } catch {
-      // ignore email errors
-    }
-
-    await this.sendPaymentConfirmationWhatsApp({
-      userId,
-      reason: 'Recarga de saldo de publicidade',
-      amountLabel,
-      paidAt,
-      methodLabel,
-    });
-    await this.notifyAdminsNewPayment({
-      payerUserId: userId,
-      reason: 'Recarga de saldo de publicidade',
-      amountLabel,
-      paidAt,
-      methodLabel,
-    });
-  }
-
   private async handleCheckoutCompleted(session: Stripe.Checkout.Session): Promise<void> {
     const sess = session as any;
     if (!this.isCheckoutSessionSuccessfullyPaid(session)) {
@@ -1860,11 +1645,6 @@ export class StripeService {
     if (!userId) return;
 
     const checkoutType = sess.metadata?.checkoutType as string | undefined;
-    if (checkoutType === 'partner_advertising_topup') {
-      await this.handlePartnerAdvertisingTopupCompleted(session);
-      return;
-    }
-
     if (checkoutType === 'partner_sale_commission') {
       const saleId = sess.metadata?.saleId as string | undefined;
       if (!saleId) return;
@@ -1984,7 +1764,6 @@ export class StripeService {
       userId,
       session,
     );
-    await this.createAffiliateCommissionIfEligible(userId);
 
     if (membershipPaymentCreated) {
       const amountTotal = (sess.amount_total as number | null | undefined) ?? null;
@@ -2082,9 +1861,6 @@ export class StripeService {
           : {}),
       },
     });
-    if (isActive) {
-      await this.createAffiliateCommissionIfEligible(userId);
-    }
   }
 
   private async handleInvoicePaid(invoice: Stripe.Invoice): Promise<void> {
@@ -2138,8 +1914,6 @@ export class StripeService {
         });
       }
     }
-
-    await this.createAffiliateCommissionIfEligible(userId);
   }
 
   /**

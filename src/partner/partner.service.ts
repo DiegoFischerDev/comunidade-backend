@@ -18,7 +18,6 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { UpdatePartnerAdminDto } from './dto/update-partner-admin.dto';
 import { CreatePartnerSaleDto } from './dto/create-partner-sale.dto';
 import {
-  PartnerAdvertisingLedgerType,
   PartnerHouse,
   PartnerHousePublicationStatus,
   PartnerHouseTypology,
@@ -54,7 +53,6 @@ import {
 } from '../common/public-media-url';
 import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-relocation-whatsapp-group.dto';
 import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
-import { PartnerAdvertisingService } from './partner-advertising.service';
 import {
   isHousePubliclyVisible,
   nextPublishedUntil,
@@ -87,7 +85,6 @@ export class PartnerService {
     private readonly wa: WhatsAppService,
     private readonly houseImages: HouseImageStorageService,
     private readonly jwtService: JwtService,
-    private readonly advertising: PartnerAdvertisingService,
     private readonly partnerContactLinks: PartnerContactLinksService,
     private readonly listingOpenAi: HouseListingOpenAiService,
   ) {}
@@ -136,7 +133,6 @@ export class PartnerService {
         logoUrl: true,
         priority: true,
         createdAt: true,
-        advertisingBalanceEurCents: true,
         publicSlug: true,
         user: {
           select: {
@@ -1463,73 +1459,6 @@ export class PartnerService {
     return row;
   }
 
-  async getMyAdvertisingBalance(userId: string) {
-    return this.advertising.getBalanceByUserId(userId);
-  }
-
-  async startAdvertisingBalanceTopup(
-    userId: string,
-    userEmail: string | null | undefined,
-    dto: {
-      amountEurCents: number;
-      successUrl?: string;
-      cancelUrl?: string;
-    },
-  ) {
-    const partner = await this.getRelocationPartnerOrThrow(userId);
-    const frontendBase = getFrontendBaseUrl();
-    const successUrl =
-      dto.successUrl ?? `${frontendBase}/dashboard/casas?topup=success`;
-    const cancelUrl =
-      dto.cancelUrl ?? `${frontendBase}/dashboard/casas?topup=cancel`;
-    return this.stripeService.createPartnerAdvertisingTopupCheckout({
-      partnerUserId: userId,
-      partnerId: partner.id,
-      partnerEmail: userEmail,
-      amountEurCents: dto.amountEurCents,
-      successUrl,
-      cancelUrl,
-    });
-  }
-
-  async adminCreditPartnerAdvertisingBalance(
-    adminUserId: string,
-    partnerId: string,
-    amountEurCents: number,
-    note?: string,
-  ) {
-    const partner = await this.prisma.partner.findUnique({
-      where: { id: partnerId },
-      select: { id: true },
-    });
-    if (!partner) throw new NotFoundException('Parceiro não encontrado.');
-    return this.advertising.credit(partnerId, amountEurCents, 'ADMIN_CREDIT', {
-      adminUserId,
-      note: note?.trim() || 'Crédito manual pelo admin',
-    });
-  }
-
-  async adminGetPartnerAdvertisingBalance(partnerId: string) {
-    return this.advertising.getBalance(partnerId);
-  }
-
-  async adminSetPartnerAdvertisingBalance(
-    adminUserId: string,
-    partnerId: string,
-    balanceEurCents: number,
-    note?: string,
-  ) {
-    const partner = await this.prisma.partner.findUnique({
-      where: { id: partnerId },
-      select: { id: true },
-    });
-    if (!partner) throw new NotFoundException('Parceiro não encontrado.');
-    return this.advertising.setBalance(partnerId, balanceEurCents, {
-      adminUserId,
-      note: note?.trim() || 'Saldo definido manualmente pelo admin',
-    });
-  }
-
   async publishMyHouse(userId: string, houseId: string) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
     const house = await this.prisma.partnerHouse.findFirst({
@@ -1539,10 +1468,10 @@ export class PartnerService {
     if (!house) {
       throw new NotFoundException('Imóvel não encontrado.');
     }
-    return this.publishHouseToChannels(houseId, { chargePartner: true });
+    return this.publishHouseToChannels(houseId, { skipWhatsappIfAlreadySent: true });
   }
 
-  /** Parceiro: oculta o anúncio no site (sem reembolso do saldo já gasto). */
+  /** Parceiro: oculta o anúncio no site. */
   async unpublishMyHouse(userId: string, houseId: string) {
     const partner = await this.getRelocationPartnerOrThrow(userId);
     const house = await this.prisma.partnerHouse.findFirst({
@@ -2644,15 +2573,15 @@ export class PartnerService {
   }
 
   /**
-   * Admin: envia WhatsApp sem cobrança e prolonga a janela de publicação (+7 dias).
+   * Admin: envia WhatsApp e prolonga a janela de publicação (+7 dias).
    */
   async adminSendHouseToRelocationWhatsappGroups(houseId: string) {
-    return this.publishHouseToChannels(houseId, { chargePartner: false });
+    return this.publishHouseToChannels(houseId);
   }
 
   private async publishHouseToChannels(
     houseId: string,
-    options: { chargePartner: boolean },
+    options: { skipWhatsappIfAlreadySent?: boolean } = {},
   ) {
     const house = await this.prisma.partnerHouse.findFirst({
       where: {
@@ -2682,14 +2611,10 @@ export class PartnerService {
       trashedAt: house.trashedAt,
     };
 
-    if (options.chargePartner) {
-      await this.advertising.debitForPublication(house.partnerId, houseId);
-    }
-
     const publishedUntil = nextPublishedUntil(house.publishedUntil);
     const now = new Date();
 
-    if (options.chargePartner && house.whatsappSentAt) {
+    if (options.skipWhatsappIfAlreadySent && house.whatsappSentAt) {
       await this.prisma.partnerHouse.update({
         where: { id: houseId },
         data: {
@@ -2700,11 +2625,9 @@ export class PartnerService {
           trashedAt: null,
         },
       });
-      const balance = await this.advertising.getBalance(house.partnerId);
       return {
         sentToGroups: 0,
         publishedUntil,
-        balanceEurCents: balance.balanceEurCents,
         alreadySentToWhatsapp: true as const,
       };
     }
@@ -2723,27 +2646,11 @@ export class PartnerService {
 
       const result = await this.sendHouseToRelocationWhatsappGroups(houseId);
 
-      const balance = options.chargePartner
-        ? await this.advertising.getBalance(house.partnerId)
-        : null;
       return {
         ...result,
         publishedUntil,
-        ...(balance ? { balanceEurCents: balance.balanceEurCents } : {}),
       };
     } catch (err) {
-      if (options.chargePartner) {
-        const after = await this.prisma.partnerHouse.findUnique({
-          where: { id: houseId },
-          select: { whatsappSentAt: true },
-        });
-        if (!after?.whatsappSentAt) {
-          await this.advertising.refundPublicationDebit(
-            house.partnerId,
-            houseId,
-          );
-        }
-      }
       await this.prisma.partnerHouse.update({
         where: { id: houseId },
         data: prevPublication,
@@ -2753,14 +2660,14 @@ export class PartnerService {
   }
 
   /**
-   * Whatsapp scan + compartilhamento automático: debita saldo, prolonga publicação no site e
+   * Whatsapp scan + compartilhamento automático: prolonga publicação no site e
    * envia aos grupos relocation (RENT/SALE).
    */
   async publishScannedHouseAutoShare(houseId: string) {
-    return this.publishHouseToChannels(houseId, { chargePartner: true });
+    return this.publishHouseToChannels(houseId);
   }
 
-  /** Reverte publicação provisória no scan quando o débito/envio automático falha. */
+  /** Reverte publicação provisória no scan quando o envio automático falha. */
   async unpublishHouseAfterAutoShareFailure(houseId: string): Promise<void> {
     const house = await this.prisma.partnerHouse.findUnique({
       where: { id: houseId },
@@ -2769,14 +2676,6 @@ export class PartnerService {
     if (house?.publicationStatus !== PartnerHousePublicationStatus.PUBLISHED) {
       return;
     }
-    const debited = await this.prisma.partnerAdvertisingLedgerEntry.findFirst({
-      where: {
-        partnerHouseId: houseId,
-        type: PartnerAdvertisingLedgerType.PUBLICATION_DEBIT,
-      },
-      select: { id: true },
-    });
-    if (debited) return;
 
     await this.prisma.partnerHouse.update({
       where: { id: houseId },
