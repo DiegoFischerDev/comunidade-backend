@@ -123,6 +123,9 @@ function timezoneLabelPt(iana: string): string {
 @Injectable()
 export class RafacallBookingService {
   private readonly logger = new Logger(RafacallBookingService.name);
+  /** Evolution reentrega o mesmo webhook — evita enviar o link duas vezes. */
+  private readonly whatsappTriggerDedup = new Map<string, number>();
+  private readonly whatsappTriggerDedupTtlMs = 10 * 60 * 1000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -936,6 +939,7 @@ export class RafacallBookingService {
     text: string;
     fromMe?: boolean;
     instance?: string;
+    externalMessageId?: string;
   }): Promise<{ ok: true; status: string }> {
     if (dto.fromMe !== true) {
       return { ok: true, status: 'ignored_not_from_admin' };
@@ -965,6 +969,10 @@ export class RafacallBookingService {
       return { ok: true, status: 'ignored_invalid_phone' };
     }
 
+    if (!this.claimWhatsappTriggerDelivery(dto, whatsapp)) {
+      return { ok: true, status: 'ignored_duplicate' };
+    }
+
     const name =
       (await this.wa.getContactDisplayName(whatsapp, instance || undefined)) || '';
 
@@ -983,6 +991,32 @@ export class RafacallBookingService {
     );
 
     return { ok: true, status: 'sent' };
+  }
+
+  /** Dedup de reentregas do webhook Evolution (mesmo externalMessageId ou mesmo gatilho em janela curta). */
+  private claimWhatsappTriggerDelivery(
+    dto: {
+      text: string;
+      instance?: string;
+      externalMessageId?: string;
+    },
+    whatsapp: string,
+  ): boolean {
+    const now = Date.now();
+    for (const [key, ts] of this.whatsappTriggerDedup) {
+      if (now - ts > this.whatsappTriggerDedupTtlMs) {
+        this.whatsappTriggerDedup.delete(key);
+      }
+    }
+
+    const externalMessageId = dto.externalMessageId?.trim();
+    const dedupKey = externalMessageId
+      ? `id:${externalMessageId}`
+      : `fallback:${(dto.instance || '').trim().toLowerCase()}|${whatsapp}|${dto.text.trim().toLowerCase()}`;
+
+    if (this.whatsappTriggerDedup.has(dedupKey)) return false;
+    this.whatsappTriggerDedup.set(dedupKey, now);
+    return true;
   }
 
   // ===== FLUXO GUEST =====
