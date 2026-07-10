@@ -2,13 +2,18 @@ import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/commo
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/roles.decorator';
 import { RafacallAdminService } from './rafacall-admin.service';
+import { RafacallBookingService } from './rafacall-booking.service';
 import { AdminCreateRafacallBlockDto } from './dto/admin-rafacall-blocks.dto';
+import { AdminCreateRafacallBookingDto } from './dto/admin-create-rafacall-booking.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 
 @Controller('admin/rafacall')
 @Roles(Role.ADMIN)
 export class AdminRafacallController {
-  constructor(private readonly admin: RafacallAdminService) {}
+  constructor(
+    private readonly admin: RafacallAdminService,
+    private readonly booking: RafacallBookingService,
+  ) {}
 
   @Get('schedule')
   schedule(@Query('tz') tz?: string) {
@@ -41,6 +46,16 @@ export class AdminRafacallController {
     return this.admin.deleteBlock({ id: id.trim() });
   }
 
+  @Post('bookings')
+  createBooking(@Body() dto: AdminCreateRafacallBookingDto) {
+    return this.booking.adminCreateBooking({
+      name: dto.name,
+      whatsapp: dto.whatsapp,
+      startsAtUtcIso: dto.startsAtUtcIso,
+      tz: dto.tz,
+    });
+  }
+
   @Post('bookings/:id/cancel')
   cancelBooking(
     @CurrentUser() user: { id: string },
@@ -52,6 +67,14 @@ export class AdminRafacallController {
       adminUserId: user.id,
       reason: body?.reason,
     });
+  }
+
+  @Post('bookings/:id/reschedule')
+  rescheduleBooking(
+    @Param('id') id: string,
+    @Body() body: { newStartsAtUtcIso: string; tz: string },
+  ) {
+    return this.booking.adminRescheduleBooking(id.trim(), body);
   }
 
   @Post('bookings/:id/complete')

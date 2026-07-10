@@ -71,7 +71,7 @@ export class RafacallAdminService {
       where: {
         // Inclui agendamentos futuros e mantém histórico por 7 dias após a data.
         startsAt: { gte: weekAgo },
-        status: { in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.CANCELLED, RafaCallBookingStatus.COMPLETED] },
+        status: { in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.COMPLETED] },
       },
       orderBy: { startsAt: 'asc' },
       select: {
@@ -229,17 +229,25 @@ export class RafacallAdminService {
         timezone: true,
       },
     });
-    if (!booking) throw new BadRequestException('Agendamento não encontrado.');
 
-    const updated = await this.prisma.rafaCallBooking.update({
-      where: { id: booking.id },
-      data: {
-        status: RafaCallBookingStatus.CANCELLED,
-        cancelledAt: new Date(),
-        cancelReason: params.reason?.trim() || `admin_cancel:${params.adminUserId}`,
-      },
-      select: { id: true, status: true },
-    });
+    if (!booking) {
+      const existing = await this.prisma.rafaCallBooking.findUnique({
+        where: { id: params.bookingId },
+        select: { status: true },
+      });
+      if (!existing) {
+        // Idempotente: já foi apagado (ex.: reagendamento ou cancelamento prévio).
+        return { ok: true as const, alreadyRemoved: true as const };
+      }
+      if (existing.status === RafaCallBookingStatus.COMPLETED) {
+        throw new BadRequestException(
+          'Este agendamento já foi marcado como realizado e não pode ser cancelado.',
+        );
+      }
+      throw new BadRequestException('Agendamento não encontrado.');
+    }
+
+    await this.prisma.rafaCallBooking.delete({ where: { id: booking.id } });
 
     if (booking.userId) {
       await this.prisma.user.update({
@@ -258,7 +266,7 @@ export class RafacallAdminService {
       });
     }
 
-    return updated;
+    return { ok: true as const };
   }
 
   async completeBooking(params: { bookingId: string; adminUserId: string }) {
@@ -266,7 +274,16 @@ export class RafacallAdminService {
       where: { id: params.bookingId, status: RafaCallBookingStatus.SCHEDULED },
       select: { id: true, userId: true },
     });
-    if (!booking) throw new BadRequestException('Agendamento não encontrado.');
+    if (!booking) {
+      const existing = await this.prisma.rafaCallBooking.findUnique({
+        where: { id: params.bookingId },
+        select: { status: true },
+      });
+      if (existing?.status === RafaCallBookingStatus.COMPLETED) {
+        return { id: params.bookingId, status: RafaCallBookingStatus.COMPLETED };
+      }
+      throw new BadRequestException('Agendamento não encontrado.');
+    }
 
     const updated = await this.prisma.rafaCallBooking.update({
       where: { id: booking.id },
