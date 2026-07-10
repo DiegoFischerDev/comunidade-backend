@@ -232,7 +232,7 @@ export class RafacallBookingService {
       if (deviceBooking) {
         return {
           mode: 'manage' as const,
-          trustedDevice: true,
+          access: 'device' as const,
           booking: this.serializePublicBooking(deviceBooking),
         };
       }
@@ -242,8 +242,8 @@ export class RafacallBookingService {
     if (waBooking) {
       return {
         mode: 'manage' as const,
-        trustedDevice: false,
-        bookingId: waBooking.id,
+        access: 'whatsapp' as const,
+        booking: this.serializePublicBooking(waBooking),
       };
     }
 
