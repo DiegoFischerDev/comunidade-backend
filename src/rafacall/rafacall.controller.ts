@@ -1,9 +1,10 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, Param, Post, Query } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { RafacallService } from './rafacall.service';
 import { RafacallBookingService } from './rafacall-booking.service';
+import { RafacallWhatsappTriggerDto } from './dto/whatsapp-trigger.dto';
 
 @Controller('rafacall')
 export class RafacallController {
@@ -109,6 +110,23 @@ export class RafacallController {
     },
   ) {
     return this.bookingService.bookPublic(body);
+  }
+
+  /**
+   * Gatilho interno (receiver wa-verify): admin envia «link para agendar chamada» numa DM
+   * (fromMe) → backend responde ao cliente com link /agendar pré-preenchido.
+   */
+  @Public()
+  @Post('whatsapp/trigger')
+  async whatsappBookingLinkTrigger(
+    @Body() body: RafacallWhatsappTriggerDto,
+    @Headers('x-internal-secret') internalSecret?: string,
+  ) {
+    const expected = (process.env.COMMUNITY_INTERNAL_SECRET || '').trim();
+    if (!expected || (internalSecret ?? '').trim() !== expected) {
+      throw new ForbiddenException('Segredo interno inválido.');
+    }
+    return this.bookingService.handleWhatsappBookingLinkTrigger(body);
   }
 
   // ===== Endpoints públicos para o fluxo guest =====

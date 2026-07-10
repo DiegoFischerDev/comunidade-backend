@@ -130,7 +130,7 @@ export class RafacallBookingService {
   ) {}
 
   private get durationMinutes(): number {
-    const v = Number(process.env.RAFA_CALL_DURATION_MINUTES ?? 30);
+    const v = Number(process.env.RAFA_CALL_DURATION_MINUTES ?? 40);
     return Number.isFinite(v) && v > 0 ? v : 30;
   }
   private get bufferMinutes(): number {
@@ -527,7 +527,10 @@ export class RafacallBookingService {
   ) {
     const whatsapp = (target.whatsapp ?? '').replace(/\D/g, '');
     if (!whatsapp) return;
-    const startLocal = booking.startsAt.toLocaleString('pt-PT', {
+
+    const isPublicFree = target.origin === RafaCallBookingOrigin.PUBLIC_FREE;
+    const locale = isPublicFree ? 'pt-BR' : 'pt-PT';
+    const startLocal = booking.startsAt.toLocaleString(locale, {
       timeZone: booking.timezone,
       weekday: 'long',
       day: '2-digit',
@@ -535,34 +538,48 @@ export class RafacallBookingService {
       hour: '2-digit',
       minute: '2-digit',
     });
-    const endLocal = booking.endsAt.toLocaleTimeString('pt-PT', {
+    const endLocal = booking.endsAt.toLocaleTimeString(locale, {
       timeZone: booking.timezone,
       hour: '2-digit',
       minute: '2-digit',
     });
     const who = target.name?.trim() || 'Olá';
+    const hostLabel = isPublicFree ? 'a Rafa & Carol' : 'a Rafa';
+
     const base =
       kind === 'booked'
-        ? `✅ ${who}, a tua chamada com a Rafa foi agendada!`
+        ? isPublicFree
+          ? `✅ ${who}, sua videochamada com ${hostLabel} foi agendada!`
+          : `✅ ${who}, a tua chamada com ${hostLabel} foi agendada!`
         : kind === 'rescheduled'
-          ? `🔁 ${who}, a tua chamada com a Rafa foi reagendada!`
-          : `🗑️ ${who}, a tua chamada com a Rafa foi cancelada.`;
+          ? isPublicFree
+            ? `🔁 ${who}, sua videochamada com ${hostLabel} foi reagendada!`
+            : `🔁 ${who}, a tua chamada com ${hostLabel} foi reagendada!`
+          : isPublicFree
+            ? `🗑️ ${who}, sua videochamada com ${hostLabel} foi cancelada.`
+            : `🗑️ ${who}, a tua chamada com ${hostLabel} foi cancelada.`;
+
     const manageUrl = this.buildManageUrl({
       bookingId: target.bookingId,
       whatsapp,
       origin: target.origin,
     });
+
     const followup =
       kind === 'cancelled'
-        ? target.origin === 'PUBLIC_FREE'
-          ? `\n\nPara marcar uma nova chamada, acede: ${manageUrl}`
+        ? isPublicFree
+          ? `\n\nPara marcar uma nova videochamada, acesse:\n${manageUrl}`
           : ''
-        : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?\n\nPara reagendar ou cancelar, acede: ${manageUrl}`;
+        : isPublicFree
+          ? `\n\nNo dia e hora marcados, a Rafa vai te ligar por videochamada do WhatsApp, ok?\n\nPara alterar ou cancelar, acesse:\n${manageUrl}`
+          : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?\n\nPara reagendar ou cancelar, acede: ${manageUrl}`;
+
     const tzLine = `Fuso horário: ${timezoneLabelPt(booking.timezone)} (${booking.timezone})`;
     const when =
       kind === 'cancelled'
         ? `\n\nEstava marcada para: ${startLocal} (até ${endLocal})\n${tzLine}`
         : `\n\nData e hora: ${startLocal} (até ${endLocal})\n${tzLine}`;
+
     await this.wa.sendText(whatsapp, `${base}${when}${followup}`);
   }
 
@@ -826,9 +843,73 @@ export class RafacallBookingService {
       { name, whatsapp: wa, bookingId: created.id, origin: RafaCallBookingOrigin.PUBLIC_FREE },
       'booked',
       { startsAt, endsAt, timezone: tz },
-    );
+    ).catch((err) => {
+      this.logger.warn(
+        `Falha ao enviar WhatsApp de confirmação (agendamento público ${created.id}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
 
     return this.serializePublicBooking(created);
+  }
+
+  /**
+   * Gatilho WhatsApp (admin): na instância de atendimento, o admin envia «link para agendar chamada»
+   * numa conversa direta (fromMe) → o backend responde ao cliente com o link /agendar pré-preenchido.
+   */
+  async handleWhatsappBookingLinkTrigger(dto: {
+    recipientNumber: string;
+    text: string;
+    fromMe?: boolean;
+    instance?: string;
+  }): Promise<{ ok: true; status: string }> {
+    if (dto.fromMe !== true) {
+      return { ok: true, status: 'ignored_not_from_admin' };
+    }
+
+    const triggerPhrase = (
+      process.env.RAFA_CALL_WHATSAPP_TRIGGER_PHRASE || 'link para agendar chamada'
+    ).trim();
+    const allowedInstance = (
+      process.env.RAFA_CALL_WHATSAPP_TRIGGER_INSTANCE ||
+      process.env.EVOLUTION_ACTIVE_INSTANCE ||
+      'comunidade MEO'
+    ).trim();
+
+    const instance = (dto.instance || '').trim();
+    if (allowedInstance && instance && instance !== allowedInstance) {
+      return { ok: true, status: 'ignored_instance' };
+    }
+
+    const incoming = dto.text.trim();
+    if (!incoming || incoming.toLowerCase() !== triggerPhrase.toLowerCase()) {
+      return { ok: true, status: 'ignored_phrase' };
+    }
+
+    const whatsapp = this.normalizeWhatsapp(dto.recipientNumber);
+    if (whatsapp.length < 8) {
+      return { ok: true, status: 'ignored_invalid_phone' };
+    }
+
+    const name =
+      (await this.wa.getContactDisplayName(whatsapp, instance || undefined)) || '';
+
+    const base = getFrontendBaseUrl().replace(/\/$/, '');
+    const params = new URLSearchParams();
+    params.set('whatsapp', whatsapp);
+    if (name) params.set('name', name);
+    const link = `${base}/agendar?${params.toString()}`;
+
+    await this.wa.sendText(whatsapp, link, {
+      preferredInstance: instance || allowedInstance || undefined,
+    });
+
+    this.logger.log(
+      `Gatilho admin WhatsApp: link enviado para ${whatsapp}${name ? ` (${name})` : ''}`,
+    );
+
+    return { ok: true, status: 'sent' };
   }
 
   // ===== FLUXO GUEST =====
