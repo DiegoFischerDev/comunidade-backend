@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
-import { RafaCallBookingOrigin, RafaCallBookingStatus } from '@prisma/client';
+import { Prisma, RafaCallBookingOrigin, RafaCallBookingStatus } from '@prisma/client';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 
 type DayAvailability = {
@@ -816,19 +816,30 @@ export class RafacallBookingService {
 
     const endsAt = await this.assertSlotAvailableForBooking(startsAt);
 
-    const created = await this.prisma.rafaCallBooking.create({
-      data: {
-        userId: null,
-        guestName: name,
-        guestWhatsapp: wa,
-        clientDeviceId: deviceId,
-        status: RafaCallBookingStatus.SCHEDULED,
-        origin: RafaCallBookingOrigin.PUBLIC_FREE,
-        startsAt,
-        endsAt,
-        timezone: tz,
-      },
-    });
+    let created;
+    try {
+      created = await this.prisma.rafaCallBooking.create({
+        data: {
+          userId: null,
+          guestName: name,
+          guestWhatsapp: wa,
+          clientDeviceId: deviceId,
+          status: RafaCallBookingStatus.SCHEDULED,
+          origin: RafaCallBookingOrigin.PUBLIC_FREE,
+          startsAt,
+          endsAt,
+          timezone: tz,
+        },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new BadRequestException('Este horário já não está disponível.');
+      }
+      throw err;
+    }
 
     void this.sendBookingMessage(
       { name, whatsapp: wa, bookingId: created.id, origin: RafaCallBookingOrigin.PUBLIC_FREE },
@@ -875,19 +886,30 @@ export class RafacallBookingService {
 
     const endsAt = await this.assertSlotAvailableForBooking(startsAt);
 
-    const created = await this.prisma.rafaCallBooking.create({
-      data: {
-        userId: null,
-        guestName: name,
-        guestWhatsapp: wa,
-        clientDeviceId: null,
-        status: RafaCallBookingStatus.SCHEDULED,
-        origin: RafaCallBookingOrigin.PUBLIC_FREE,
-        startsAt,
-        endsAt,
-        timezone: tz,
-      },
-    });
+    let created;
+    try {
+      created = await this.prisma.rafaCallBooking.create({
+        data: {
+          userId: null,
+          guestName: name,
+          guestWhatsapp: wa,
+          clientDeviceId: null,
+          status: RafaCallBookingStatus.SCHEDULED,
+          origin: RafaCallBookingOrigin.PUBLIC_FREE,
+          startsAt,
+          endsAt,
+          timezone: tz,
+        },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new BadRequestException('Este horário já não está disponível.');
+      }
+      throw err;
+    }
 
     void this.sendBookingMessage(
       { name, whatsapp: wa, bookingId: created.id, origin: RafaCallBookingOrigin.PUBLIC_FREE },
