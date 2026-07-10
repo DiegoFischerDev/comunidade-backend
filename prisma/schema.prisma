@@ -689,33 +689,10 @@ model PartnerShareLink {
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   clicks              RedirectClickEvent[]
-  recommendedServices RecommendedService[]
   heroForPartner      Partner?             @relation("PartnerHeroShareLink")
   serviceContact      Service?             @relation("ServiceContactShareLink")
 
   @@map("partner_share_links")
-}
-
-/**
- * Serviço em destaque no dashboard (título + link de redirecionamento WhatsApp).
- */
-model RecommendedService {
-  id                 String           @id @default(cuid())
-  title              String
-  /**
-   * Imagem do card na página /servicos (R2 ou `/uploads/...`).
-   */
-  cardImageUrl       String?          @map("card_image_url") @db.VarChar(2048)
-  partnerShareLinkId String           @map("partner_share_link_id")
-  partnerShareLink   PartnerShareLink @relation(fields: [partnerShareLinkId], references: [id], onDelete: Cascade)
-  sortOrder          Int              @default(0) @map("sort_order")
-  active             Boolean          @default(true)
-  createdAt          DateTime         @default(now()) @map("created_at")
-  updatedAt          DateTime         @updatedAt @map("updated_at")
-
-  @@unique([partnerShareLinkId])
-  @@index([active, sortOrder])
-  @@map("recommended_services")
 }
 
 /**

@@ -53,10 +53,7 @@ import {
 } from '../common/public-media-url';
 import { CreateHouseRelocationWhatsappGroupDto } from './dto/create-house-relocation-whatsapp-group.dto';
 import { UpdateHouseRelocationWhatsappGroupDto } from './dto/update-house-relocation-whatsapp-group.dto';
-import {
-  isHousePubliclyVisible,
-  nextPublishedUntil,
-} from './house-publication.constants';
+import { isHousePubliclyVisible } from './house-publication.constants';
 import {
   assertPartnerPublicSlugAllowed,
   normalizePartnerPublicSlugInput,
@@ -1411,7 +1408,7 @@ export class PartnerService {
 
   /**
    * Página pública do anúncio: imóvel relocation + dados mínimos do parceiro (nome, logo, categoria).
-   * Admin ou parceiro dono do imóvel podem ver anúncios ocultos ou expirados.
+   * Admin ou parceiro dono do imóvel podem ver anúncios ocultos.
    */
   async getPublicHousePage(
     houseId: string,
@@ -1489,6 +1486,7 @@ export class PartnerService {
       data: {
         publicationStatus: PartnerHousePublicationStatus.HIDDEN,
         hiddenAt: new Date(),
+        publishedUntil: null,
       },
       select: {
         id: true,
@@ -1760,7 +1758,7 @@ export class PartnerService {
         ...(publishAsPublished
           ? {
               publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
-              publishedUntil: nextPublishedUntil(null),
+              publishedUntil: null,
               lastPublishedAt: now,
               hiddenAt: null,
               trashedAt: null,
@@ -2385,6 +2383,8 @@ export class PartnerService {
     maxPriceEur?: string;
     page?: string;
     pageSize?: string;
+    /** `recent`: mais recentemente adicionados à plataforma (createdAt desc). */
+    sort?: string;
   }) {
     const parseEurLikeToInt = (raw: unknown): number | null => {
       if (typeof raw !== 'string') return null;
@@ -2422,12 +2422,12 @@ export class PartnerService {
         : 12;
     const pageSize = Math.min(12, requestedPageSize);
 
-    const now = new Date();
+    const sortRecent = filters?.sort?.trim() === 'recent';
+
     const rows = (await this.prisma.partnerHouse.findMany({
       where: {
         partner: { categorySlug: RELOCATION_CATEGORY_SLUG },
         publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
-        publishedUntil: { gt: now },
         ...(partnerId ? { partnerId } : {}),
         ...(city
           ? {
@@ -2440,6 +2440,7 @@ export class PartnerService {
         ...(businessType ? { businessType } : {}),
       },
       select: {
+        createdAt: true,
         id: true,
         houseId: true,
         title: true,
@@ -2484,6 +2485,11 @@ export class PartnerService {
             return true;
           });
     filteredByPrice.sort((a, b) => {
+      if (sortRecent) {
+        return (
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      }
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
       return (
         new Date(b.availableFrom).getTime() -
@@ -2572,9 +2578,7 @@ export class PartnerService {
     return { ok: true as const };
   }
 
-  /**
-   * Admin: envia WhatsApp e prolonga a janela de publicação (+7 dias).
-   */
+  /** Admin: envia WhatsApp e publica o imóvel no site. */
   async adminSendHouseToRelocationWhatsappGroups(houseId: string) {
     return this.publishHouseToChannels(houseId);
   }
@@ -2611,23 +2615,23 @@ export class PartnerService {
       trashedAt: house.trashedAt,
     };
 
-    const publishedUntil = nextPublishedUntil(house.publishedUntil);
     const now = new Date();
+    const publishData = {
+      publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
+      publishedUntil: null,
+      lastPublishedAt: now,
+      hiddenAt: null,
+      trashedAt: null,
+    };
 
     if (options.skipWhatsappIfAlreadySent && house.whatsappSentAt) {
       await this.prisma.partnerHouse.update({
         where: { id: houseId },
-        data: {
-          publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
-          publishedUntil,
-          lastPublishedAt: now,
-          hiddenAt: null,
-          trashedAt: null,
-        },
+        data: publishData,
       });
       return {
         sentToGroups: 0,
-        publishedUntil,
+        publishedUntil: null,
         alreadySentToWhatsapp: true as const,
       };
     }
@@ -2635,20 +2639,14 @@ export class PartnerService {
     try {
       await this.prisma.partnerHouse.update({
         where: { id: houseId },
-        data: {
-          publicationStatus: PartnerHousePublicationStatus.PUBLISHED,
-          publishedUntil,
-          lastPublishedAt: now,
-          hiddenAt: null,
-          trashedAt: null,
-        },
+        data: publishData,
       });
 
       const result = await this.sendHouseToRelocationWhatsappGroups(houseId);
 
       return {
         ...result,
-        publishedUntil,
+        publishedUntil: null,
       };
     } catch (err) {
       await this.prisma.partnerHouse.update({

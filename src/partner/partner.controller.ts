@@ -118,6 +118,7 @@ export class PartnerController {
     @Query('maxPriceEur') maxPriceEur?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('sort') sort?: string,
   ) {
     return this.partnerService.listPublicRelocationHouses({
       partnerId: partnerId || undefined,
@@ -128,6 +129,7 @@ export class PartnerController {
       maxPriceEur: maxPriceEur || undefined,
       page: page || undefined,
       pageSize: pageSize || undefined,
+      sort: sort || undefined,
     });
   }
 
