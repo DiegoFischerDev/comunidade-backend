@@ -81,6 +81,36 @@ export class RafacallController {
     return this.bookingService.cancel(user.id, body);
   }
 
+  // ===== Endpoints públicos para agendamento gratuito =====
+
+  @Public()
+  @Get('public/state')
+  async publicState(
+    @Query('whatsapp') whatsapp?: string,
+    @Query('deviceId') deviceId?: string,
+  ) {
+    if (!whatsapp?.trim()) throw new BadRequestException('WhatsApp é obrigatório.');
+    return this.bookingService.getPublicState({
+      whatsapp,
+      deviceId: deviceId ?? null,
+    });
+  }
+
+  @Public()
+  @Post('public/book')
+  async publicBook(
+    @Body()
+    body: {
+      name: string;
+      whatsapp: string;
+      deviceId: string;
+      startsAtUtcIso: string;
+      tz: string;
+    },
+  ) {
+    return this.bookingService.bookPublic(body);
+  }
+
   // ===== Endpoints públicos para o fluxo guest =====
 
   /** Verifica um unlock pago e devolve nome/whatsapp para o frontend pré-preencher o picker. */
@@ -142,16 +172,35 @@ export class RafacallController {
   @Public()
   @Post('guest/reschedule')
   async guestReschedule(
-    @Body() body: { bookingId: string; whatsapp: string; newStartsAtUtcIso: string; tz: string },
+    @Body()
+    body: {
+      bookingId: string;
+      whatsapp?: string;
+      deviceId?: string;
+      newStartsAtUtcIso: string;
+      tz: string;
+    },
   ) {
+    if (!body.deviceId?.trim() && !body.whatsapp?.trim()) {
+      throw new BadRequestException('WhatsApp ou identificador de dispositivo é obrigatório.');
+    }
     return this.bookingService.rescheduleGuest(body);
   }
 
   @Public()
   @Post('guest/cancel')
   async guestCancel(
-    @Body() body: { bookingId: string; whatsapp: string; reason?: string | null },
+    @Body()
+    body: {
+      bookingId: string;
+      whatsapp?: string;
+      deviceId?: string;
+      reason?: string | null;
+    },
   ) {
+    if (!body.deviceId?.trim() && !body.whatsapp?.trim()) {
+      throw new BadRequestException('WhatsApp ou identificador de dispositivo é obrigatório.');
+    }
     return this.bookingService.cancelGuest(body);
   }
 }

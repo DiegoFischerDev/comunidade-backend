@@ -36,6 +36,7 @@ enum RafaCallBookingStatus {
 
 enum RafaCallBookingOrigin {
   USER_PAID
+  PUBLIC_FREE
 }
 
 enum SupportTicketStatus {
@@ -320,6 +321,10 @@ model RafaCallBooking {
    * WhatsApp normalizado (só dígitos, com indicativo) — identidade do guest.
    */
   guestWhatsapp            String?               @map("guest_whatsapp")
+  /**
+   * UUID v4 gerado no browser — bloqueia múltiplos agendamentos ativos no mesmo dispositivo.
+   */
+  clientDeviceId           String?               @map("client_device_id")
   status                   RafaCallBookingStatus @default(SCHEDULED)
   origin                   RafaCallBookingOrigin @default(USER_PAID)
   /**
@@ -347,6 +352,7 @@ model RafaCallBooking {
 
   @@index([userId, status])
   @@index([guestWhatsapp, status])
+  @@index([clientDeviceId, status])
   @@index([startsAt])
   @@index([endsAt])
   @@map("rafa_call_bookings")
