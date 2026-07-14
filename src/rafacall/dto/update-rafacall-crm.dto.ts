@@ -9,5 +9,5 @@ export class UpdateRafacallCrmDto {
   @IsOptional()
   @IsString()
   @MaxLength(5000)
-  comment?: string;
+  crmComments?: string;
 }

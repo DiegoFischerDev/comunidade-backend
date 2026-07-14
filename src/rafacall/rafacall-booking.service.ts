@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { Prisma, RafaCallBookingOrigin, RafaCallBookingStatus } from '@prisma/client';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
+import { RafacallCrmService } from './rafacall-crm.service';
 
 type DayAvailability = {
   date: string; // YYYY-MM-DD no tz do utilizador
@@ -130,6 +131,7 @@ export class RafacallBookingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
+    private readonly crm: RafacallCrmService,
   ) {}
 
   private get durationMinutes(): number {
@@ -786,10 +788,13 @@ export class RafacallBookingService {
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { rafaCallUnlockOrigin: true },
+      select: { rafaCallUnlockOrigin: true, whatsapp: true },
     });
 
     const origin = user?.rafaCallUnlockOrigin ?? 'USER_PAID';
+    const crmFields = user?.whatsapp
+      ? await this.crm.resolveCrmFieldsForWhatsapp(user.whatsapp)
+      : await this.crm.resolveCrmFieldsForWhatsapp('');
 
     const created = await this.prisma.rafaCallBooking.create({
       data: {
@@ -799,6 +804,7 @@ export class RafacallBookingService {
         startsAt,
         endsAt,
         timezone: tz,
+        ...crmFields,
       },
     });
 
@@ -877,6 +883,7 @@ export class RafacallBookingService {
           startsAt,
           endsAt,
           timezone: tz,
+          ...this.crm.crmFieldsFromBooking(current),
         },
       });
       await tx.rafaCallBooking.delete({ where: { id: current.id } });
@@ -979,6 +986,8 @@ export class RafacallBookingService {
 
     const endsAt = await this.assertSlotAvailableForBooking(startsAt);
 
+    const crmFields = await this.crm.resolveCrmFieldsForWhatsapp(wa);
+
     let created;
     try {
       created = await this.prisma.rafaCallBooking.create({
@@ -992,6 +1001,7 @@ export class RafacallBookingService {
           startsAt,
           endsAt,
           timezone: tz,
+          ...crmFields,
         },
       });
     } catch (err) {
@@ -1049,6 +1059,8 @@ export class RafacallBookingService {
 
     const endsAt = await this.assertSlotAvailableForAdminBooking(startsAt);
 
+    const crmFields = await this.crm.resolveCrmFieldsForWhatsapp(wa);
+
     let created;
     try {
       created = await this.prisma.rafaCallBooking.create({
@@ -1062,6 +1074,7 @@ export class RafacallBookingService {
           startsAt,
           endsAt,
           timezone: tz,
+          ...crmFields,
         },
       });
     } catch (err) {
@@ -1232,6 +1245,8 @@ export class RafacallBookingService {
 
     await this.assertNotBlockedByAdmin(startsAt, endsAt);
 
+    const crmFields = await this.crm.resolveCrmFieldsForWhatsapp(unlock.whatsapp);
+
     const created = await this.prisma.rafaCallBooking.create({
       data: {
         userId: null,
@@ -1242,6 +1257,7 @@ export class RafacallBookingService {
         startsAt,
         endsAt,
         timezone: tz,
+        ...crmFields,
       },
     });
 
@@ -1303,6 +1319,7 @@ export class RafacallBookingService {
           startsAt,
           endsAt,
           timezone: tz,
+          ...this.crm.crmFieldsFromBooking(current),
         },
       });
       await tx.rafaCallBooking.delete({ where: { id: current.id } });
@@ -1395,6 +1412,7 @@ export class RafacallBookingService {
           startsAt,
           endsAt,
           timezone: tz,
+          ...this.crm.crmFieldsFromBooking(current),
         },
       });
       await tx.rafaCallBooking.delete({ where: { id: current.id } });

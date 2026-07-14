@@ -104,7 +104,7 @@ export class AdminRafacallController {
     return this.crm.updateCrm({
       bookingId: bookingId.trim(),
       crmStatus: dto.crmStatus,
-      comment: dto.comment,
+      crmComments: dto.crmComments,
     });
   }
 }
