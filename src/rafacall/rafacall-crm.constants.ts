@@ -11,7 +11,7 @@ export const RAFA_CALL_CRM_STATUS_ORDER: RafaCallCrmStatus[] = [
 ];
 
 export const RAFA_CALL_CRM_STATUS_LABELS: Record<RafaCallCrmStatus, string> = {
-  [RafaCallCrmStatus.ENVIOU_MENSAGEM]: 'Enviou mensagem',
+  [RafaCallCrmStatus.ENVIOU_MENSAGEM]: 'Sem data para imigar',
   [RafaCallCrmStatus.IMIGRACAO_LONGE]: 'Data para imigrar longe',
   [RafaCallCrmStatus.IMIGRACAO_PERTO]: 'Data para imigrar perto',
   [RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA]: 'Vídeo chamada agendada',
@@ -197,11 +197,67 @@ export function shouldPromoteImmigrationToNear(params: {
   at?: Date;
 }): boolean {
   if (params.status !== RafaCallCrmStatus.IMIGRACAO_LONGE) return false;
-  if (params.immigrationImmediate) return true;
-  if (!params.expectedImmigrationAt) return false;
+  const target = resolveImmigrationColumnFromDate({
+    expectedImmigrationAt: params.expectedImmigrationAt,
+    immigrationImmediate: params.immigrationImmediate,
+    at: params.at,
+  });
+  return target === RafaCallCrmStatus.IMIGRACAO_PERTO;
+}
+
+export function resolveImmigrationColumnFromDate(params: {
+  expectedImmigrationAt: Date | null;
+  immigrationImmediate: boolean;
+  at?: Date;
+}): 'IMIGRACAO_LONGE' | 'IMIGRACAO_PERTO' | null {
+  if (!params.immigrationImmediate && !params.expectedImmigrationAt) return null;
+  if (params.immigrationImmediate) return RafaCallCrmStatus.IMIGRACAO_PERTO;
+  const days = daysUntilImmigrationDate(
+    params.expectedImmigrationAt!,
+    params.at ?? new Date(),
+  );
+  if (days < CRM_IMMIGRATION_NEAR_THRESHOLD_DAYS) {
+    return RafaCallCrmStatus.IMIGRACAO_PERTO;
+  }
+  return RafaCallCrmStatus.IMIGRACAO_LONGE;
+}
+
+const CRM_IMMIGRATION_FUNNEL_STATUSES: RafaCallCrmStatus[] = [
+  RafaCallCrmStatus.ENVIOU_MENSAGEM,
+  RafaCallCrmStatus.IMIGRACAO_LONGE,
+  RafaCallCrmStatus.IMIGRACAO_PERTO,
+];
+
+export function resolveStatusAfterImmigrationUpdate(params: {
+  currentStatus: RafaCallCrmStatus;
+  expectedImmigrationAt: Date | null;
+  immigrationImmediate: boolean;
+  at?: Date;
+}): RafaCallCrmStatus {
+  const at = params.at ?? new Date();
+  const hasImmigrationDate =
+    params.immigrationImmediate || Boolean(params.expectedImmigrationAt);
+
+  if (!hasImmigrationDate) {
+    if (
+      params.currentStatus === RafaCallCrmStatus.IMIGRACAO_LONGE ||
+      params.currentStatus === RafaCallCrmStatus.IMIGRACAO_PERTO
+    ) {
+      return RafaCallCrmStatus.ENVIOU_MENSAGEM;
+    }
+    return params.currentStatus;
+  }
+
+  if (!CRM_IMMIGRATION_FUNNEL_STATUSES.includes(params.currentStatus)) {
+    return params.currentStatus;
+  }
+
   return (
-    daysUntilImmigrationDate(params.expectedImmigrationAt, params.at) <
-    CRM_IMMIGRATION_NEAR_THRESHOLD_DAYS
+    resolveImmigrationColumnFromDate({
+      expectedImmigrationAt: params.expectedImmigrationAt,
+      immigrationImmediate: params.immigrationImmediate,
+      at,
+    }) ?? params.currentStatus
   );
 }
 

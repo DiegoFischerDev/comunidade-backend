@@ -13,7 +13,7 @@ import {
   formatCrmImmigrationDateKey,
   formatCrmImmigrationForApi,
   parseCrmImmigrationInput,
-  shouldPromoteImmigrationToNear,
+  resolveStatusAfterImmigrationUpdate,
   sortCrmItemsByImmigrationDate,
 } from './rafacall-crm.constants';
 
@@ -87,7 +87,7 @@ export class RafacallCrmService {
     return { columns };
   }
 
-  /** Promove leads «longe» → «perto» quando faltam menos de 90 dias (ou IMEDIATO / data passada). */
+  /** Alinha colunas de imigração com a data prevista (90 dias, imediato, sem data). */
   async syncImmigrationProximityStatuses(): Promise<{ promoted: number }> {
     const items = await this.prisma.rafaCallBooking.findMany({
       where: this.visibleCrmBookingWhere(),
@@ -99,20 +99,17 @@ export class RafacallCrmService {
     let promoted = 0;
 
     for (const item of uniqueItems) {
-      if (
-        !shouldPromoteImmigrationToNear({
-          status: item.crmStatus,
-          expectedImmigrationAt: item.crmExpectedImmigrationAt,
-          immigrationImmediate: item.crmImmigrationImmediate,
-          at: now,
-        })
-      ) {
-        continue;
-      }
+      const expectedStatus = resolveStatusAfterImmigrationUpdate({
+        currentStatus: item.crmStatus,
+        expectedImmigrationAt: item.crmExpectedImmigrationAt,
+        immigrationImmediate: item.crmImmigrationImmediate,
+        at: now,
+      });
+      if (expectedStatus === item.crmStatus) continue;
 
       await this.recordStatusChange({
         bookingId: item.id,
-        crmStatus: RafaCallCrmStatus.IMIGRACAO_PERTO,
+        crmStatus: expectedStatus,
         at: now,
       });
       promoted += 1;
@@ -156,7 +153,12 @@ export class RafacallCrmService {
     }
 
     const now = new Date();
-    const initialStatus = RafaCallCrmStatus.ENVIOU_MENSAGEM;
+    const initialStatus = resolveStatusAfterImmigrationUpdate({
+      currentStatus: RafaCallCrmStatus.ENVIOU_MENSAGEM,
+      expectedImmigrationAt: immigrationDate,
+      immigrationImmediate,
+      at: now,
+    });
     const initialComments = appendCrmComment(
       null,
       buildCrmStatusHistoryLine(initialStatus, {
@@ -330,7 +332,7 @@ export class RafacallCrmService {
         }),
       );
     } else if (immigrationChanged) {
-      const autoStatus = this.resolveStatusAfterImmigrationUpdate({
+      const autoStatus = resolveStatusAfterImmigrationUpdate({
         currentStatus: crmSource.crmStatus,
         expectedImmigrationAt: nextImmigrationDate,
         immigrationImmediate: nextImmigrationImmediate,
@@ -555,7 +557,7 @@ export class RafacallCrmService {
   }
 
   /**
-   * Ao cancelar um agendamento SCHEDULED, o lead permanece no CRM em «Enviou mensagem».
+   * Ao cancelar um agendamento SCHEDULED, o lead permanece no CRM em «Sem data para imigar».
    * Devolve se o booking pode ser apagado ou se foi convertido em placeholder COMPLETED.
    */
   async handleScheduledBookingCanceled(
@@ -627,25 +629,6 @@ export class RafacallCrmService {
       crmExpectedImmigrationAt: booking.crmExpectedImmigrationAt,
       crmImmigrationImmediate: booking.crmImmigrationImmediate,
     };
-  }
-
-  private resolveStatusAfterImmigrationUpdate(params: {
-    currentStatus: RafaCallCrmStatus;
-    expectedImmigrationAt: Date | null;
-    immigrationImmediate: boolean;
-    at: Date;
-  }): RafaCallCrmStatus {
-    if (
-      shouldPromoteImmigrationToNear({
-        status: params.currentStatus,
-        expectedImmigrationAt: params.expectedImmigrationAt,
-        immigrationImmediate: params.immigrationImmediate,
-        at: params.at,
-      })
-    ) {
-      return RafaCallCrmStatus.IMIGRACAO_PERTO;
-    }
-    return params.currentStatus;
   }
 
   private visibleCrmBookingWhere() {
