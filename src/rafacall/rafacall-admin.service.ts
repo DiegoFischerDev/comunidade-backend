@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { RafaCallBookingStatus } from '@prisma/client';
+import { RafaCallBookingStatus, RafaCallCrmStatus } from '@prisma/client';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { RafacallCrmService } from './rafacall-crm.service';
 
 function tzOffsetMinutes(timeZone: string, at: Date): number {
   const dtf = new Intl.DateTimeFormat('en-US', {
@@ -56,6 +57,7 @@ export class RafacallAdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
+    private readonly crm: RafacallCrmService,
   ) {}
 
   private ymdForUtcInstant(utc: Date, tz: string): string {
@@ -291,6 +293,11 @@ export class RafacallAdminService {
         status: RafaCallBookingStatus.COMPLETED,
       },
       select: { id: true, status: true },
+    });
+
+    await this.crm.recordStatusChange({
+      bookingId: booking.id,
+      crmStatus: RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
     });
 
     if (booking.userId) {

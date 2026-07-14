@@ -39,6 +39,16 @@ enum RafaCallBookingOrigin {
   PUBLIC_FREE
 }
 
+enum RafaCallCrmStatus {
+  ENVIOU_MENSAGEM
+  VIDEO_CHAMADA_AGENDADA
+  REALIZOU_VIDEO_CHAMADA
+  NAO_TEM_INTERESSE
+  INTERESSE_FUTURO
+  AGUARDANDO_ASSINATURA
+  CONTRATO_ASSINADO
+}
+
 enum SupportTicketStatus {
   REGISTERED
   IN_REVIEW
@@ -351,10 +361,19 @@ model RafaCallBooking {
    * Quando o lembrete WhatsApp da véspera foi enviado (cron ~22:00 Europe/Lisbon).
    */
   dayBeforeReminderSentAt  DateTime?             @map("day_before_reminder_sent_at")
+  /**
+   * Pipeline CRM pós-agendamento (kanban admin).
+   */
+  crmStatus                RafaCallCrmStatus     @default(VIDEO_CHAMADA_AGENDADA) @map("crm_status")
+  /**
+   * Histórico de movimentações e notas do admin (texto livre, uma linha por entrada).
+   */
+  crmComments              String?               @map("crm_comments") @db.Text
   createdAt                DateTime              @default(now()) @map("created_at")
   updatedAt                DateTime              @updatedAt @map("updated_at")
 
   @@index([userId, status])
+  @@index([crmStatus])
   @@index([guestWhatsapp, status])
   @@index([clientDeviceId, status])
   @@index([startsAt])

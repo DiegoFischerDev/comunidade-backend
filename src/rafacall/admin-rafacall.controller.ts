@@ -1,10 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/roles.decorator';
 import { RafacallAdminService } from './rafacall-admin.service';
 import { RafacallBookingService } from './rafacall-booking.service';
+import { RafacallCrmService } from './rafacall-crm.service';
 import { AdminCreateRafacallBlockDto } from './dto/admin-rafacall-blocks.dto';
 import { AdminCreateRafacallBookingDto } from './dto/admin-create-rafacall-booking.dto';
+import { UpdateRafacallCrmDto } from './dto/update-rafacall-crm.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 
 @Controller('admin/rafacall')
@@ -13,6 +15,7 @@ export class AdminRafacallController {
   constructor(
     private readonly admin: RafacallAdminService,
     private readonly booking: RafacallBookingService,
+    private readonly crm: RafacallCrmService,
   ) {}
 
   @Get('schedule')
@@ -85,6 +88,23 @@ export class AdminRafacallController {
     return this.admin.completeBooking({
       bookingId: id.trim(),
       adminUserId: user.id,
+    });
+  }
+
+  @Get('crm')
+  crmBoard() {
+    return this.crm.listCrmBoard();
+  }
+
+  @Patch('crm/:bookingId')
+  updateCrm(
+    @Param('bookingId') bookingId: string,
+    @Body() dto: UpdateRafacallCrmDto,
+  ) {
+    return this.crm.updateCrm({
+      bookingId: bookingId.trim(),
+      crmStatus: dto.crmStatus,
+      comment: dto.comment,
     });
   }
 }
