@@ -92,6 +92,11 @@ export class AdminRafacallController {
     });
   }
 
+  @Delete('bookings/:id')
+  deleteBooking(@Param('id') id: string) {
+    return this.admin.deleteBooking({ bookingId: id.trim() });
+  }
+
   @Get('crm')
   crmBoard() {
     return this.crm.listCrmBoard();

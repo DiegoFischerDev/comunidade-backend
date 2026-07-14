@@ -509,6 +509,52 @@ export class RafacallCrmService {
   }
 
   /**
+   * Ao apagar um registo COMPLETED da agenda, mantém o lead no CRM se este booking
+   * for o único visível para o WhatsApp.
+   */
+  async ensureCrmLeadAfterBookingRemoval(bookingId: string) {
+    const booking = await this.prisma.rafaCallBooking.findUnique({
+      where: { id: bookingId },
+      select: {
+        ...BOOKING_CRM_SELECT,
+        userId: true,
+        crmExcludedAt: true,
+      },
+    });
+    if (!booking || booking.crmExcludedAt) return;
+
+    const whatsapp = this.extractWhatsappDigits(booking);
+    if (!whatsapp) return;
+
+    const siblings = await this.findActiveBookingsByWhatsapp(whatsapp);
+    const hasOtherVisibleBooking = siblings.some((s) => s.id !== bookingId);
+    if (hasOtherVisibleBooking) return;
+
+    const now = new Date();
+    const startsAt = new Date(now.getTime() - 60 * 60 * 1000);
+    const endsAt = new Date(startsAt.getTime() + 40 * 60 * 1000);
+
+    await this.prisma.rafaCallBooking.create({
+      data: {
+        userId: booking.userId,
+        guestName: booking.guestName,
+        guestWhatsapp: booking.guestWhatsapp,
+        clientDeviceId: null,
+        status: RafaCallBookingStatus.COMPLETED,
+        origin: booking.origin as RafaCallBookingOrigin,
+        startsAt,
+        endsAt,
+        timezone: 'Europe/Lisbon',
+        crmStatus: booking.crmStatus,
+        crmComments: booking.crmComments,
+        crmExpectedImmigrationAt: booking.crmExpectedImmigrationAt,
+        crmImmigrationImmediate: booking.crmImmigrationImmediate,
+        crmExcludedAt: null,
+      },
+    });
+  }
+
+  /**
    * Ao cancelar um agendamento SCHEDULED, o lead permanece no CRM em «Enviou mensagem».
    * Devolve se o booking pode ser apagado ou se foi convertido em placeholder COMPLETED.
    */
@@ -731,6 +777,26 @@ export class RafacallCrmService {
     return waDigits(item.user?.whatsapp ?? item.guestWhatsapp ?? '');
   }
 
+  /** Placeholders COMPLETED (lead manual ou pós-cancelamento) não representam chamada real. */
+  private hasDisplayableVideoCall(item: {
+    status: RafaCallBookingStatus;
+    crmStatus: RafaCallCrmStatus;
+  }): boolean {
+    if (item.status === RafaCallBookingStatus.SCHEDULED) return true;
+    if (item.status === RafaCallBookingStatus.CANCELLED) return true;
+
+    const postCallStatuses: RafaCallCrmStatus[] = [
+      RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
+      RafaCallCrmStatus.AGUARDANDO_ASSINATURA,
+      RafaCallCrmStatus.CONTRATO_ASSINADO,
+    ];
+
+    return (
+      item.status === RafaCallBookingStatus.COMPLETED &&
+      postCallStatuses.includes(item.crmStatus)
+    );
+  }
+
   private serializeCrmItem(item: {
     id: string;
     status: RafaCallBookingStatus;
@@ -747,9 +813,11 @@ export class RafacallCrmService {
     user: { id: string; name: string | null; whatsapp: string | null } | null;
   }) {
     const whatsappDigits = this.extractWhatsappDigits(item);
+    const hasVideoCall = this.hasDisplayableVideoCall(item);
     return {
       id: item.id,
       bookingStatus: item.status,
+      hasVideoCall,
       crmStatus: item.crmStatus,
       crmComments: item.crmComments,
       crmExpectedImmigrationAt: formatCrmImmigrationForApi(

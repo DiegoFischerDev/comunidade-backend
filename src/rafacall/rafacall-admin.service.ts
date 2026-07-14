@@ -317,6 +317,37 @@ export class RafacallAdminService {
     return updated;
   }
 
+  async deleteBooking(params: { bookingId: string }) {
+    const booking = await this.prisma.rafaCallBooking.findFirst({
+      where: {
+        id: params.bookingId,
+        status: RafaCallBookingStatus.COMPLETED,
+      },
+      select: { id: true },
+    });
+
+    if (!booking) {
+      const existing = await this.prisma.rafaCallBooking.findUnique({
+        where: { id: params.bookingId },
+        select: { status: true },
+      });
+      if (!existing) {
+        return { ok: true as const, alreadyRemoved: true as const };
+      }
+      if (existing.status === RafaCallBookingStatus.SCHEDULED) {
+        throw new BadRequestException(
+          'Este agendamento ainda está marcado. Usa cancelar em vez de excluir.',
+        );
+      }
+      throw new BadRequestException('Agendamento não encontrado.');
+    }
+
+    await this.crm.ensureCrmLeadAfterBookingRemoval(booking.id);
+    await this.prisma.rafaCallBooking.delete({ where: { id: booking.id } });
+
+    return { ok: true as const };
+  }
+
   private async sendAdminCancelGuestMessage(params: {
     name: string | null;
     whatsapp: string;
