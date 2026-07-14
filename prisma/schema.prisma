@@ -347,6 +347,10 @@ model RafaCallBooking {
   reschedulesTo            RafaCallBooking[]     @relation("RafaCallRescheduleChain")
   cancelledAt              DateTime?             @map("cancelled_at")
   cancelReason             String?               @map("cancel_reason")
+  /**
+   * Quando o lembrete WhatsApp da véspera foi enviado (cron ~22:00 Europe/Lisbon).
+   */
+  dayBeforeReminderSentAt  DateTime?             @map("day_before_reminder_sent_at")
   createdAt                DateTime              @default(now()) @map("created_at")
   updatedAt                DateTime              @updatedAt @map("updated_at")
 

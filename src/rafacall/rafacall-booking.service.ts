@@ -326,6 +326,38 @@ export class RafacallBookingService {
     return endsAt;
   }
 
+  /** Admin: só valida sobreposição com outros agendamentos (ignora grelha .env e bloqueios). */
+  private async assertSlotAvailableForAdminBooking(
+    startsAt: Date,
+    excludeBookingId?: string | null,
+  ) {
+    const duration = this.durationMinutes;
+    const endsAt = new Date(startsAt.getTime() + duration * 60000);
+    const buffer = this.bufferMinutes;
+
+    const candidates = await this.prisma.rafaCallBooking.findMany({
+      where: {
+        ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+        status: RafaCallBookingStatus.SCHEDULED,
+        startsAt: { lt: new Date(endsAt.getTime() + buffer * 60000) },
+        endsAt: { gt: new Date(startsAt.getTime() - duration * 60000) },
+      },
+      select: { id: true, startsAt: true, endsAt: true },
+      take: 20,
+    });
+    const newEndGap = new Date(endsAt.getTime() + buffer * 60000);
+    if (
+      candidates.some((b) => {
+        const bEndGap = new Date(b.endsAt.getTime() + buffer * 60000);
+        return startsAt < bEndGap && newEndGap > b.startsAt;
+      })
+    ) {
+      throw new BadRequestException('Este horário já não está disponível.');
+    }
+
+    return endsAt;
+  }
+
   /** Procura booking guest ativo (futuro, SCHEDULED) pelo WhatsApp normalizado. */
   async getCurrentBookingByWhatsapp(whatsapp: string) {
     const wa = this.normalizeWhatsapp(whatsapp);
@@ -574,8 +606,8 @@ export class RafacallBookingService {
           ? `\n\nPara marcar uma nova videochamada, acesse:\n${manageUrl}`
           : ''
         : isPublicFree
-          ? `\n\nNo dia e hora marcados, a Rafa vai te ligar por videochamada do WhatsApp, ok?\n\nPara alterar ou cancelar, acesse:\n${manageUrl}`
-          : `\n\nNo dia e hora agendada, a Rafa vai te ligar aqui por chamada de vídeo do WhatsApp, ok?\n\nPara reagendar ou cancelar, acede: ${manageUrl}`;
+          ? `\n\nNo dia e hora marcados, vamos te enviar o link da videochamada por aqui, ok?\n\nPara alterar ou cancelar, acesse:\n${manageUrl}`
+          : `\n\nNo dia e hora agendada, vamos enviar-te o link da videochamada por aqui, ok?\n\nPara reagendar ou cancelar, acede: ${manageUrl}`;
 
     const tzLine = `Fuso horário: ${timezoneLabelPt(booking.timezone)} (${booking.timezone})`;
     const when =
@@ -584,6 +616,134 @@ export class RafacallBookingService {
         : `\n\nData e hora: ${startLocal} (até ${endLocal})\n${tzLine}`;
 
     await this.wa.sendText(whatsapp, `${base}${when}${followup}`);
+  }
+
+  /**
+   * Cron (~22:00 Europe/Lisbon): lembrete WhatsApp na véspera do agendamento.
+   * O «dia seguinte» é calculado no fuso horário de cada booking.
+   */
+  async sendDueDayBeforeReminders(): Promise<{
+    sent: number;
+    failed: number;
+    skipped: number;
+  }> {
+    const now = new Date();
+    const windowEnd = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+
+    const candidates = await this.prisma.rafaCallBooking.findMany({
+      where: {
+        status: RafaCallBookingStatus.SCHEDULED,
+        dayBeforeReminderSentAt: null,
+        startsAt: { gt: now, lt: windowEnd },
+        OR: [{ guestWhatsapp: { not: null } }, { userId: { not: null } }],
+      },
+      include: {
+        user: { select: { name: true, whatsapp: true } },
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 500,
+    });
+
+    let sent = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    for (const booking of candidates) {
+      const bookingTz = booking.timezone.trim() || 'Europe/Lisbon';
+      const tomorrowYmd = incrementYmd(ymdInTz(bookingTz, now));
+      if (!tomorrowYmd || ymdInTz(bookingTz, booking.startsAt) !== tomorrowYmd) {
+        skipped += 1;
+        continue;
+      }
+
+      const whatsapp = this.normalizeWhatsapp(
+        booking.guestWhatsapp ?? booking.user?.whatsapp ?? '',
+      );
+      if (whatsapp.length < 8) {
+        skipped += 1;
+        continue;
+      }
+
+      const name = booking.guestName?.trim() || booking.user?.name?.trim() || '';
+
+      try {
+        await this.sendDayBeforeReminderMessage({
+          name,
+          whatsapp,
+          bookingId: booking.id,
+          origin: booking.origin,
+          startsAt: booking.startsAt,
+          endsAt: booking.endsAt,
+          timezone: bookingTz,
+        });
+
+        await this.prisma.rafaCallBooking.update({
+          where: { id: booking.id },
+          data: { dayBeforeReminderSentAt: new Date() },
+        });
+        sent += 1;
+      } catch (err) {
+        failed += 1;
+        this.logger.warn(
+          `Falha ao enviar lembrete véspera (${booking.id}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    return { sent, failed, skipped };
+  }
+
+  private async sendDayBeforeReminderMessage(input: {
+    name: string;
+    whatsapp: string;
+    bookingId: string;
+    origin: RafaCallBookingOrigin;
+    startsAt: Date;
+    endsAt: Date;
+    timezone: string;
+  }) {
+    const whatsapp = this.normalizeWhatsapp(input.whatsapp);
+    if (whatsapp.length < 8) return;
+
+    const isPublicFree = input.origin === RafaCallBookingOrigin.PUBLIC_FREE;
+    const locale = isPublicFree ? 'pt-BR' : 'pt-PT';
+    const who = input.name.trim() || (isPublicFree ? 'Olá' : 'Olá');
+    const hostLabel = isPublicFree ? 'a Rafa & Carol' : 'a Rafa';
+
+    const startLocal = input.startsAt.toLocaleString(locale, {
+      timeZone: input.timezone,
+      weekday: 'long',
+      day: '2-digit',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const endLocal = input.endsAt.toLocaleTimeString(locale, {
+      timeZone: input.timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const tzLine = `Fuso horário: ${timezoneLabelPt(input.timezone)} (${input.timezone})`;
+
+    const manageUrl = this.buildManageUrl({
+      bookingId: input.bookingId,
+      whatsapp,
+      origin: input.origin,
+    });
+
+    const intro = isPublicFree
+      ? `🔔 ${who}, lembrete: sua videochamada com ${hostLabel} é amanhã!`
+      : `🔔 ${who}, lembrete: a tua chamada com ${hostLabel} é amanhã!`;
+
+    const manageHint = isPublicFree
+      ? `Caso precise alterar ou cancelar o seu agendamento, faça pelo link:\n${manageUrl}`
+      : `Caso precises de alterar ou cancelar o teu agendamento, faz pelo link:\n${manageUrl}`;
+
+    const body = `${intro}\n\nData e hora: ${startLocal} (até ${endLocal})\n${tzLine}\n\n${manageHint}`;
+
+    await this.wa.sendText(whatsapp, body);
   }
 
   async book(userId: string, input: { startsAtUtcIso: string; tz: string }) {
@@ -887,7 +1047,7 @@ export class RafacallBookingService {
       );
     }
 
-    const endsAt = await this.assertSlotAvailableForBooking(startsAt);
+    const endsAt = await this.assertSlotAvailableForAdminBooking(startsAt);
 
     let created;
     try {
@@ -1129,7 +1289,7 @@ export class RafacallBookingService {
     const tz = input.tz.trim();
     if (!tz) throw new BadRequestException('tz é obrigatório.');
 
-    const endsAt = await this.assertSlotAvailableForBooking(startsAt, current.id);
+    const endsAt = await this.assertSlotAvailableForAdminBooking(startsAt, current.id);
 
     const created = await this.prisma.$transaction(async (tx) => {
       const newBooking = await tx.rafaCallBooking.create({

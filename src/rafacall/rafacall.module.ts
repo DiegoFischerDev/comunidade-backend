@@ -6,6 +6,7 @@ import { RafacallController } from './rafacall.controller';
 import { RafacallBookingService } from './rafacall-booking.service';
 import { RafacallAdminService } from './rafacall-admin.service';
 import { AdminRafacallController } from './admin-rafacall.controller';
+import { RafacallDayBeforeReminderTask } from './rafacall-day-before-reminder.task';
 
 @Module({
   imports: [PrismaModule, WhatsAppModule],
@@ -13,7 +14,12 @@ import { AdminRafacallController } from './admin-rafacall.controller';
     RafacallController,
     AdminRafacallController,
   ],
-  providers: [RafacallService, RafacallBookingService, RafacallAdminService],
+  providers: [
+    RafacallService,
+    RafacallBookingService,
+    RafacallAdminService,
+    RafacallDayBeforeReminderTask,
+  ],
   exports: [RafacallService],
 })
 export class RafacallModule {}
