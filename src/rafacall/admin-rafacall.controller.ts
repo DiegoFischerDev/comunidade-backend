@@ -97,6 +97,11 @@ export class AdminRafacallController {
     return this.admin.deleteBooking({ bookingId: id.trim() });
   }
 
+  @Get('crm/lookup')
+  lookupCrmClient(@Query('whatsapp') whatsapp?: string) {
+    return this.crm.lookupCrmClientByWhatsapp(whatsapp?.trim() || '');
+  }
+
   @Get('crm')
   crmBoard() {
     return this.crm.listCrmBoard();

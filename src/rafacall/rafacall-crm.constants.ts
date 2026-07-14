@@ -20,8 +20,7 @@ export const RAFA_CALL_CRM_STATUS_LABELS: Record<RafaCallCrmStatus, string> = {
   [RafaCallCrmStatus.CONTRATO_ASSINADO]: 'Contrato assinado',
 };
 
-const CRM_HISTORY_TZ = 'Europe/Lisbon';
-export const CRM_IMMIGRATION_TZ = CRM_HISTORY_TZ;
+const CRM_IMMIGRATION_TZ = 'Europe/Lisbon';
 export const CRM_IMMIGRATION_IMMEDIATE_VALUE = 'IMEDIATO';
 export const CRM_IMMIGRATION_NEAR_THRESHOLD_DAYS = 90;
 
@@ -59,95 +58,6 @@ export function shouldShowBookingInAdminSchedule(item: {
     return CRM_POST_CALL_STATUSES.includes(item.crmStatus);
   }
   return false;
-}
-
-export type CrmStatusHistoryContext = {
-  at?: Date;
-  bookingStartsAt?: Date | null;
-  bookingTimezone?: string | null;
-  expectedImmigrationAt?: Date | null;
-  immigrationImmediate?: boolean;
-};
-
-function formatCrmHistoryDayKey(at: Date): string {
-  return at.toLocaleDateString('pt-PT', {
-    timeZone: CRM_HISTORY_TZ,
-    day: '2-digit',
-    month: '2-digit',
-  });
-}
-
-function formatAppointmentForHistory(startsAt: Date, timeZone: string): string {
-  const day = startsAt.toLocaleDateString('pt-PT', {
-    timeZone,
-    day: '2-digit',
-    month: '2-digit',
-  });
-  const time = startsAt.toLocaleTimeString('pt-PT', {
-    timeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  const [hourRaw, minuteRaw] = time.split(':');
-  const hour = Number(hourRaw);
-  const minute = Number(minuteRaw);
-  const hourLabel =
-    minute === 0 ? `${hour}hr` : `${hour}h${String(minute).padStart(2, '0')}`;
-  return `${day} as ${hourLabel}`;
-}
-
-export function formatImmigrationMonthYearForHistory(
-  date: Date | null | undefined,
-): string | null {
-  if (!date) return null;
-  const monthShort = date
-    .toLocaleDateString('pt-PT', { month: 'short', timeZone: 'UTC' })
-    .replace(/\.$/, '')
-    .toLowerCase();
-  return `${monthShort}/${date.getUTCFullYear()}`;
-}
-
-export function buildCrmStatusHistoryLine(
-  status: RafaCallCrmStatus,
-  context: CrmStatusHistoryContext = {},
-): string {
-  const at = context.at ?? new Date();
-  const changeDay = formatCrmHistoryDayKey(at);
-  const label = RAFA_CALL_CRM_STATUS_LABELS[status];
-
-  let suffix = '';
-  if (
-    status === RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA &&
-    context.bookingStartsAt &&
-    context.bookingTimezone
-  ) {
-    suffix = ` para ${formatAppointmentForHistory(
-      context.bookingStartsAt,
-      context.bookingTimezone,
-    )}`;
-  } else if (
-    status === RafaCallCrmStatus.IMIGRACAO_LONGE ||
-    status === RafaCallCrmStatus.IMIGRACAO_PERTO
-  ) {
-    if (context.immigrationImmediate) {
-      suffix = ', imediato';
-    } else {
-      const immigrationLabel = formatImmigrationMonthYearForHistory(
-        context.expectedImmigrationAt,
-      );
-      if (immigrationLabel) {
-        suffix = `, ${immigrationLabel}`;
-      }
-    }
-  }
-
-  return `${changeDay} - ${label}${suffix}`;
-}
-
-export function appendCrmComment(existing: string | null | undefined, line: string): string {
-  const prev = (existing ?? '').trim();
-  return prev ? `${prev}\n${line}` : line;
 }
 
 export function isCrmImmigrationImmediateValue(

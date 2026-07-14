@@ -9,9 +9,7 @@ import {
 import {
   RAFA_CALL_CRM_STATUS_LABELS,
   RAFA_CALL_CRM_STATUS_ORDER,
-  appendCrmComment,
   buildCrmPlaceholderSlotTimes,
-  buildCrmStatusHistoryLine,
   formatCrmImmigrationDateKey,
   formatCrmImmigrationForApi,
   isCrmLeadPlaceholderBooking,
@@ -96,6 +94,29 @@ export class RafacallCrmService {
     return { columns };
   }
 
+  async lookupCrmClientByWhatsapp(whatsapp: string): Promise<{
+    inCrm: boolean;
+    name: string | null;
+  }> {
+    const digits = waDigits(whatsapp);
+    if (digits.length < 8) {
+      return { inCrm: false, name: null };
+    }
+
+    const siblings = await this.findActiveBookingsByWhatsapp(digits);
+    if (siblings.length === 0) {
+      return { inCrm: false, name: null };
+    }
+
+    const [item] = this.buildUniqueCrmItems(siblings);
+    if (!item) {
+      return { inCrm: false, name: null };
+    }
+
+    const name = item.user?.name?.trim() || item.guestName?.trim() || null;
+    return { inCrm: true, name };
+  }
+
   /** Alinha colunas de imigração com a data prevista (90 dias, imediato, sem data). */
   async syncImmigrationProximityStatuses(): Promise<{ promoted: number }> {
     const items = await this.prisma.rafaCallBooking.findMany({
@@ -173,14 +194,6 @@ export class RafacallCrmService {
       immigrationImmediate,
       at: now,
     });
-    const initialComments = appendCrmComment(
-      null,
-      buildCrmStatusHistoryLine(initialStatus, {
-        at: now,
-        expectedImmigrationAt: immigrationDate,
-        immigrationImmediate,
-      }),
-    );
 
     const excludedBooking = await this.prisma.rafaCallBooking.findFirst({
       where: {
@@ -201,7 +214,7 @@ export class RafacallCrmService {
           crmExcludedAt: null,
           ...(excludedBooking.user ? {} : { guestName: name }),
           crmStatus: initialStatus,
-          crmComments: initialComments,
+          crmComments: null,
           crmExpectedImmigrationAt: immigrationDate,
           crmImmigrationImmediate: immigrationImmediate,
           crmPropertyTypology: propertyTypology,
@@ -227,7 +240,7 @@ export class RafacallCrmService {
         endsAt,
         timezone,
         crmStatus: initialStatus,
-        crmComments: initialComments,
+        crmComments: null,
         crmExpectedImmigrationAt: immigrationDate,
         crmImmigrationImmediate: immigrationImmediate,
         crmPropertyTypology: propertyTypology,
@@ -381,23 +394,10 @@ export class RafacallCrmService {
       if (videoResult.nextStatus) {
         nextStatus = videoResult.nextStatus;
       }
-      if (videoResult.historyLine) {
-        nextComments = appendCrmComment(nextComments, videoResult.historyLine);
-      }
     }
 
     if (hasStatusChange && params.crmStatus) {
       nextStatus = params.crmStatus;
-      nextComments = appendCrmComment(
-        nextComments,
-        buildCrmStatusHistoryLine(params.crmStatus, {
-          at: now,
-          bookingStartsAt: nextDisplayBooking.startsAt,
-          bookingTimezone: nextDisplayBooking.timezone,
-          expectedImmigrationAt: nextImmigrationDate,
-          immigrationImmediate: nextImmigrationImmediate,
-        }),
-      );
     } else if (immigrationChanged) {
       const autoStatus = resolveStatusAfterImmigrationUpdate({
         currentStatus: crmSource.crmStatus,
@@ -407,16 +407,6 @@ export class RafacallCrmService {
       });
       if (autoStatus !== crmSource.crmStatus) {
         nextStatus = autoStatus;
-        nextComments = appendCrmComment(
-          nextComments,
-          buildCrmStatusHistoryLine(autoStatus, {
-            at: now,
-            bookingStartsAt: nextDisplayBooking.startsAt,
-            bookingTimezone: nextDisplayBooking.timezone,
-            expectedImmigrationAt: nextImmigrationDate,
-            immigrationImmediate: nextImmigrationImmediate,
-          }),
-        );
       }
     }
 
@@ -536,22 +526,9 @@ export class RafacallCrmService {
     const crmSource = this.pickCrmSource(siblings);
     if (crmSource.crmStatus === params.crmStatus) return;
 
-    const displayBooking = this.pickDisplayBooking(siblings);
-    const at = params.at ?? new Date();
-    const nextComments = appendCrmComment(
-      crmSource.crmComments,
-      buildCrmStatusHistoryLine(params.crmStatus, {
-        at,
-        bookingStartsAt: displayBooking.startsAt,
-        bookingTimezone: displayBooking.timezone,
-        expectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
-        immigrationImmediate: crmSource.crmImmigrationImmediate,
-      }),
-    );
-
     await this.syncCrmToWhatsappGroup(whatsapp, {
       crmStatus: params.crmStatus,
-      crmComments: nextComments,
+      crmComments: crmSource.crmComments,
       crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
       crmImmigrationImmediate: crmSource.crmImmigrationImmediate,
       crmPropertyTypology: crmSource.crmPropertyTypology,
@@ -826,7 +803,6 @@ export class RafacallCrmService {
   }): Promise<{
     displayBooking: BookingCrmRow;
     nextStatus?: RafaCallCrmStatus;
-    historyLine?: string;
   }> {
     const booking = await this.prisma.rafaCallBooking.findUnique({
       where: { id: params.bookingId },
@@ -866,11 +842,6 @@ export class RafacallCrmService {
       return {
         displayBooking: updated,
         nextStatus,
-        historyLine: buildCrmStatusHistoryLine(nextStatus, {
-          at: params.at,
-          expectedImmigrationAt: params.crmSource.crmExpectedImmigrationAt,
-          immigrationImmediate: params.crmSource.crmImmigrationImmediate,
-        }),
       };
     }
 
@@ -910,14 +881,8 @@ export class RafacallCrmService {
     ];
 
     let nextStatus: RafaCallCrmStatus | undefined;
-    let historyLine: string | undefined;
     if (shouldPromoteToVideo.includes(params.crmSource.crmStatus)) {
       nextStatus = RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA;
-      historyLine = buildCrmStatusHistoryLine(nextStatus, {
-        at: params.at,
-        bookingStartsAt: updated.startsAt,
-        bookingTimezone: updated.timezone,
-      });
       await this.prisma.rafaCallBooking.update({
         where: { id: booking.id },
         data: { crmStatus: nextStatus },
@@ -928,7 +893,6 @@ export class RafacallCrmService {
     return {
       displayBooking: updated,
       nextStatus,
-      historyLine,
     };
   }
 
