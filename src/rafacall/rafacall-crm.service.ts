@@ -11,6 +11,7 @@ import {
   buildCrmStatusHistoryLine,
   formatCrmImmigrationDateKey,
   parseCrmImmigrationDateInput,
+  sortCrmItemsByImmigrationDate,
 } from './rafacall-crm.constants';
 
 function waDigits(value: string): string {
@@ -71,9 +72,9 @@ export class RafacallCrmService {
     const columns = RAFA_CALL_CRM_STATUS_ORDER.map((status) => ({
       status,
       label: RAFA_CALL_CRM_STATUS_LABELS[status],
-      items: uniqueItems
-        .filter((item) => item.crmStatus === status)
-        .map((item) => this.serializeCrmItem(item)),
+      items: sortCrmItemsByImmigrationDate(
+        uniqueItems.filter((item) => item.crmStatus === status),
+      ).map((item) => this.serializeCrmItem(item)),
     }));
 
     return { columns };
@@ -169,7 +170,12 @@ export class RafacallCrmService {
       nextStatus = params.crmStatus;
       nextComments = appendCrmComment(
         nextComments,
-        buildCrmStatusHistoryLine(params.crmStatus, now),
+        buildCrmStatusHistoryLine(params.crmStatus, {
+          at: now,
+          bookingStartsAt: displayBooking.startsAt,
+          bookingTimezone: displayBooking.timezone,
+          expectedImmigrationAt: nextImmigrationDate,
+        }),
       );
     }
 
@@ -242,10 +248,16 @@ export class RafacallCrmService {
     const crmSource = this.pickCrmSource(siblings);
     if (crmSource.crmStatus === params.crmStatus) return;
 
+    const displayBooking = this.pickDisplayBooking(siblings);
     const at = params.at ?? new Date();
     const nextComments = appendCrmComment(
       crmSource.crmComments,
-      buildCrmStatusHistoryLine(params.crmStatus, at),
+      buildCrmStatusHistoryLine(params.crmStatus, {
+        at,
+        bookingStartsAt: displayBooking.startsAt,
+        bookingTimezone: displayBooking.timezone,
+        expectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
+      }),
     );
 
     await this.syncCrmToWhatsappGroup(whatsapp, {
