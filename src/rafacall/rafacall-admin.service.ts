@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RafaCallBookingStatus, RafaCallCrmStatus } from '@prisma/client';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { RafacallCrmService } from './rafacall-crm.service';
+import { shouldShowBookingInAdminSchedule } from './rafacall-crm.constants';
 
 function tzOffsetMinutes(timeZone: string, at: Date): number {
   const dtf = new Intl.DateTimeFormat('en-US', {
@@ -83,6 +84,7 @@ export class RafacallAdminService {
         endsAt: true,
         timezone: true,
         origin: true,
+        crmStatus: true,
         guestName: true,
         guestWhatsapp: true,
         user: {
@@ -97,6 +99,7 @@ export class RafacallAdminService {
 
     const groups = new Map<string, typeof items>();
     for (const b of items) {
+      if (!shouldShowBookingInAdminSchedule(b)) continue;
       const key = this.ymdForUtcInstant(b.startsAt, tz);
       const arr = groups.get(key) ?? [];
       arr.push(b);

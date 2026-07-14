@@ -18,4 +18,14 @@ export class UpdateRafacallCrmDto {
     message: 'crmExpectedImmigrationAt deve ser YYYY-MM-DD ou IMEDIATO.',
   })
   crmExpectedImmigrationAt?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  videoCallStartsAtUtcIso?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  videoCallTimezone?: string;
 }

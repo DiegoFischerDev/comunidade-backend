@@ -121,6 +121,8 @@ export class AdminRafacallController {
       crmStatus: dto.crmStatus,
       crmComments: dto.crmComments,
       crmExpectedImmigrationAt: dto.crmExpectedImmigrationAt,
+      videoCallStartsAtUtcIso: dto.videoCallStartsAtUtcIso,
+      videoCallTimezone: dto.videoCallTimezone,
     });
   }
 

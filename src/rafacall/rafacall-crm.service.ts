@@ -9,9 +9,11 @@ import {
   RAFA_CALL_CRM_STATUS_LABELS,
   RAFA_CALL_CRM_STATUS_ORDER,
   appendCrmComment,
+  buildCrmPlaceholderSlotTimes,
   buildCrmStatusHistoryLine,
   formatCrmImmigrationDateKey,
   formatCrmImmigrationForApi,
+  isCrmLeadPlaceholderBooking,
   parseCrmImmigrationInput,
   resolveStatusAfterImmigrationUpdate,
   sortCrmItemsByImmigrationDate,
@@ -197,9 +199,7 @@ export class RafacallCrmService {
       return this.serializeCrmItem(restored);
     }
 
-    const startsAt = new Date(now.getTime() - 60 * 60 * 1000);
-    const endsAt = new Date(startsAt.getTime() + 40 * 60 * 1000);
-    const timezone = 'Europe/Lisbon';
+    const { startsAt, endsAt, timezone } = buildCrmPlaceholderSlotTimes(now);
 
     const created = await this.prisma.rafaCallBooking.create({
       data: {
@@ -229,6 +229,8 @@ export class RafacallCrmService {
     crmStatus?: RafaCallCrmStatus;
     crmComments?: string;
     crmExpectedImmigrationAt?: string | null;
+    videoCallStartsAtUtcIso?: string | null;
+    videoCallTimezone?: string;
   }) {
     const booking = await this.prisma.rafaCallBooking.findFirst({
       where: {
@@ -255,6 +257,7 @@ export class RafacallCrmService {
       params.crmStatus !== undefined && params.crmStatus !== crmSource.crmStatus;
     const hasCommentsUpdate = params.crmComments !== undefined;
     const hasImmigrationDateUpdate = params.crmExpectedImmigrationAt !== undefined;
+    const hasVideoCallUpdate = params.videoCallStartsAtUtcIso !== undefined;
 
     const normalizedComments = hasCommentsUpdate
       ? params.crmComments?.trim() || null
@@ -283,7 +286,24 @@ export class RafacallCrmService {
     const immigrationChanged =
       hasImmigrationDateUpdate && nextImmigrationApi !== currentImmigrationApi;
 
-    if (!hasStatusChange && !hasCommentsUpdate && !hasImmigrationDateUpdate) {
+    const currentVideoCallKey = this.buildVideoCallScheduleKey(displayBooking);
+    const nextVideoCallKey = hasVideoCallUpdate
+      ? this.buildVideoCallScheduleKeyFromInput(
+          params.videoCallStartsAtUtcIso,
+          params.videoCallTimezone?.trim() ||
+            displayBooking.timezone ||
+            'Europe/Lisbon',
+        )
+      : currentVideoCallKey;
+    const videoCallChanged =
+      hasVideoCallUpdate && nextVideoCallKey !== currentVideoCallKey;
+
+    if (
+      !hasStatusChange &&
+      !hasCommentsUpdate &&
+      !hasImmigrationDateUpdate &&
+      !hasVideoCallUpdate
+    ) {
       throw new BadRequestException('Indique um novo estado, comentários ou data.');
     }
 
@@ -291,6 +311,7 @@ export class RafacallCrmService {
       !hasStatusChange &&
       hasCommentsUpdate &&
       !hasImmigrationDateUpdate &&
+      !hasVideoCallUpdate &&
       normalizedComments === currentComments
     ) {
       throw new BadRequestException('Nenhuma alteração para guardar.');
@@ -300,7 +321,18 @@ export class RafacallCrmService {
       !hasStatusChange &&
       !hasCommentsUpdate &&
       hasImmigrationDateUpdate &&
+      !hasVideoCallUpdate &&
       !immigrationChanged
+    ) {
+      throw new BadRequestException('Nenhuma alteração para guardar.');
+    }
+
+    if (
+      !hasStatusChange &&
+      !hasCommentsUpdate &&
+      !hasImmigrationDateUpdate &&
+      hasVideoCallUpdate &&
+      !videoCallChanged
     ) {
       throw new BadRequestException('Nenhuma alteração para guardar.');
     }
@@ -309,8 +341,43 @@ export class RafacallCrmService {
       !hasStatusChange &&
       hasCommentsUpdate &&
       hasImmigrationDateUpdate &&
+      !hasVideoCallUpdate &&
       normalizedComments === currentComments &&
       !immigrationChanged
+    ) {
+      throw new BadRequestException('Nenhuma alteração para guardar.');
+    }
+
+    if (
+      !hasStatusChange &&
+      hasCommentsUpdate &&
+      !hasImmigrationDateUpdate &&
+      hasVideoCallUpdate &&
+      normalizedComments === currentComments &&
+      !videoCallChanged
+    ) {
+      throw new BadRequestException('Nenhuma alteração para guardar.');
+    }
+
+    if (
+      !hasStatusChange &&
+      !hasCommentsUpdate &&
+      hasImmigrationDateUpdate &&
+      hasVideoCallUpdate &&
+      !immigrationChanged &&
+      !videoCallChanged
+    ) {
+      throw new BadRequestException('Nenhuma alteração para guardar.');
+    }
+
+    if (
+      !hasStatusChange &&
+      hasCommentsUpdate &&
+      hasImmigrationDateUpdate &&
+      hasVideoCallUpdate &&
+      normalizedComments === currentComments &&
+      !immigrationChanged &&
+      !videoCallChanged
     ) {
       throw new BadRequestException('Nenhuma alteração para guardar.');
     }
@@ -318,6 +385,27 @@ export class RafacallCrmService {
     let nextComments = hasCommentsUpdate ? normalizedComments : crmSource.crmComments;
     const now = new Date();
     let nextStatus = crmSource.crmStatus;
+    let nextDisplayBooking = displayBooking;
+
+    if (videoCallChanged) {
+      const videoResult = await this.applyCrmVideoCallSchedule({
+        bookingId: displayBooking.id,
+        crmSource,
+        startsAtUtcIso: params.videoCallStartsAtUtcIso ?? null,
+        timezone:
+          params.videoCallTimezone?.trim() ||
+          displayBooking.timezone ||
+          'Europe/Lisbon',
+        at: now,
+      });
+      nextDisplayBooking = videoResult.displayBooking;
+      if (videoResult.nextStatus) {
+        nextStatus = videoResult.nextStatus;
+      }
+      if (videoResult.historyLine) {
+        nextComments = appendCrmComment(nextComments, videoResult.historyLine);
+      }
+    }
 
     if (hasStatusChange && params.crmStatus) {
       nextStatus = params.crmStatus;
@@ -325,8 +413,8 @@ export class RafacallCrmService {
         nextComments,
         buildCrmStatusHistoryLine(params.crmStatus, {
           at: now,
-          bookingStartsAt: displayBooking.startsAt,
-          bookingTimezone: displayBooking.timezone,
+          bookingStartsAt: nextDisplayBooking.startsAt,
+          bookingTimezone: nextDisplayBooking.timezone,
           expectedImmigrationAt: nextImmigrationDate,
           immigrationImmediate: nextImmigrationImmediate,
         }),
@@ -344,8 +432,8 @@ export class RafacallCrmService {
           nextComments,
           buildCrmStatusHistoryLine(autoStatus, {
             at: now,
-            bookingStartsAt: displayBooking.startsAt,
-            bookingTimezone: displayBooking.timezone,
+            bookingStartsAt: nextDisplayBooking.startsAt,
+            bookingTimezone: nextDisplayBooking.timezone,
             expectedImmigrationAt: nextImmigrationDate,
             immigrationImmediate: nextImmigrationImmediate,
           }),
@@ -360,7 +448,7 @@ export class RafacallCrmService {
       crmImmigrationImmediate: nextImmigrationImmediate,
     });
 
-    const merged = this.mergeDisplayAndCrm(displayBooking, {
+    const merged = this.mergeDisplayAndCrm(nextDisplayBooking, {
       ...crmSource,
       crmStatus: nextStatus,
       crmComments: nextComments,
@@ -389,16 +477,55 @@ export class RafacallCrmService {
       throw new BadRequestException('Cliente sem WhatsApp válido no CRM.');
     }
 
-    const excludedAt = new Date();
-    await this.prisma.rafaCallBooking.updateMany({
+    const siblings = await this.prisma.rafaCallBooking.findMany({
       where: {
         status: {
           in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.COMPLETED],
         },
-        OR: [
-          { guestWhatsapp: whatsapp },
-          { user: { whatsapp } },
-        ],
+        OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
+      },
+      select: {
+        id: true,
+        status: true,
+        crmStatus: true,
+        userId: true,
+      },
+    });
+
+    const scheduledIds = siblings
+      .filter((item) => item.status === RafaCallBookingStatus.SCHEDULED)
+      .map((item) => item.id);
+    const placeholderIds = siblings
+      .filter((item) => isCrmLeadPlaceholderBooking(item))
+      .map((item) => item.id);
+    const userIdsToClear = [
+      ...new Set(
+        siblings
+          .filter((item) => item.status === RafaCallBookingStatus.SCHEDULED && item.userId)
+          .map((item) => item.userId as string),
+      ),
+    ];
+
+    const deleteIds = [...new Set([...scheduledIds, ...placeholderIds])];
+    if (deleteIds.length > 0) {
+      await this.prisma.rafaCallBooking.deleteMany({
+        where: { id: { in: deleteIds } },
+      });
+    }
+
+    for (const userId of userIdsToClear) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { rafaCallSlotStartsAt: null, rafaCallSlotEndsAt: null },
+      });
+    }
+
+    const excludedAt = new Date();
+    await this.prisma.rafaCallBooking.updateMany({
+      where: {
+        status: RafaCallBookingStatus.COMPLETED,
+        crmExcludedAt: null,
+        OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
       },
       data: { crmExcludedAt: excludedAt },
     });
@@ -533,8 +660,7 @@ export class RafacallCrmService {
     if (hasOtherVisibleBooking) return;
 
     const now = new Date();
-    const startsAt = new Date(now.getTime() - 60 * 60 * 1000);
-    const endsAt = new Date(startsAt.getTime() + 40 * 60 * 1000);
+    const { startsAt, endsAt, timezone } = buildCrmPlaceholderSlotTimes(now);
 
     await this.prisma.rafaCallBooking.create({
       data: {
@@ -546,7 +672,7 @@ export class RafacallCrmService {
         origin: booking.origin as RafaCallBookingOrigin,
         startsAt,
         endsAt,
-        timezone: 'Europe/Lisbon',
+        timezone,
         crmStatus: booking.crmStatus,
         crmComments: booking.crmComments,
         crmExpectedImmigrationAt: booking.crmExpectedImmigrationAt,
@@ -593,9 +719,7 @@ export class RafacallCrmService {
   }
 
   private async convertScheduledBookingToCrmPlaceholder(bookingId: string) {
-    const now = new Date();
-    const startsAt = new Date(now.getTime() - 60 * 60 * 1000);
-    const endsAt = new Date(startsAt.getTime() + 40 * 60 * 1000);
+    const { startsAt, endsAt, timezone } = buildCrmPlaceholderSlotTimes();
 
     await this.prisma.rafaCallBooking.update({
       where: { id: bookingId },
@@ -603,7 +727,7 @@ export class RafacallCrmService {
         status: RafaCallBookingStatus.COMPLETED,
         startsAt,
         endsAt,
-        timezone: 'Europe/Lisbon',
+        timezone,
       },
     });
   }
@@ -615,6 +739,194 @@ export class RafacallCrmService {
       return RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA;
     }
     return status;
+  }
+
+  private get slotDurationMinutes(): number {
+    const value = Number(process.env.RAFA_CALL_DURATION_MINUTES ?? 40);
+    return Number.isFinite(value) && value > 0 ? value : 40;
+  }
+
+  private get slotBufferMinutes(): number {
+    const value = Number(process.env.RAFA_CALL_BUFFER_MINUTES ?? 10);
+    return Number.isFinite(value) && value >= 0 ? value : 10;
+  }
+
+  private buildVideoCallScheduleKey(item: {
+    status: RafaCallBookingStatus;
+    crmStatus: RafaCallCrmStatus;
+    startsAt: Date;
+    endsAt: Date;
+    timezone: string;
+  }): string | null {
+    if (isCrmLeadPlaceholderBooking(item)) return null;
+    if (item.status === RafaCallBookingStatus.SCHEDULED) {
+      return `${item.startsAt.toISOString()}|${item.timezone}`;
+    }
+    if (item.status === RafaCallBookingStatus.COMPLETED) {
+      return `${item.startsAt.toISOString()}|${item.timezone}|completed`;
+    }
+    return null;
+  }
+
+  private buildVideoCallScheduleKeyFromInput(
+    startsAtUtcIso: string | null | undefined,
+    timezone: string,
+  ): string | null {
+    if (!startsAtUtcIso) return null;
+    const startsAt = new Date(startsAtUtcIso);
+    if (Number.isNaN(startsAt.getTime())) {
+      throw new BadRequestException('Data de vídeo chamada inválida.');
+    }
+    return `${startsAt.toISOString()}|${timezone}`;
+  }
+
+  private async assertScheduleSlotAvailable(
+    startsAt: Date,
+    excludeBookingId?: string,
+  ): Promise<Date> {
+    const duration = this.slotDurationMinutes;
+    const endsAt = new Date(startsAt.getTime() + duration * 60000);
+    const buffer = this.slotBufferMinutes;
+
+    const candidates = await this.prisma.rafaCallBooking.findMany({
+      where: {
+        ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+        status: RafaCallBookingStatus.SCHEDULED,
+        startsAt: { lt: new Date(endsAt.getTime() + buffer * 60000) },
+        endsAt: { gt: new Date(startsAt.getTime() - duration * 60000) },
+      },
+      select: { id: true, startsAt: true, endsAt: true },
+      take: 20,
+    });
+
+    const newEndGap = new Date(endsAt.getTime() + buffer * 60000);
+    if (
+      candidates.some((candidate) => {
+        const candidateEndGap = new Date(
+          candidate.endsAt.getTime() + buffer * 60000,
+        );
+        return startsAt < candidateEndGap && newEndGap > candidate.startsAt;
+      })
+    ) {
+      throw new BadRequestException('Este horário já não está disponível.');
+    }
+
+    return endsAt;
+  }
+
+  private async applyCrmVideoCallSchedule(params: {
+    bookingId: string;
+    crmSource: BookingCrmRow;
+    startsAtUtcIso: string | null;
+    timezone: string;
+    at: Date;
+  }): Promise<{
+    displayBooking: BookingCrmRow;
+    nextStatus?: RafaCallCrmStatus;
+    historyLine?: string;
+  }> {
+    const booking = await this.prisma.rafaCallBooking.findUnique({
+      where: { id: params.bookingId },
+      select: BOOKING_CRM_SELECT,
+    });
+    if (!booking) {
+      throw new BadRequestException('Cliente não encontrado no CRM.');
+    }
+
+    if (params.startsAtUtcIso === null) {
+      if (booking.status !== RafaCallBookingStatus.SCHEDULED) {
+        throw new BadRequestException(
+          'Este cliente não tem vídeo chamada agendada para remover.',
+        );
+      }
+
+      const nextStatus = resolveStatusAfterImmigrationUpdate({
+        currentStatus: RafaCallCrmStatus.ENVIOU_MENSAGEM,
+        expectedImmigrationAt: params.crmSource.crmExpectedImmigrationAt,
+        immigrationImmediate: params.crmSource.crmImmigrationImmediate,
+        at: params.at,
+      });
+      const { startsAt, endsAt, timezone } = buildCrmPlaceholderSlotTimes(params.at);
+
+      const updated = await this.prisma.rafaCallBooking.update({
+        where: { id: booking.id },
+        data: {
+          status: RafaCallBookingStatus.COMPLETED,
+          startsAt,
+          endsAt,
+          timezone,
+          crmStatus: nextStatus,
+        },
+        select: BOOKING_CRM_SELECT,
+      });
+
+      return {
+        displayBooking: updated,
+        nextStatus,
+        historyLine: buildCrmStatusHistoryLine(nextStatus, {
+          at: params.at,
+          expectedImmigrationAt: params.crmSource.crmExpectedImmigrationAt,
+          immigrationImmediate: params.crmSource.crmImmigrationImmediate,
+        }),
+      };
+    }
+
+    const startsAt = new Date(params.startsAtUtcIso);
+    if (Number.isNaN(startsAt.getTime())) {
+      throw new BadRequestException('Data de vídeo chamada inválida.');
+    }
+
+    if (
+      booking.status === RafaCallBookingStatus.COMPLETED &&
+      !isCrmLeadPlaceholderBooking(booking)
+    ) {
+      throw new BadRequestException(
+        'A vídeo chamada já foi realizada e não pode ser reagendada aqui.',
+      );
+    }
+
+    const endsAt = await this.assertScheduleSlotAvailable(startsAt, booking.id);
+    const timezone = params.timezone.trim() || booking.timezone || 'Europe/Lisbon';
+
+    const updated = await this.prisma.rafaCallBooking.update({
+      where: { id: booking.id },
+      data: {
+        status: RafaCallBookingStatus.SCHEDULED,
+        startsAt,
+        endsAt,
+        timezone,
+      },
+      select: BOOKING_CRM_SELECT,
+    });
+
+    const shouldPromoteToVideo: RafaCallCrmStatus[] = [
+      RafaCallCrmStatus.ENVIOU_MENSAGEM,
+      RafaCallCrmStatus.IMIGRACAO_LONGE,
+      RafaCallCrmStatus.IMIGRACAO_PERTO,
+      RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
+    ];
+
+    let nextStatus: RafaCallCrmStatus | undefined;
+    let historyLine: string | undefined;
+    if (shouldPromoteToVideo.includes(params.crmSource.crmStatus)) {
+      nextStatus = RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA;
+      historyLine = buildCrmStatusHistoryLine(nextStatus, {
+        at: params.at,
+        bookingStartsAt: updated.startsAt,
+        bookingTimezone: updated.timezone,
+      });
+      await this.prisma.rafaCallBooking.update({
+        where: { id: booking.id },
+        data: { crmStatus: nextStatus },
+      });
+      updated.crmStatus = nextStatus;
+    }
+
+    return {
+      displayBooking: updated,
+      nextStatus,
+      historyLine,
+    };
   }
 
   crmFieldsFromBooking(booking: {
@@ -767,16 +1079,9 @@ export class RafacallCrmService {
   }): boolean {
     if (item.status === RafaCallBookingStatus.SCHEDULED) return true;
     if (item.status === RafaCallBookingStatus.CANCELLED) return true;
-
-    const postCallStatuses: RafaCallCrmStatus[] = [
-      RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
-      RafaCallCrmStatus.AGUARDANDO_ASSINATURA,
-      RafaCallCrmStatus.CONTRATO_ASSINADO,
-    ];
-
     return (
       item.status === RafaCallBookingStatus.COMPLETED &&
-      postCallStatuses.includes(item.crmStatus)
+      !isCrmLeadPlaceholderBooking(item)
     );
   }
 

@@ -1,4 +1,4 @@
-import { RafaCallCrmStatus } from '@prisma/client';
+import { RafaCallBookingStatus, RafaCallCrmStatus } from '@prisma/client';
 
 export const RAFA_CALL_CRM_STATUS_ORDER: RafaCallCrmStatus[] = [
   RafaCallCrmStatus.ENVIOU_MENSAGEM,
@@ -24,6 +24,42 @@ const CRM_HISTORY_TZ = 'Europe/Lisbon';
 export const CRM_IMMIGRATION_TZ = CRM_HISTORY_TZ;
 export const CRM_IMMIGRATION_IMMEDIATE_VALUE = 'IMEDIATO';
 export const CRM_IMMIGRATION_NEAR_THRESHOLD_DAYS = 90;
+
+const CRM_POST_CALL_STATUSES: RafaCallCrmStatus[] = [
+  RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
+  RafaCallCrmStatus.AGUARDANDO_ASSINATURA,
+  RafaCallCrmStatus.CONTRATO_ASSINADO,
+];
+
+/** Slot fictício para leads só no CRM — fora da janela da agenda admin. */
+export function buildCrmPlaceholderSlotTimes(at: Date = new Date()) {
+  const startsAt = new Date(at.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const endsAt = new Date(startsAt.getTime() + 40 * 60 * 1000);
+  return { startsAt, endsAt, timezone: CRM_IMMIGRATION_TZ };
+}
+
+/** Placeholders COMPLETED (lead manual) não contam como vídeo chamada no CRM. */
+export function isCrmLeadPlaceholderBooking(item: {
+  status: RafaCallBookingStatus;
+  crmStatus: RafaCallCrmStatus;
+}): boolean {
+  return (
+    item.status === RafaCallBookingStatus.COMPLETED &&
+    !CRM_POST_CALL_STATUSES.includes(item.crmStatus)
+  );
+}
+
+/** Agenda admin: só agendamentos reais ou chamadas já realizadas no funil. */
+export function shouldShowBookingInAdminSchedule(item: {
+  status: RafaCallBookingStatus;
+  crmStatus: RafaCallCrmStatus;
+}): boolean {
+  if (item.status === RafaCallBookingStatus.SCHEDULED) return true;
+  if (item.status === RafaCallBookingStatus.COMPLETED) {
+    return CRM_POST_CALL_STATUSES.includes(item.crmStatus);
+  }
+  return false;
+}
 
 export type CrmStatusHistoryContext = {
   at?: Date;
