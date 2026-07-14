@@ -6,6 +6,7 @@ import { RafacallBookingService } from './rafacall-booking.service';
 import { RafacallCrmService } from './rafacall-crm.service';
 import { AdminCreateRafacallBlockDto } from './dto/admin-rafacall-blocks.dto';
 import { AdminCreateRafacallBookingDto } from './dto/admin-create-rafacall-booking.dto';
+import { CreateRafacallCrmClientDto } from './dto/create-rafacall-crm-client.dto';
 import { UpdateRafacallCrmDto } from './dto/update-rafacall-crm.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 
@@ -94,6 +95,15 @@ export class AdminRafacallController {
   @Get('crm')
   crmBoard() {
     return this.crm.listCrmBoard();
+  }
+
+  @Post('crm')
+  createCrmClient(@Body() dto: CreateRafacallCrmClientDto) {
+    return this.crm.createCrmClient({
+      name: dto.name,
+      whatsapp: dto.whatsapp,
+      crmExpectedImmigrationAt: dto.crmExpectedImmigrationAt,
+    });
   }
 
   @Patch('crm/:bookingId')

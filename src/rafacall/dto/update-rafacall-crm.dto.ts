@@ -14,8 +14,8 @@ export class UpdateRafacallCrmDto {
   @IsOptional()
   @ValidateIf((_, value) => value !== null)
   @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
-    message: 'crmExpectedImmigrationAt deve ser YYYY-MM-DD.',
+  @Matches(/^(IMEDIATO|\d{4}-\d{2}-\d{2})$/i, {
+    message: 'crmExpectedImmigrationAt deve ser YYYY-MM-DD ou IMEDIATO.',
   })
   crmExpectedImmigrationAt?: string | null;
 }

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  RafaCallBookingOrigin,
   RafaCallBookingStatus,
   RafaCallCrmStatus,
 } from '@prisma/client';
@@ -10,7 +11,9 @@ import {
   appendCrmComment,
   buildCrmStatusHistoryLine,
   formatCrmImmigrationDateKey,
-  parseCrmImmigrationDateInput,
+  formatCrmImmigrationForApi,
+  parseCrmImmigrationInput,
+  shouldPromoteImmigrationToNear,
   sortCrmItemsByImmigrationDate,
 } from './rafacall-crm.constants';
 
@@ -24,6 +27,7 @@ const BOOKING_CRM_SELECT = {
   crmStatus: true,
   crmComments: true,
   crmExpectedImmigrationAt: true,
+  crmImmigrationImmediate: true,
   startsAt: true,
   endsAt: true,
   timezone: true,
@@ -46,6 +50,7 @@ type BookingCrmRow = {
   crmStatus: RafaCallCrmStatus;
   crmComments: string | null;
   crmExpectedImmigrationAt: Date | null;
+  crmImmigrationImmediate: boolean;
   startsAt: Date;
   endsAt: Date;
   timezone: string;
@@ -61,6 +66,8 @@ export class RafacallCrmService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listCrmBoard() {
+    await this.syncImmigrationProximityStatuses();
+
     const items = await this.prisma.rafaCallBooking.findMany({
       where: this.visibleCrmBookingWhere(),
       orderBy: { startsAt: 'desc' },
@@ -78,6 +85,141 @@ export class RafacallCrmService {
     }));
 
     return { columns };
+  }
+
+  /** Promove leads «longe» → «perto» quando faltam menos de 90 dias (ou IMEDIATO / data passada). */
+  async syncImmigrationProximityStatuses(): Promise<{ promoted: number }> {
+    const items = await this.prisma.rafaCallBooking.findMany({
+      where: this.visibleCrmBookingWhere(),
+      select: BOOKING_CRM_SELECT,
+    });
+
+    const uniqueItems = this.buildUniqueCrmItems(items);
+    const now = new Date();
+    let promoted = 0;
+
+    for (const item of uniqueItems) {
+      if (
+        !shouldPromoteImmigrationToNear({
+          status: item.crmStatus,
+          expectedImmigrationAt: item.crmExpectedImmigrationAt,
+          immigrationImmediate: item.crmImmigrationImmediate,
+          at: now,
+        })
+      ) {
+        continue;
+      }
+
+      await this.recordStatusChange({
+        bookingId: item.id,
+        crmStatus: RafaCallCrmStatus.IMIGRACAO_PERTO,
+        at: now,
+      });
+      promoted += 1;
+    }
+
+    return { promoted };
+  }
+
+  async createCrmClient(params: {
+    name: string;
+    whatsapp: string;
+    crmExpectedImmigrationAt?: string | null;
+  }) {
+    const name = params.name.trim();
+    if (!name || name.length < 2) {
+      throw new BadRequestException('Indica o nome do cliente.');
+    }
+
+    const whatsapp = waDigits(params.whatsapp);
+    if (whatsapp.length < 8) {
+      throw new BadRequestException(
+        'WhatsApp inválido. Inclui o indicativo do país (ex.: 351…).',
+      );
+    }
+
+    let immigrationDate: Date | null = null;
+    let immigrationImmediate = false;
+    if (params.crmExpectedImmigrationAt !== undefined) {
+      try {
+        const parsed = parseCrmImmigrationInput(params.crmExpectedImmigrationAt);
+        immigrationDate = parsed.date;
+        immigrationImmediate = parsed.immediate;
+      } catch {
+        throw new BadRequestException('Data prevista para imigração inválida.');
+      }
+    }
+
+    const visibleSiblings = await this.findActiveBookingsByWhatsapp(whatsapp);
+    if (visibleSiblings.length > 0) {
+      throw new BadRequestException('Este cliente já está no CRM.');
+    }
+
+    const now = new Date();
+    const initialStatus = RafaCallCrmStatus.ENVIOU_MENSAGEM;
+    const initialComments = appendCrmComment(
+      null,
+      buildCrmStatusHistoryLine(initialStatus, {
+        at: now,
+        expectedImmigrationAt: immigrationDate,
+        immigrationImmediate,
+      }),
+    );
+
+    const excludedBooking = await this.prisma.rafaCallBooking.findFirst({
+      where: {
+        status: {
+          in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.COMPLETED],
+        },
+        crmExcludedAt: { not: null },
+        OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
+      },
+      select: BOOKING_CRM_SELECT,
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (excludedBooking) {
+      const restored = await this.prisma.rafaCallBooking.update({
+        where: { id: excludedBooking.id },
+        data: {
+          crmExcludedAt: null,
+          ...(excludedBooking.user ? {} : { guestName: name }),
+          crmStatus: initialStatus,
+          crmComments: initialComments,
+          crmExpectedImmigrationAt: immigrationDate,
+          crmImmigrationImmediate: immigrationImmediate,
+        },
+        select: BOOKING_CRM_SELECT,
+      });
+
+      return this.serializeCrmItem(restored);
+    }
+
+    const startsAt = new Date(now.getTime() - 60 * 60 * 1000);
+    const endsAt = new Date(startsAt.getTime() + 40 * 60 * 1000);
+    const timezone = 'Europe/Lisbon';
+
+    const created = await this.prisma.rafaCallBooking.create({
+      data: {
+        userId: null,
+        guestName: name,
+        guestWhatsapp: whatsapp,
+        clientDeviceId: null,
+        status: RafaCallBookingStatus.COMPLETED,
+        origin: RafaCallBookingOrigin.PUBLIC_FREE,
+        startsAt,
+        endsAt,
+        timezone,
+        crmStatus: initialStatus,
+        crmComments: initialComments,
+        crmExpectedImmigrationAt: immigrationDate,
+        crmImmigrationImmediate: immigrationImmediate,
+        crmExcludedAt: null,
+      },
+      select: BOOKING_CRM_SELECT,
+    });
+
+    return this.serializeCrmItem(created);
   }
 
   async updateCrm(params: {
@@ -118,17 +260,26 @@ export class RafacallCrmService {
     const currentComments = crmSource.crmComments?.trim() || null;
 
     let nextImmigrationDate = crmSource.crmExpectedImmigrationAt;
+    let nextImmigrationImmediate = crmSource.crmImmigrationImmediate;
     if (hasImmigrationDateUpdate) {
       try {
-        nextImmigrationDate = parseCrmImmigrationDateInput(params.crmExpectedImmigrationAt);
+        const parsed = parseCrmImmigrationInput(params.crmExpectedImmigrationAt);
+        nextImmigrationDate = parsed.date;
+        nextImmigrationImmediate = parsed.immediate;
       } catch {
         throw new BadRequestException('Data prevista para imigração inválida.');
       }
     }
-    const currentImmigrationKey = formatCrmImmigrationDateKey(
+    const currentImmigrationApi = formatCrmImmigrationForApi(
       crmSource.crmExpectedImmigrationAt,
+      crmSource.crmImmigrationImmediate,
     );
-    const nextImmigrationKey = formatCrmImmigrationDateKey(nextImmigrationDate);
+    const nextImmigrationApi = formatCrmImmigrationForApi(
+      nextImmigrationDate,
+      nextImmigrationImmediate,
+    );
+    const immigrationChanged =
+      hasImmigrationDateUpdate && nextImmigrationApi !== currentImmigrationApi;
 
     if (!hasStatusChange && !hasCommentsUpdate && !hasImmigrationDateUpdate) {
       throw new BadRequestException('Indique um novo estado, comentários ou data.');
@@ -147,7 +298,7 @@ export class RafacallCrmService {
       !hasStatusChange &&
       !hasCommentsUpdate &&
       hasImmigrationDateUpdate &&
-      nextImmigrationKey === currentImmigrationKey
+      !immigrationChanged
     ) {
       throw new BadRequestException('Nenhuma alteração para guardar.');
     }
@@ -157,7 +308,7 @@ export class RafacallCrmService {
       hasCommentsUpdate &&
       hasImmigrationDateUpdate &&
       normalizedComments === currentComments &&
-      nextImmigrationKey === currentImmigrationKey
+      !immigrationChanged
     ) {
       throw new BadRequestException('Nenhuma alteração para guardar.');
     }
@@ -175,14 +326,36 @@ export class RafacallCrmService {
           bookingStartsAt: displayBooking.startsAt,
           bookingTimezone: displayBooking.timezone,
           expectedImmigrationAt: nextImmigrationDate,
+          immigrationImmediate: nextImmigrationImmediate,
         }),
       );
+    } else if (immigrationChanged) {
+      const autoStatus = this.resolveStatusAfterImmigrationUpdate({
+        currentStatus: crmSource.crmStatus,
+        expectedImmigrationAt: nextImmigrationDate,
+        immigrationImmediate: nextImmigrationImmediate,
+        at: now,
+      });
+      if (autoStatus !== crmSource.crmStatus) {
+        nextStatus = autoStatus;
+        nextComments = appendCrmComment(
+          nextComments,
+          buildCrmStatusHistoryLine(autoStatus, {
+            at: now,
+            bookingStartsAt: displayBooking.startsAt,
+            bookingTimezone: displayBooking.timezone,
+            expectedImmigrationAt: nextImmigrationDate,
+            immigrationImmediate: nextImmigrationImmediate,
+          }),
+        );
+      }
     }
 
     await this.syncCrmToWhatsappGroup(whatsapp, {
       crmStatus: nextStatus,
       crmComments: nextComments,
       crmExpectedImmigrationAt: nextImmigrationDate,
+      crmImmigrationImmediate: nextImmigrationImmediate,
     });
 
     const merged = this.mergeDisplayAndCrm(displayBooking, {
@@ -190,6 +363,7 @@ export class RafacallCrmService {
       crmStatus: nextStatus,
       crmComments: nextComments,
       crmExpectedImmigrationAt: nextImmigrationDate,
+      crmImmigrationImmediate: nextImmigrationImmediate,
     });
 
     return this.serializeCrmItem(merged);
@@ -257,6 +431,7 @@ export class RafacallCrmService {
         bookingStartsAt: displayBooking.startsAt,
         bookingTimezone: displayBooking.timezone,
         expectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
+        immigrationImmediate: crmSource.crmImmigrationImmediate,
       }),
     );
 
@@ -264,6 +439,7 @@ export class RafacallCrmService {
       crmStatus: params.crmStatus,
       crmComments: nextComments,
       crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
+      crmImmigrationImmediate: crmSource.crmImmigrationImmediate,
     });
   }
 
@@ -272,6 +448,7 @@ export class RafacallCrmService {
     crmStatus: RafaCallCrmStatus;
     crmComments: string | null;
     crmExpectedImmigrationAt: Date | null;
+    crmImmigrationImmediate: boolean;
   }> {
     const digits = waDigits(whatsappDigits);
     if (!digits) {
@@ -279,6 +456,7 @@ export class RafacallCrmService {
         crmStatus: RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
         crmComments: null,
         crmExpectedImmigrationAt: null,
+        crmImmigrationImmediate: false,
       };
     }
 
@@ -288,27 +466,140 @@ export class RafacallCrmService {
         crmStatus: RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
         crmComments: null,
         crmExpectedImmigrationAt: null,
+        crmImmigrationImmediate: false,
       };
     }
 
     const crmSource = this.pickCrmSource(siblings);
     return {
-      crmStatus: crmSource.crmStatus,
+      crmStatus: this.normalizeInheritedCrmStatusOnSchedule(crmSource.crmStatus),
       crmComments: crmSource.crmComments,
       crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
+      crmImmigrationImmediate: crmSource.crmImmigrationImmediate,
     };
+  }
+
+  /** Ao agendar, o CRM deve refletir «Vídeo chamada agendada» — nunca herdar «Realizou». */
+  async onScheduledBookingCreated(bookingId: string) {
+    const booking = await this.prisma.rafaCallBooking.findUnique({
+      where: { id: bookingId },
+      select: BOOKING_CRM_SELECT,
+    });
+    if (!booking) return;
+
+    const whatsapp = this.extractWhatsappDigits(booking);
+    if (!whatsapp) return;
+
+    const siblings = await this.findActiveBookingsByWhatsapp(whatsapp);
+    const crmSource = this.pickCrmSource(siblings);
+
+    const shouldPromoteToVideo: RafaCallCrmStatus[] = [
+      RafaCallCrmStatus.ENVIOU_MENSAGEM,
+      RafaCallCrmStatus.IMIGRACAO_LONGE,
+      RafaCallCrmStatus.IMIGRACAO_PERTO,
+      RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
+    ];
+
+    if (!shouldPromoteToVideo.includes(crmSource.crmStatus)) return;
+
+    await this.recordStatusChange({
+      bookingId,
+      crmStatus: RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
+    });
+  }
+
+  /**
+   * Ao cancelar um agendamento SCHEDULED, o lead permanece no CRM em «Enviou mensagem».
+   * Devolve se o booking pode ser apagado ou se foi convertido em placeholder COMPLETED.
+   */
+  async handleScheduledBookingCanceled(
+    bookingId: string,
+  ): Promise<'delete' | 'retain_as_placeholder'> {
+    const booking = await this.prisma.rafaCallBooking.findUnique({
+      where: { id: bookingId },
+      select: BOOKING_CRM_SELECT,
+    });
+    if (!booking || booking.status !== RafaCallBookingStatus.SCHEDULED) {
+      return 'delete';
+    }
+
+    const whatsapp = this.extractWhatsappDigits(booking);
+    if (!whatsapp) {
+      return 'delete';
+    }
+
+    const siblings = await this.findActiveBookingsByWhatsapp(whatsapp);
+    const hasOtherVisibleBooking = siblings.some((s) => s.id !== bookingId);
+
+    await this.recordStatusChange({
+      bookingId,
+      crmStatus: RafaCallCrmStatus.ENVIOU_MENSAGEM,
+    });
+
+    if (hasOtherVisibleBooking) {
+      return 'delete';
+    }
+
+    await this.convertScheduledBookingToCrmPlaceholder(bookingId);
+    return 'retain_as_placeholder';
+  }
+
+  private async convertScheduledBookingToCrmPlaceholder(bookingId: string) {
+    const now = new Date();
+    const startsAt = new Date(now.getTime() - 60 * 60 * 1000);
+    const endsAt = new Date(startsAt.getTime() + 40 * 60 * 1000);
+
+    await this.prisma.rafaCallBooking.update({
+      where: { id: bookingId },
+      data: {
+        status: RafaCallBookingStatus.COMPLETED,
+        startsAt,
+        endsAt,
+        timezone: 'Europe/Lisbon',
+      },
+    });
+  }
+
+  private normalizeInheritedCrmStatusOnSchedule(
+    status: RafaCallCrmStatus,
+  ): RafaCallCrmStatus {
+    if (status === RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA) {
+      return RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA;
+    }
+    return status;
   }
 
   crmFieldsFromBooking(booking: {
     crmStatus: RafaCallCrmStatus;
     crmComments: string | null;
     crmExpectedImmigrationAt: Date | null;
+    crmImmigrationImmediate: boolean;
   }) {
     return {
       crmStatus: booking.crmStatus,
       crmComments: booking.crmComments,
       crmExpectedImmigrationAt: booking.crmExpectedImmigrationAt,
+      crmImmigrationImmediate: booking.crmImmigrationImmediate,
     };
+  }
+
+  private resolveStatusAfterImmigrationUpdate(params: {
+    currentStatus: RafaCallCrmStatus;
+    expectedImmigrationAt: Date | null;
+    immigrationImmediate: boolean;
+    at: Date;
+  }): RafaCallCrmStatus {
+    if (
+      shouldPromoteImmigrationToNear({
+        status: params.currentStatus,
+        expectedImmigrationAt: params.expectedImmigrationAt,
+        immigrationImmediate: params.immigrationImmediate,
+        at: params.at,
+      })
+    ) {
+      return RafaCallCrmStatus.IMIGRACAO_PERTO;
+    }
+    return params.currentStatus;
   }
 
   private visibleCrmBookingWhere() {
@@ -364,6 +655,7 @@ export class RafacallCrmService {
       crmStatus: RafaCallCrmStatus;
       crmComments: string | null;
       crmExpectedImmigrationAt: Date | null;
+      crmImmigrationImmediate: boolean;
     },
   ) {
     await this.prisma.rafaCallBooking.updateMany({
@@ -378,6 +670,7 @@ export class RafacallCrmService {
         crmStatus: data.crmStatus,
         crmComments: data.crmComments,
         crmExpectedImmigrationAt: data.crmExpectedImmigrationAt,
+        crmImmigrationImmediate: data.crmImmigrationImmediate,
       },
     });
   }
@@ -416,7 +709,10 @@ export class RafacallCrmService {
     displayBooking: BookingCrmRow,
     crmSource: Pick<
       BookingCrmRow,
-      'crmStatus' | 'crmComments' | 'crmExpectedImmigrationAt'
+      | 'crmStatus'
+      | 'crmComments'
+      | 'crmExpectedImmigrationAt'
+      | 'crmImmigrationImmediate'
     >,
   ): BookingCrmRow {
     return {
@@ -424,6 +720,7 @@ export class RafacallCrmService {
       crmStatus: crmSource.crmStatus,
       crmComments: crmSource.crmComments,
       crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
+      crmImmigrationImmediate: crmSource.crmImmigrationImmediate,
     };
   }
 
@@ -440,6 +737,7 @@ export class RafacallCrmService {
     crmStatus: RafaCallCrmStatus;
     crmComments: string | null;
     crmExpectedImmigrationAt: Date | null;
+    crmImmigrationImmediate: boolean;
     startsAt: Date;
     endsAt: Date;
     timezone: string;
@@ -454,8 +752,9 @@ export class RafacallCrmService {
       bookingStatus: item.status,
       crmStatus: item.crmStatus,
       crmComments: item.crmComments,
-      crmExpectedImmigrationAt: formatCrmImmigrationDateKey(
+      crmExpectedImmigrationAt: formatCrmImmigrationForApi(
         item.crmExpectedImmigrationAt,
+        item.crmImmigrationImmediate,
       ),
       startsAt: item.startsAt.toISOString(),
       endsAt: item.endsAt.toISOString(),

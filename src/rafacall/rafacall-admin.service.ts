@@ -214,7 +214,7 @@ export class RafacallAdminService {
       minute: '2-digit',
     });
     const who = user.name?.trim() || 'Olá';
-    const msg = `🗑️ ${who}, a tua chamada com a Rafa foi cancelada.\n\nEstava marcada para: ${startLocal} (até ${endLocal})\nHorário de Lisboa`;
+    const msg = `🗑️ ${who}, a tua chamada com a Move Casa foi cancelada.\n\nEstava marcada para: ${startLocal} (até ${endLocal})\nHorário de Lisboa`;
     await this.wa.sendText(user.whatsapp, msg);
   }
 
@@ -249,7 +249,10 @@ export class RafacallAdminService {
       throw new BadRequestException('Agendamento não encontrado.');
     }
 
-    await this.prisma.rafaCallBooking.delete({ where: { id: booking.id } });
+    const cancelAction = await this.crm.handleScheduledBookingCanceled(booking.id);
+    if (cancelAction === 'delete') {
+      await this.prisma.rafaCallBooking.delete({ where: { id: booking.id } });
+    }
 
     if (booking.userId) {
       await this.prisma.user.update({
@@ -335,7 +338,7 @@ export class RafacallAdminService {
       minute: '2-digit',
     });
     const who = params.name?.trim() || 'Olá';
-    const msg = `🗑️ ${who}, a tua chamada com a Rafa foi cancelada.\n\nEstava marcada para: ${startLocal} (até ${endLocal})`;
+    const msg = `🗑️ ${who}, a tua chamada com a Move Casa foi cancelada.\n\nEstava marcada para: ${startLocal} (até ${endLocal})`;
     await this.wa.sendText(wa, msg);
   }
 }

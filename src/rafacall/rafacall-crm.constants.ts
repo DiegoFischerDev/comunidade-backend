@@ -2,7 +2,8 @@ import { RafaCallCrmStatus } from '@prisma/client';
 
 export const RAFA_CALL_CRM_STATUS_ORDER: RafaCallCrmStatus[] = [
   RafaCallCrmStatus.ENVIOU_MENSAGEM,
-  RafaCallCrmStatus.IMIGRACAO_MUITO_LONGE,
+  RafaCallCrmStatus.IMIGRACAO_LONGE,
+  RafaCallCrmStatus.IMIGRACAO_PERTO,
   RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
   RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
   RafaCallCrmStatus.AGUARDANDO_ASSINATURA,
@@ -11,20 +12,25 @@ export const RAFA_CALL_CRM_STATUS_ORDER: RafaCallCrmStatus[] = [
 
 export const RAFA_CALL_CRM_STATUS_LABELS: Record<RafaCallCrmStatus, string> = {
   [RafaCallCrmStatus.ENVIOU_MENSAGEM]: 'Enviou mensagem',
+  [RafaCallCrmStatus.IMIGRACAO_LONGE]: 'Data para imigrar longe',
+  [RafaCallCrmStatus.IMIGRACAO_PERTO]: 'Data para imigrar perto',
   [RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA]: 'Vídeo chamada agendada',
   [RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA]: 'Realizou vídeo chamada',
-  [RafaCallCrmStatus.IMIGRACAO_MUITO_LONGE]: 'Data para imigrar muito longe ainda',
-  [RafaCallCrmStatus.AGUARDANDO_ASSINATURA]: 'Aguardando assinatura do contrato',
+  [RafaCallCrmStatus.AGUARDANDO_ASSINATURA]: 'Contrato enviado',
   [RafaCallCrmStatus.CONTRATO_ASSINADO]: 'Contrato assinado',
 };
 
 const CRM_HISTORY_TZ = 'Europe/Lisbon';
+export const CRM_IMMIGRATION_TZ = CRM_HISTORY_TZ;
+export const CRM_IMMIGRATION_IMMEDIATE_VALUE = 'IMEDIATO';
+export const CRM_IMMIGRATION_NEAR_THRESHOLD_DAYS = 90;
 
 export type CrmStatusHistoryContext = {
   at?: Date;
   bookingStartsAt?: Date | null;
   bookingTimezone?: string | null;
   expectedImmigrationAt?: Date | null;
+  immigrationImmediate?: boolean;
 };
 
 function formatCrmHistoryDayKey(at: Date): string {
@@ -84,12 +90,19 @@ export function buildCrmStatusHistoryLine(
       context.bookingStartsAt,
       context.bookingTimezone,
     )}`;
-  } else if (status === RafaCallCrmStatus.IMIGRACAO_MUITO_LONGE) {
-    const immigrationLabel = formatImmigrationMonthYearForHistory(
-      context.expectedImmigrationAt,
-    );
-    if (immigrationLabel) {
-      suffix = `, ${immigrationLabel}`;
+  } else if (
+    status === RafaCallCrmStatus.IMIGRACAO_LONGE ||
+    status === RafaCallCrmStatus.IMIGRACAO_PERTO
+  ) {
+    if (context.immigrationImmediate) {
+      suffix = ', imediato';
+    } else {
+      const immigrationLabel = formatImmigrationMonthYearForHistory(
+        context.expectedImmigrationAt,
+      );
+      if (immigrationLabel) {
+        suffix = `, ${immigrationLabel}`;
+      }
     }
   }
 
@@ -99,6 +112,29 @@ export function buildCrmStatusHistoryLine(
 export function appendCrmComment(existing: string | null | undefined, line: string): string {
   const prev = (existing ?? '').trim();
   return prev ? `${prev}\n${line}` : line;
+}
+
+export function isCrmImmigrationImmediateValue(
+  value: string | null | undefined,
+): boolean {
+  return value?.trim().toUpperCase() === CRM_IMMIGRATION_IMMEDIATE_VALUE;
+}
+
+export function parseCrmImmigrationInput(value: string | null | undefined): {
+  date: Date | null;
+  immediate: boolean;
+} {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed) {
+    return { date: null, immediate: false };
+  }
+  if (isCrmImmigrationImmediateValue(trimmed)) {
+    return { date: null, immediate: true };
+  }
+  return {
+    date: parseCrmImmigrationDateInput(trimmed),
+    immediate: false,
+  };
 }
 
 export function parseCrmImmigrationDateInput(value: string | null | undefined): Date | null {
@@ -127,6 +163,69 @@ export function formatCrmImmigrationDateKey(date: Date | null | undefined): stri
   return date.toISOString().slice(0, 10);
 }
 
+export function formatCrmImmigrationForApi(
+  date: Date | null | undefined,
+  immediate: boolean,
+): string | null {
+  if (immediate) return CRM_IMMIGRATION_IMMEDIATE_VALUE;
+  return formatCrmImmigrationDateKey(date);
+}
+
+function formatCivilDayKeyInTz(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone }).format(date);
+}
+
+export function daysUntilImmigrationDate(
+  expectedImmigrationAt: Date,
+  at: Date = new Date(),
+): number {
+  const todayKey = formatCivilDayKeyInTz(at, CRM_IMMIGRATION_TZ);
+  const targetKey = formatCrmImmigrationDateKey(expectedImmigrationAt);
+  if (!targetKey) return Number.POSITIVE_INFINITY;
+
+  const [todayYear, todayMonth, todayDay] = todayKey.split('-').map(Number);
+  const [targetYear, targetMonth, targetDay] = targetKey.split('-').map(Number);
+  const todayUtc = Date.UTC(todayYear, todayMonth - 1, todayDay);
+  const targetUtc = Date.UTC(targetYear, targetMonth - 1, targetDay);
+  return Math.round((targetUtc - todayUtc) / (24 * 60 * 60 * 1000));
+}
+
+export function shouldPromoteImmigrationToNear(params: {
+  status: RafaCallCrmStatus;
+  expectedImmigrationAt: Date | null;
+  immigrationImmediate: boolean;
+  at?: Date;
+}): boolean {
+  if (params.status !== RafaCallCrmStatus.IMIGRACAO_LONGE) return false;
+  if (params.immigrationImmediate) return true;
+  if (!params.expectedImmigrationAt) return false;
+  return (
+    daysUntilImmigrationDate(params.expectedImmigrationAt, params.at) <
+    CRM_IMMIGRATION_NEAR_THRESHOLD_DAYS
+  );
+}
+
+export function compareCrmImmigrationEntries(
+  left: {
+    crmExpectedImmigrationAt: Date | null;
+    crmImmigrationImmediate?: boolean;
+  },
+  right: {
+    crmExpectedImmigrationAt: Date | null;
+    crmImmigrationImmediate?: boolean;
+  },
+): number {
+  const leftImmediate = left.crmImmigrationImmediate ?? false;
+  const rightImmediate = right.crmImmigrationImmediate ?? false;
+  if (leftImmediate && rightImmediate) return 0;
+  if (leftImmediate) return -1;
+  if (rightImmediate) return 1;
+  return compareCrmImmigrationDates(
+    left.crmExpectedImmigrationAt,
+    right.crmExpectedImmigrationAt,
+  );
+}
+
 export function compareCrmImmigrationDates(
   left: Date | null | undefined,
   right: Date | null | undefined,
@@ -138,12 +237,10 @@ export function compareCrmImmigrationDates(
 }
 
 export function sortCrmItemsByImmigrationDate<
-  T extends { crmExpectedImmigrationAt: Date | null },
+  T extends {
+    crmExpectedImmigrationAt: Date | null;
+    crmImmigrationImmediate?: boolean;
+  },
 >(items: T[]): T[] {
-  return [...items].sort((left, right) =>
-    compareCrmImmigrationDates(
-      left.crmExpectedImmigrationAt,
-      right.crmExpectedImmigrationAt,
-    ),
-  );
+  return [...items].sort((left, right) => compareCrmImmigrationEntries(left, right));
 }

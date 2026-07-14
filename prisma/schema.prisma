@@ -41,9 +41,10 @@ enum RafaCallBookingOrigin {
 
 enum RafaCallCrmStatus {
   ENVIOU_MENSAGEM
+  IMIGRACAO_LONGE
+  IMIGRACAO_PERTO
   VIDEO_CHAMADA_AGENDADA
   REALIZOU_VIDEO_CHAMADA
-  IMIGRACAO_MUITO_LONGE
   AGUARDANDO_ASSINATURA
   CONTRATO_ASSINADO
 }
@@ -372,6 +373,10 @@ model RafaCallBooking {
    * Data prevista para imigração (só dia civil; guardada em UTC ao meio-dia).
    */
   crmExpectedImmigrationAt DateTime?             @map("crm_expected_immigration_at")
+  /**
+   * Imigração urgente — sem data concreta («IMEDIATO» no CRM).
+   */
+  crmImmigrationImmediate  Boolean               @default(false) @map("crm_immigration_immediate")
   /**
    * Quando preenchido, o cliente deixa de aparecer no kanban CRM (por WhatsApp).
    */

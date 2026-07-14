@@ -808,6 +808,8 @@ export class RafacallBookingService {
       },
     });
 
+    await this.crm.onScheduledBookingCreated(created.id);
+
     // Mantemos os campos legacy em User por agora (para UI existente/consumo).
     await this.prisma.user.update({
       where: { id: userId },
@@ -921,7 +923,10 @@ export class RafacallBookingService {
       select: { name: true, whatsapp: true },
     });
 
-    await this.prisma.rafaCallBooking.delete({ where: { id: current.id } });
+    const cancelAction = await this.crm.handleScheduledBookingCanceled(current.id);
+    if (cancelAction === 'delete') {
+      await this.prisma.rafaCallBooking.delete({ where: { id: current.id } });
+    }
 
     await this.prisma.user.update({
       where: { id: userId },
@@ -1014,6 +1019,8 @@ export class RafacallBookingService {
       throw err;
     }
 
+    await this.crm.onScheduledBookingCreated(created.id);
+
     void this.sendBookingMessage(
       { name, whatsapp: wa, bookingId: created.id, origin: RafaCallBookingOrigin.PUBLIC_FREE },
       'booked',
@@ -1086,6 +1093,8 @@ export class RafacallBookingService {
       }
       throw err;
     }
+
+    await this.crm.onScheduledBookingCreated(created.id);
 
     void this.sendBookingMessage(
       { name, whatsapp: wa, bookingId: created.id, origin: RafaCallBookingOrigin.PUBLIC_FREE },
@@ -1260,6 +1269,8 @@ export class RafacallBookingService {
         ...crmFields,
       },
     });
+
+    await this.crm.onScheduledBookingCreated(created.id);
 
     await this.prisma.rafaCallGuestUnlock.update({
       where: { id: unlock.id },
@@ -1503,7 +1514,10 @@ export class RafacallBookingService {
       );
     }
 
-    await this.prisma.rafaCallBooking.delete({ where: { id: current.id } });
+    const cancelAction = await this.crm.handleScheduledBookingCanceled(current.id);
+    if (cancelAction === 'delete') {
+      await this.prisma.rafaCallBooking.delete({ where: { id: current.id } });
+    }
 
     return { ok: true as const };
   }
