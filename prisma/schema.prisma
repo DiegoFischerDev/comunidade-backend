@@ -49,6 +49,15 @@ enum RafaCallCrmStatus {
   CONTRATO_ASSINADO
 }
 
+enum RafaCallCrmPropertyTypology {
+  QUARTO
+  T0
+  T1
+  T3
+  T4
+  T5
+}
+
 enum SupportTicketStatus {
   REGISTERED
   IN_REVIEW
@@ -377,6 +386,18 @@ model RafaCallBooking {
    * Imigração urgente — sem data concreta («IMEDIATO» no CRM).
    */
   crmImmigrationImmediate  Boolean               @default(false) @map("crm_immigration_immediate")
+  /**
+   * Tipologia de imóvel pretendida (pipeline CRM).
+   */
+  crmPropertyTypology    RafaCallCrmPropertyTypology? @map("crm_property_typology")
+  /**
+   * Cidade de preferência para imóvel.
+   */
+  crmPreferredCity       String?               @map("crm_preferred_city")
+  /**
+   * Tem animal de estimação? null = por definir.
+   */
+  crmHasPet              Boolean?              @map("crm_has_pet")
   /**
    * Quando preenchido, o cliente deixa de aparecer no kanban CRM (por WhatsApp).
    */

@@ -1,4 +1,5 @@
 import {
+  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -7,6 +8,7 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { RafaCallCrmPropertyTypology } from '@prisma/client';
 
 export class CreateRafacallCrmClientDto {
   @IsString()
@@ -28,4 +30,15 @@ export class CreateRafacallCrmClientDto {
     message: 'crmExpectedImmigrationAt deve ser YYYY-MM-DD ou IMEDIATO.',
   })
   crmExpectedImmigrationAt?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsEnum(RafaCallCrmPropertyTypology)
+  crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @MaxLength(120)
+  crmPreferredCity?: string | null;
 }

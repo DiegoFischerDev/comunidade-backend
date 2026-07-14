@@ -108,6 +108,8 @@ export class AdminRafacallController {
       name: dto.name,
       whatsapp: dto.whatsapp,
       crmExpectedImmigrationAt: dto.crmExpectedImmigrationAt,
+      crmPropertyTypology: dto.crmPropertyTypology,
+      crmPreferredCity: dto.crmPreferredCity,
     });
   }
 
@@ -123,6 +125,9 @@ export class AdminRafacallController {
       crmExpectedImmigrationAt: dto.crmExpectedImmigrationAt,
       videoCallStartsAtUtcIso: dto.videoCallStartsAtUtcIso,
       videoCallTimezone: dto.videoCallTimezone,
+      crmPropertyTypology: dto.crmPropertyTypology,
+      crmPreferredCity: dto.crmPreferredCity,
+      crmHasPet: dto.crmHasPet,
     });
   }
 

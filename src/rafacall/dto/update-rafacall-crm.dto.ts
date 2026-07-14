@@ -1,5 +1,5 @@
-import { RafaCallCrmStatus } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, Matches, MaxLength, ValidateIf } from 'class-validator';
+import { RafaCallCrmPropertyTypology, RafaCallCrmStatus } from '@prisma/client';
+import { IsBoolean, IsEnum, IsOptional, IsString, Matches, MaxLength, ValidateIf } from 'class-validator';
 
 export class UpdateRafacallCrmDto {
   @IsOptional()
@@ -28,4 +28,20 @@ export class UpdateRafacallCrmDto {
   @IsString()
   @MaxLength(120)
   videoCallTimezone?: string;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsEnum(RafaCallCrmPropertyTypology)
+  crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @MaxLength(120)
+  crmPreferredCity?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsBoolean()
+  crmHasPet?: boolean | null;
 }

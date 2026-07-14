@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   RafaCallBookingOrigin,
   RafaCallBookingStatus,
+  RafaCallCrmPropertyTypology,
   RafaCallCrmStatus,
 } from '@prisma/client';
 import {
@@ -30,6 +31,9 @@ const BOOKING_CRM_SELECT = {
   crmComments: true,
   crmExpectedImmigrationAt: true,
   crmImmigrationImmediate: true,
+  crmPropertyTypology: true,
+  crmPreferredCity: true,
+  crmHasPet: true,
   startsAt: true,
   endsAt: true,
   timezone: true,
@@ -53,6 +57,9 @@ type BookingCrmRow = {
   crmComments: string | null;
   crmExpectedImmigrationAt: Date | null;
   crmImmigrationImmediate: boolean;
+  crmPropertyTypology: RafaCallCrmPropertyTypology | null;
+  crmPreferredCity: string | null;
+  crmHasPet: boolean | null;
   startsAt: Date;
   endsAt: Date;
   timezone: string;
@@ -124,6 +131,8 @@ export class RafacallCrmService {
     name: string;
     whatsapp: string;
     crmExpectedImmigrationAt?: string | null;
+    crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
+    crmPreferredCity?: string | null;
   }) {
     const name = params.name.trim();
     if (!name || name.length < 2) {
@@ -148,6 +157,9 @@ export class RafacallCrmService {
         throw new BadRequestException('Data prevista para imigração inválida.');
       }
     }
+
+    const preferredCity = params.crmPreferredCity?.trim() || null;
+    const propertyTypology = params.crmPropertyTypology ?? null;
 
     const visibleSiblings = await this.findActiveBookingsByWhatsapp(whatsapp);
     if (visibleSiblings.length > 0) {
@@ -192,6 +204,8 @@ export class RafacallCrmService {
           crmComments: initialComments,
           crmExpectedImmigrationAt: immigrationDate,
           crmImmigrationImmediate: immigrationImmediate,
+          crmPropertyTypology: propertyTypology,
+          crmPreferredCity: preferredCity,
         },
         select: BOOKING_CRM_SELECT,
       });
@@ -216,6 +230,8 @@ export class RafacallCrmService {
         crmComments: initialComments,
         crmExpectedImmigrationAt: immigrationDate,
         crmImmigrationImmediate: immigrationImmediate,
+        crmPropertyTypology: propertyTypology,
+        crmPreferredCity: preferredCity,
         crmExcludedAt: null,
       },
       select: BOOKING_CRM_SELECT,
@@ -231,6 +247,9 @@ export class RafacallCrmService {
     crmExpectedImmigrationAt?: string | null;
     videoCallStartsAtUtcIso?: string | null;
     videoCallTimezone?: string;
+    crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
+    crmPreferredCity?: string | null;
+    crmHasPet?: boolean | null;
   }) {
     const booking = await this.prisma.rafaCallBooking.findFirst({
       where: {
@@ -258,6 +277,10 @@ export class RafacallCrmService {
     const hasCommentsUpdate = params.crmComments !== undefined;
     const hasImmigrationDateUpdate = params.crmExpectedImmigrationAt !== undefined;
     const hasVideoCallUpdate = params.videoCallStartsAtUtcIso !== undefined;
+    const hasPreferencesUpdate =
+      params.crmPropertyTypology !== undefined ||
+      params.crmPreferredCity !== undefined ||
+      params.crmHasPet !== undefined;
 
     const normalizedComments = hasCommentsUpdate
       ? params.crmComments?.trim() || null
@@ -298,87 +321,43 @@ export class RafacallCrmService {
     const videoCallChanged =
       hasVideoCallUpdate && nextVideoCallKey !== currentVideoCallKey;
 
-    if (
-      !hasStatusChange &&
-      !hasCommentsUpdate &&
-      !hasImmigrationDateUpdate &&
-      !hasVideoCallUpdate
-    ) {
+    let nextPropertyTypology = crmSource.crmPropertyTypology;
+    let nextPreferredCity = crmSource.crmPreferredCity?.trim() || null;
+    let nextHasPet = crmSource.crmHasPet;
+    if (params.crmPropertyTypology !== undefined) {
+      nextPropertyTypology = params.crmPropertyTypology;
+    }
+    if (params.crmPreferredCity !== undefined) {
+      nextPreferredCity = params.crmPreferredCity?.trim() || null;
+    }
+    if (params.crmHasPet !== undefined) {
+      nextHasPet = params.crmHasPet;
+    }
+    const preferencesChanged =
+      hasPreferencesUpdate &&
+      (nextPropertyTypology !== crmSource.crmPropertyTypology ||
+        nextPreferredCity !== (crmSource.crmPreferredCity?.trim() || null) ||
+        nextHasPet !== crmSource.crmHasPet);
+
+    const hasAnyFieldUpdate =
+      hasStatusChange ||
+      hasCommentsUpdate ||
+      hasImmigrationDateUpdate ||
+      hasVideoCallUpdate ||
+      hasPreferencesUpdate;
+
+    if (!hasAnyFieldUpdate) {
       throw new BadRequestException('Indique um novo estado, comentários ou data.');
     }
 
-    if (
-      !hasStatusChange &&
-      hasCommentsUpdate &&
-      !hasImmigrationDateUpdate &&
-      !hasVideoCallUpdate &&
-      normalizedComments === currentComments
-    ) {
-      throw new BadRequestException('Nenhuma alteração para guardar.');
-    }
+    const hasEffectiveChange =
+      hasStatusChange ||
+      (hasCommentsUpdate && normalizedComments !== currentComments) ||
+      immigrationChanged ||
+      videoCallChanged ||
+      preferencesChanged;
 
-    if (
-      !hasStatusChange &&
-      !hasCommentsUpdate &&
-      hasImmigrationDateUpdate &&
-      !hasVideoCallUpdate &&
-      !immigrationChanged
-    ) {
-      throw new BadRequestException('Nenhuma alteração para guardar.');
-    }
-
-    if (
-      !hasStatusChange &&
-      !hasCommentsUpdate &&
-      !hasImmigrationDateUpdate &&
-      hasVideoCallUpdate &&
-      !videoCallChanged
-    ) {
-      throw new BadRequestException('Nenhuma alteração para guardar.');
-    }
-
-    if (
-      !hasStatusChange &&
-      hasCommentsUpdate &&
-      hasImmigrationDateUpdate &&
-      !hasVideoCallUpdate &&
-      normalizedComments === currentComments &&
-      !immigrationChanged
-    ) {
-      throw new BadRequestException('Nenhuma alteração para guardar.');
-    }
-
-    if (
-      !hasStatusChange &&
-      hasCommentsUpdate &&
-      !hasImmigrationDateUpdate &&
-      hasVideoCallUpdate &&
-      normalizedComments === currentComments &&
-      !videoCallChanged
-    ) {
-      throw new BadRequestException('Nenhuma alteração para guardar.');
-    }
-
-    if (
-      !hasStatusChange &&
-      !hasCommentsUpdate &&
-      hasImmigrationDateUpdate &&
-      hasVideoCallUpdate &&
-      !immigrationChanged &&
-      !videoCallChanged
-    ) {
-      throw new BadRequestException('Nenhuma alteração para guardar.');
-    }
-
-    if (
-      !hasStatusChange &&
-      hasCommentsUpdate &&
-      hasImmigrationDateUpdate &&
-      hasVideoCallUpdate &&
-      normalizedComments === currentComments &&
-      !immigrationChanged &&
-      !videoCallChanged
-    ) {
+    if (!hasEffectiveChange) {
       throw new BadRequestException('Nenhuma alteração para guardar.');
     }
 
@@ -446,6 +425,9 @@ export class RafacallCrmService {
       crmComments: nextComments,
       crmExpectedImmigrationAt: nextImmigrationDate,
       crmImmigrationImmediate: nextImmigrationImmediate,
+      crmPropertyTypology: nextPropertyTypology,
+      crmPreferredCity: nextPreferredCity,
+      crmHasPet: nextHasPet,
     });
 
     const merged = this.mergeDisplayAndCrm(nextDisplayBooking, {
@@ -454,6 +436,9 @@ export class RafacallCrmService {
       crmComments: nextComments,
       crmExpectedImmigrationAt: nextImmigrationDate,
       crmImmigrationImmediate: nextImmigrationImmediate,
+      crmPropertyTypology: nextPropertyTypology,
+      crmPreferredCity: nextPreferredCity,
+      crmHasPet: nextHasPet,
     });
 
     return this.serializeCrmItem(merged);
@@ -569,6 +554,9 @@ export class RafacallCrmService {
       crmComments: nextComments,
       crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
       crmImmigrationImmediate: crmSource.crmImmigrationImmediate,
+      crmPropertyTypology: crmSource.crmPropertyTypology,
+      crmPreferredCity: crmSource.crmPreferredCity,
+      crmHasPet: crmSource.crmHasPet,
     });
   }
 
@@ -578,6 +566,9 @@ export class RafacallCrmService {
     crmComments: string | null;
     crmExpectedImmigrationAt: Date | null;
     crmImmigrationImmediate: boolean;
+    crmPropertyTypology: RafaCallCrmPropertyTypology | null;
+    crmPreferredCity: string | null;
+    crmHasPet: boolean | null;
   }> {
     const digits = waDigits(whatsappDigits);
     if (!digits) {
@@ -586,6 +577,9 @@ export class RafacallCrmService {
         crmComments: null,
         crmExpectedImmigrationAt: null,
         crmImmigrationImmediate: false,
+        crmPropertyTypology: null,
+        crmPreferredCity: null,
+        crmHasPet: null,
       };
     }
 
@@ -596,6 +590,9 @@ export class RafacallCrmService {
         crmComments: null,
         crmExpectedImmigrationAt: null,
         crmImmigrationImmediate: false,
+        crmPropertyTypology: null,
+        crmPreferredCity: null,
+        crmHasPet: null,
       };
     }
 
@@ -605,6 +602,9 @@ export class RafacallCrmService {
       crmComments: crmSource.crmComments,
       crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
       crmImmigrationImmediate: crmSource.crmImmigrationImmediate,
+      crmPropertyTypology: crmSource.crmPropertyTypology,
+      crmPreferredCity: crmSource.crmPreferredCity,
+      crmHasPet: crmSource.crmHasPet,
     };
   }
 
@@ -677,6 +677,9 @@ export class RafacallCrmService {
         crmComments: booking.crmComments,
         crmExpectedImmigrationAt: booking.crmExpectedImmigrationAt,
         crmImmigrationImmediate: booking.crmImmigrationImmediate,
+        crmPropertyTypology: booking.crmPropertyTypology,
+        crmPreferredCity: booking.crmPreferredCity,
+        crmHasPet: booking.crmHasPet,
         crmExcludedAt: null,
       },
     });
@@ -934,12 +937,18 @@ export class RafacallCrmService {
     crmComments: string | null;
     crmExpectedImmigrationAt: Date | null;
     crmImmigrationImmediate: boolean;
+    crmPropertyTypology: RafaCallCrmPropertyTypology | null;
+    crmPreferredCity: string | null;
+    crmHasPet: boolean | null;
   }) {
     return {
       crmStatus: booking.crmStatus,
       crmComments: booking.crmComments,
       crmExpectedImmigrationAt: booking.crmExpectedImmigrationAt,
       crmImmigrationImmediate: booking.crmImmigrationImmediate,
+      crmPropertyTypology: booking.crmPropertyTypology,
+      crmPreferredCity: booking.crmPreferredCity,
+      crmHasPet: booking.crmHasPet,
     };
   }
 
@@ -997,6 +1006,9 @@ export class RafacallCrmService {
       crmComments: string | null;
       crmExpectedImmigrationAt: Date | null;
       crmImmigrationImmediate: boolean;
+      crmPropertyTypology: RafaCallCrmPropertyTypology | null;
+      crmPreferredCity: string | null;
+      crmHasPet: boolean | null;
     },
   ) {
     await this.prisma.rafaCallBooking.updateMany({
@@ -1012,6 +1024,9 @@ export class RafacallCrmService {
         crmComments: data.crmComments,
         crmExpectedImmigrationAt: data.crmExpectedImmigrationAt,
         crmImmigrationImmediate: data.crmImmigrationImmediate,
+        crmPropertyTypology: data.crmPropertyTypology,
+        crmPreferredCity: data.crmPreferredCity,
+        crmHasPet: data.crmHasPet,
       },
     });
   }
@@ -1054,6 +1069,9 @@ export class RafacallCrmService {
       | 'crmComments'
       | 'crmExpectedImmigrationAt'
       | 'crmImmigrationImmediate'
+      | 'crmPropertyTypology'
+      | 'crmPreferredCity'
+      | 'crmHasPet'
     >,
   ): BookingCrmRow {
     return {
@@ -1062,6 +1080,9 @@ export class RafacallCrmService {
       crmComments: crmSource.crmComments,
       crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
       crmImmigrationImmediate: crmSource.crmImmigrationImmediate,
+      crmPropertyTypology: crmSource.crmPropertyTypology,
+      crmPreferredCity: crmSource.crmPreferredCity,
+      crmHasPet: crmSource.crmHasPet,
     };
   }
 
@@ -1092,6 +1113,9 @@ export class RafacallCrmService {
     crmComments: string | null;
     crmExpectedImmigrationAt: Date | null;
     crmImmigrationImmediate: boolean;
+    crmPropertyTypology: RafaCallCrmPropertyTypology | null;
+    crmPreferredCity: string | null;
+    crmHasPet: boolean | null;
     startsAt: Date;
     endsAt: Date;
     timezone: string;
@@ -1112,6 +1136,9 @@ export class RafacallCrmService {
         item.crmExpectedImmigrationAt,
         item.crmImmigrationImmediate,
       ),
+      crmPropertyTypology: item.crmPropertyTypology,
+      crmPreferredCity: item.crmPreferredCity,
+      crmHasPet: item.crmHasPet,
       startsAt: item.startsAt.toISOString(),
       endsAt: item.endsAt.toISOString(),
       bookingTimezone: item.timezone,
