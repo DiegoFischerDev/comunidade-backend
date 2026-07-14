@@ -9,6 +9,8 @@ import {
   RAFA_CALL_CRM_STATUS_ORDER,
   appendCrmComment,
   buildCrmStatusHistoryLine,
+  formatCrmImmigrationDateKey,
+  parseCrmImmigrationDateInput,
 } from './rafacall-crm.constants';
 
 function waDigits(value: string): string {
@@ -20,6 +22,7 @@ const BOOKING_CRM_SELECT = {
   status: true,
   crmStatus: true,
   crmComments: true,
+  crmExpectedImmigrationAt: true,
   startsAt: true,
   endsAt: true,
   timezone: true,
@@ -41,6 +44,7 @@ type BookingCrmRow = {
   status: RafaCallBookingStatus;
   crmStatus: RafaCallCrmStatus;
   crmComments: string | null;
+  crmExpectedImmigrationAt: Date | null;
   startsAt: Date;
   endsAt: Date;
   timezone: string;
@@ -57,11 +61,7 @@ export class RafacallCrmService {
 
   async listCrmBoard() {
     const items = await this.prisma.rafaCallBooking.findMany({
-      where: {
-        status: {
-          in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.COMPLETED],
-        },
-      },
+      where: this.visibleCrmBookingWhere(),
       orderBy: { startsAt: 'desc' },
       select: BOOKING_CRM_SELECT,
     });
@@ -83,13 +83,12 @@ export class RafacallCrmService {
     bookingId: string;
     crmStatus?: RafaCallCrmStatus;
     crmComments?: string;
+    crmExpectedImmigrationAt?: string | null;
   }) {
     const booking = await this.prisma.rafaCallBooking.findFirst({
       where: {
         id: params.bookingId,
-        status: {
-          in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.COMPLETED],
-        },
+        ...this.visibleCrmBookingWhere(),
       },
       select: BOOKING_CRM_SELECT,
     });
@@ -110,16 +109,55 @@ export class RafacallCrmService {
     const hasStatusChange =
       params.crmStatus !== undefined && params.crmStatus !== crmSource.crmStatus;
     const hasCommentsUpdate = params.crmComments !== undefined;
+    const hasImmigrationDateUpdate = params.crmExpectedImmigrationAt !== undefined;
+
     const normalizedComments = hasCommentsUpdate
       ? params.crmComments?.trim() || null
       : crmSource.crmComments?.trim() || null;
     const currentComments = crmSource.crmComments?.trim() || null;
 
-    if (!hasStatusChange && !hasCommentsUpdate) {
-      throw new BadRequestException('Indique um novo estado ou comentários.');
+    let nextImmigrationDate = crmSource.crmExpectedImmigrationAt;
+    if (hasImmigrationDateUpdate) {
+      try {
+        nextImmigrationDate = parseCrmImmigrationDateInput(params.crmExpectedImmigrationAt);
+      } catch {
+        throw new BadRequestException('Data prevista para imigração inválida.');
+      }
+    }
+    const currentImmigrationKey = formatCrmImmigrationDateKey(
+      crmSource.crmExpectedImmigrationAt,
+    );
+    const nextImmigrationKey = formatCrmImmigrationDateKey(nextImmigrationDate);
+
+    if (!hasStatusChange && !hasCommentsUpdate && !hasImmigrationDateUpdate) {
+      throw new BadRequestException('Indique um novo estado, comentários ou data.');
     }
 
-    if (hasCommentsUpdate && !hasStatusChange && normalizedComments === currentComments) {
+    if (
+      !hasStatusChange &&
+      hasCommentsUpdate &&
+      !hasImmigrationDateUpdate &&
+      normalizedComments === currentComments
+    ) {
+      throw new BadRequestException('Nenhuma alteração para guardar.');
+    }
+
+    if (
+      !hasStatusChange &&
+      !hasCommentsUpdate &&
+      hasImmigrationDateUpdate &&
+      nextImmigrationKey === currentImmigrationKey
+    ) {
+      throw new BadRequestException('Nenhuma alteração para guardar.');
+    }
+
+    if (
+      !hasStatusChange &&
+      hasCommentsUpdate &&
+      hasImmigrationDateUpdate &&
+      normalizedComments === currentComments &&
+      nextImmigrationKey === currentImmigrationKey
+    ) {
       throw new BadRequestException('Nenhuma alteração para guardar.');
     }
 
@@ -138,15 +176,52 @@ export class RafacallCrmService {
     await this.syncCrmToWhatsappGroup(whatsapp, {
       crmStatus: nextStatus,
       crmComments: nextComments,
+      crmExpectedImmigrationAt: nextImmigrationDate,
     });
 
     const merged = this.mergeDisplayAndCrm(displayBooking, {
       ...crmSource,
       crmStatus: nextStatus,
       crmComments: nextComments,
+      crmExpectedImmigrationAt: nextImmigrationDate,
     });
 
     return this.serializeCrmItem(merged);
+  }
+
+  async removeFromCrm(params: { bookingId: string }) {
+    const booking = await this.prisma.rafaCallBooking.findFirst({
+      where: {
+        id: params.bookingId,
+        ...this.visibleCrmBookingWhere(),
+      },
+      select: BOOKING_CRM_SELECT,
+    });
+
+    if (!booking) {
+      throw new BadRequestException('Cliente não encontrado no CRM.');
+    }
+
+    const whatsapp = this.extractWhatsappDigits(booking);
+    if (!whatsapp) {
+      throw new BadRequestException('Cliente sem WhatsApp válido no CRM.');
+    }
+
+    const excludedAt = new Date();
+    await this.prisma.rafaCallBooking.updateMany({
+      where: {
+        status: {
+          in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.COMPLETED],
+        },
+        OR: [
+          { guestWhatsapp: whatsapp },
+          { user: { whatsapp } },
+        ],
+      },
+      data: { crmExcludedAt: excludedAt },
+    });
+
+    return { ok: true as const };
   }
 
   async recordStatusChange(params: {
@@ -176,6 +251,7 @@ export class RafacallCrmService {
     await this.syncCrmToWhatsappGroup(whatsapp, {
       crmStatus: params.crmStatus,
       crmComments: nextComments,
+      crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
     });
   }
 
@@ -183,20 +259,23 @@ export class RafacallCrmService {
   async resolveCrmFieldsForWhatsapp(whatsappDigits: string): Promise<{
     crmStatus: RafaCallCrmStatus;
     crmComments: string | null;
+    crmExpectedImmigrationAt: Date | null;
   }> {
     const digits = waDigits(whatsappDigits);
     if (!digits) {
       return {
         crmStatus: RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
         crmComments: null,
+        crmExpectedImmigrationAt: null,
       };
     }
 
-    const siblings = await this.findActiveBookingsByWhatsapp(digits);
+    const siblings = await this.findBookingsByWhatsappForInherit(digits);
     if (siblings.length === 0) {
       return {
         crmStatus: RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
         crmComments: null,
+        crmExpectedImmigrationAt: null,
       };
     }
 
@@ -204,20 +283,50 @@ export class RafacallCrmService {
     return {
       crmStatus: crmSource.crmStatus,
       crmComments: crmSource.crmComments,
+      crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
     };
   }
 
   crmFieldsFromBooking(booking: {
     crmStatus: RafaCallCrmStatus;
     crmComments: string | null;
+    crmExpectedImmigrationAt: Date | null;
   }) {
     return {
       crmStatus: booking.crmStatus,
       crmComments: booking.crmComments,
+      crmExpectedImmigrationAt: booking.crmExpectedImmigrationAt,
+    };
+  }
+
+  private visibleCrmBookingWhere() {
+    return {
+      status: {
+        in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.COMPLETED],
+      },
+      crmExcludedAt: null,
     };
   }
 
   private async findActiveBookingsByWhatsapp(
+    whatsappDigits: string,
+  ): Promise<BookingCrmRow[]> {
+    if (!whatsappDigits) return [];
+
+    return this.prisma.rafaCallBooking.findMany({
+      where: {
+        ...this.visibleCrmBookingWhere(),
+        OR: [
+          { guestWhatsapp: whatsappDigits },
+          { user: { whatsapp: whatsappDigits } },
+        ],
+      },
+      select: BOOKING_CRM_SELECT,
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  private async findBookingsByWhatsappForInherit(
     whatsappDigits: string,
   ): Promise<BookingCrmRow[]> {
     if (!whatsappDigits) return [];
@@ -239,13 +348,15 @@ export class RafacallCrmService {
 
   private async syncCrmToWhatsappGroup(
     whatsappDigits: string,
-    data: { crmStatus: RafaCallCrmStatus; crmComments: string | null },
+    data: {
+      crmStatus: RafaCallCrmStatus;
+      crmComments: string | null;
+      crmExpectedImmigrationAt: Date | null;
+    },
   ) {
     await this.prisma.rafaCallBooking.updateMany({
       where: {
-        status: {
-          in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.COMPLETED],
-        },
+        ...this.visibleCrmBookingWhere(),
         OR: [
           { guestWhatsapp: whatsappDigits },
           { user: { whatsapp: whatsappDigits } },
@@ -254,6 +365,7 @@ export class RafacallCrmService {
       data: {
         crmStatus: data.crmStatus,
         crmComments: data.crmComments,
+        crmExpectedImmigrationAt: data.crmExpectedImmigrationAt,
       },
     });
   }
@@ -290,12 +402,16 @@ export class RafacallCrmService {
 
   private mergeDisplayAndCrm(
     displayBooking: BookingCrmRow,
-    crmSource: Pick<BookingCrmRow, 'crmStatus' | 'crmComments'>,
+    crmSource: Pick<
+      BookingCrmRow,
+      'crmStatus' | 'crmComments' | 'crmExpectedImmigrationAt'
+    >,
   ): BookingCrmRow {
     return {
       ...displayBooking,
       crmStatus: crmSource.crmStatus,
       crmComments: crmSource.crmComments,
+      crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
     };
   }
 
@@ -311,6 +427,7 @@ export class RafacallCrmService {
     status: RafaCallBookingStatus;
     crmStatus: RafaCallCrmStatus;
     crmComments: string | null;
+    crmExpectedImmigrationAt: Date | null;
     startsAt: Date;
     endsAt: Date;
     timezone: string;
@@ -325,6 +442,9 @@ export class RafacallCrmService {
       bookingStatus: item.status,
       crmStatus: item.crmStatus,
       crmComments: item.crmComments,
+      crmExpectedImmigrationAt: formatCrmImmigrationDateKey(
+        item.crmExpectedImmigrationAt,
+      ),
       startsAt: item.startsAt.toISOString(),
       endsAt: item.endsAt.toISOString(),
       bookingTimezone: item.timezone,

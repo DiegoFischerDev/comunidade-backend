@@ -105,7 +105,13 @@ export class AdminRafacallController {
       bookingId: bookingId.trim(),
       crmStatus: dto.crmStatus,
       crmComments: dto.crmComments,
+      crmExpectedImmigrationAt: dto.crmExpectedImmigrationAt,
     });
+  }
+
+  @Delete('crm/:bookingId')
+  removeFromCrm(@Param('bookingId') bookingId: string) {
+    return this.crm.removeFromCrm({ bookingId: bookingId.trim() });
   }
 }
 

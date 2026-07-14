@@ -43,8 +43,7 @@ enum RafaCallCrmStatus {
   ENVIOU_MENSAGEM
   VIDEO_CHAMADA_AGENDADA
   REALIZOU_VIDEO_CHAMADA
-  NAO_TEM_INTERESSE
-  INTERESSE_FUTURO
+  IMIGRACAO_MUITO_LONGE
   AGUARDANDO_ASSINATURA
   CONTRATO_ASSINADO
 }
@@ -369,6 +368,14 @@ model RafaCallBooking {
    * Histórico de movimentações e notas do admin (texto livre, uma linha por entrada).
    */
   crmComments              String?               @map("crm_comments") @db.Text
+  /**
+   * Data prevista para imigração (só dia civil; guardada em UTC ao meio-dia).
+   */
+  crmExpectedImmigrationAt DateTime?             @map("crm_expected_immigration_at")
+  /**
+   * Quando preenchido, o cliente deixa de aparecer no kanban CRM (por WhatsApp).
+   */
+  crmExcludedAt            DateTime?             @map("crm_excluded_at")
   createdAt                DateTime              @default(now()) @map("created_at")
   updatedAt                DateTime              @updatedAt @map("updated_at")
 

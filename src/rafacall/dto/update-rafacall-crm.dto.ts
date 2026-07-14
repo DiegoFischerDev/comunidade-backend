@@ -1,5 +1,5 @@
 import { RafaCallCrmStatus } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEnum, IsOptional, IsString, Matches, MaxLength, ValidateIf } from 'class-validator';
 
 export class UpdateRafacallCrmDto {
   @IsOptional()
@@ -10,4 +10,12 @@ export class UpdateRafacallCrmDto {
   @IsString()
   @MaxLength(5000)
   crmComments?: string;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'crmExpectedImmigrationAt deve ser YYYY-MM-DD.',
+  })
+  crmExpectedImmigrationAt?: string | null;
 }
