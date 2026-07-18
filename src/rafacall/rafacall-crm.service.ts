@@ -231,6 +231,7 @@ export class RafacallCrmService {
           crmImmigrationImmediate: immigrationImmediate,
           crmPropertyTypology: propertyTypology,
           crmPreferredCity: preferredCity,
+          crmHasPet: null,
         },
         select: BOOKING_CRM_SELECT,
       });
@@ -257,6 +258,7 @@ export class RafacallCrmService {
         crmImmigrationImmediate: immigrationImmediate,
         crmPropertyTypology: propertyTypology,
         crmPreferredCity: preferredCity,
+        crmHasPet: null,
         crmExcludedAt: null,
       },
       select: BOOKING_CRM_SELECT,
