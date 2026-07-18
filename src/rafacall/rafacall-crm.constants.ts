@@ -1,7 +1,7 @@
 import { RafaCallBookingStatus, RafaCallCrmStatus } from '@prisma/client';
 
 export const RAFA_CALL_CRM_STATUS_ORDER: RafaCallCrmStatus[] = [
-  RafaCallCrmStatus.ENVIOU_MENSAGEM,
+  RafaCallCrmStatus.IMIGRACAO_NULL,
   RafaCallCrmStatus.IMIGRACAO_LONGE,
   RafaCallCrmStatus.IMIGRACAO_PERTO,
   RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
@@ -11,7 +11,7 @@ export const RAFA_CALL_CRM_STATUS_ORDER: RafaCallCrmStatus[] = [
 ];
 
 export const RAFA_CALL_CRM_STATUS_LABELS: Record<RafaCallCrmStatus, string> = {
-  [RafaCallCrmStatus.ENVIOU_MENSAGEM]: 'Sem data para imigar',
+  [RafaCallCrmStatus.IMIGRACAO_NULL]: 'Sem data para imigar',
   [RafaCallCrmStatus.IMIGRACAO_LONGE]: 'Data para imigrar longe',
   [RafaCallCrmStatus.IMIGRACAO_PERTO]: 'Data para imigrar perto',
   [RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA]: 'Vídeo chamada agendada',
@@ -30,32 +30,61 @@ const CRM_POST_CALL_STATUSES: RafaCallCrmStatus[] = [
   RafaCallCrmStatus.CONTRATO_ASSINADO,
 ];
 
+/**
+ * Slot sentinela para leads só no CRM (sem vídeo chamada definida).
+ * Não aparece na agenda e `hasVideoCall` fica falso até o admin definir data/hora.
+ */
+export const CRM_PLACEHOLDER_SLOT_STARTS_AT = new Date('1970-01-01T12:00:00.000Z');
+export const CRM_PLACEHOLDER_SLOT_ENDS_AT = new Date('1970-01-01T12:40:00.000Z');
+
 /** Slot fictício para leads só no CRM — fora da janela da agenda admin. */
-export function buildCrmPlaceholderSlotTimes(at: Date = new Date()) {
-  const startsAt = new Date(at.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const endsAt = new Date(startsAt.getTime() + 40 * 60 * 1000);
-  return { startsAt, endsAt, timezone: CRM_IMMIGRATION_TZ };
+export function buildCrmPlaceholderSlotTimes(_at: Date = new Date()) {
+  return {
+    startsAt: new Date(CRM_PLACEHOLDER_SLOT_STARTS_AT),
+    endsAt: new Date(CRM_PLACEHOLDER_SLOT_ENDS_AT),
+    timezone: CRM_IMMIGRATION_TZ,
+  };
 }
 
-/** Placeholders COMPLETED (lead manual) não contam como vídeo chamada no CRM. */
-export function isCrmLeadPlaceholderBooking(item: {
-  status: RafaCallBookingStatus;
-  crmStatus: RafaCallCrmStatus;
+export function isCrmPlaceholderSlotTimes(item: {
+  startsAt: Date;
+  endsAt: Date;
 }): boolean {
   return (
-    item.status === RafaCallBookingStatus.COMPLETED &&
-    !CRM_POST_CALL_STATUSES.includes(item.crmStatus)
+    item.startsAt.getTime() === CRM_PLACEHOLDER_SLOT_STARTS_AT.getTime() &&
+    item.endsAt.getTime() === CRM_PLACEHOLDER_SLOT_ENDS_AT.getTime()
   );
 }
 
-/** Agenda admin: só agendamentos reais ou chamadas já realizadas no funil. */
+/**
+ * Placeholders COMPLETED (lead manual / sem horário real) não contam como vídeo chamada,
+ * mesmo que o kanban esteja em «Realizou vídeo chamada» ou colunas seguintes.
+ */
+export function isCrmLeadPlaceholderBooking(item: {
+  status: RafaCallBookingStatus;
+  crmStatus: RafaCallCrmStatus;
+  startsAt: Date;
+  endsAt: Date;
+}): boolean {
+  if (item.status !== RafaCallBookingStatus.COMPLETED) return false;
+  if (isCrmPlaceholderSlotTimes(item)) return true;
+  // Legado: placeholders antigos (now-30d) ainda sem status pós-chamada.
+  return !CRM_POST_CALL_STATUSES.includes(item.crmStatus);
+}
+
+/** Agenda admin: só agendamentos reais ou chamadas já realizadas com horário definido. */
 export function shouldShowBookingInAdminSchedule(item: {
   status: RafaCallBookingStatus;
   crmStatus: RafaCallCrmStatus;
+  startsAt: Date;
+  endsAt: Date;
 }): boolean {
   if (item.status === RafaCallBookingStatus.SCHEDULED) return true;
   if (item.status === RafaCallBookingStatus.COMPLETED) {
-    return CRM_POST_CALL_STATUSES.includes(item.crmStatus);
+    return (
+      CRM_POST_CALL_STATUSES.includes(item.crmStatus) &&
+      !isCrmPlaceholderSlotTimes(item)
+    );
   }
   return false;
 }
@@ -169,7 +198,7 @@ export function resolveImmigrationColumnFromDate(params: {
 }
 
 const CRM_IMMIGRATION_FUNNEL_STATUSES: RafaCallCrmStatus[] = [
-  RafaCallCrmStatus.ENVIOU_MENSAGEM,
+  RafaCallCrmStatus.IMIGRACAO_NULL,
   RafaCallCrmStatus.IMIGRACAO_LONGE,
   RafaCallCrmStatus.IMIGRACAO_PERTO,
 ];
@@ -189,7 +218,7 @@ export function resolveStatusAfterImmigrationUpdate(params: {
       params.currentStatus === RafaCallCrmStatus.IMIGRACAO_LONGE ||
       params.currentStatus === RafaCallCrmStatus.IMIGRACAO_PERTO
     ) {
-      return RafaCallCrmStatus.ENVIOU_MENSAGEM;
+      return RafaCallCrmStatus.IMIGRACAO_NULL;
     }
     return params.currentStatus;
   }

@@ -8,6 +8,10 @@ import { AdminCreateRafacallBlockDto } from './dto/admin-rafacall-blocks.dto';
 import { AdminCreateRafacallBookingDto } from './dto/admin-create-rafacall-booking.dto';
 import { CreateRafacallCrmClientDto } from './dto/create-rafacall-crm-client.dto';
 import { UpdateRafacallCrmDto } from './dto/update-rafacall-crm.dto';
+import {
+  CreateRafacallCrmPaymentDto,
+  UpdateRafacallCrmPaymentDto,
+} from './dto/rafacall-crm-payment.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 
 @Controller('admin/rafacall')
@@ -139,6 +143,47 @@ export class AdminRafacallController {
   @Delete('crm/:bookingId')
   removeFromCrm(@Param('bookingId') bookingId: string) {
     return this.crm.removeFromCrm({ bookingId: bookingId.trim() });
+  }
+
+  @Post('crm/:bookingId/payments')
+  createCrmPayment(
+    @Param('bookingId') bookingId: string,
+    @Body() dto: CreateRafacallCrmPaymentDto,
+  ) {
+    return this.crm.createCrmPayment({
+      bookingId: bookingId.trim(),
+      paidAt: dto.paidAt,
+      amount: dto.amount,
+      receiptImageUrl: dto.receiptImageUrl,
+      comment: dto.comment,
+    });
+  }
+
+  @Patch('crm/:bookingId/payments/:paymentId')
+  updateCrmPayment(
+    @Param('bookingId') bookingId: string,
+    @Param('paymentId') paymentId: string,
+    @Body() dto: UpdateRafacallCrmPaymentDto,
+  ) {
+    return this.crm.updateCrmPayment({
+      bookingId: bookingId.trim(),
+      paymentId: paymentId.trim(),
+      paidAt: dto.paidAt,
+      amount: dto.amount,
+      receiptImageUrl: dto.receiptImageUrl,
+      comment: dto.comment,
+    });
+  }
+
+  @Delete('crm/:bookingId/payments/:paymentId')
+  deleteCrmPayment(
+    @Param('bookingId') bookingId: string,
+    @Param('paymentId') paymentId: string,
+  ) {
+    return this.crm.deleteCrmPayment({
+      bookingId: bookingId.trim(),
+      paymentId: paymentId.trim(),
+    });
   }
 }
 

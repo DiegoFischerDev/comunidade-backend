@@ -40,7 +40,7 @@ enum RafaCallBookingOrigin {
 }
 
 enum RafaCallCrmStatus {
-  ENVIOU_MENSAGEM
+  IMIGRACAO_NULL
   IMIGRACAO_LONGE
   IMIGRACAO_PERTO
   VIDEO_CHAMADA_AGENDADA
@@ -412,6 +412,35 @@ model RafaCallBooking {
   @@index([startsAt])
   @@index([endsAt])
   @@map("rafa_call_bookings")
+}
+
+/**
+ * Pagamentos registados no CRM por cliente (identidade = WhatsApp).
+ */
+model RafaCallCrmPayment {
+  id              String   @id @default(cuid())
+  /**
+   * WhatsApp só dígitos (com indicativo) — mesma chave do kanban CRM.
+   */
+  whatsappDigits  String   @map("whatsapp_digits")
+  /**
+   * Data do pagamento (dia civil; UTC ao meio-dia).
+   */
+  paidAt          DateTime @map("paid_at")
+  /**
+   * Valor em euros (2 casas decimais).
+   */
+  amount          Decimal  @map("amount") @db.Decimal(12, 2)
+  /**
+   * URL do comprovante (upload local ou R2).
+   */
+  receiptImageUrl String   @map("receipt_image_url")
+  comment         String?  @db.Text
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([whatsappDigits, paidAt])
+  @@map("rafa_call_crm_payments")
 }
 
 /**

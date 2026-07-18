@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  Prisma,
   RafaCallBookingOrigin,
   RafaCallBookingStatus,
   RafaCallCrmPropertyTypology,
@@ -13,6 +14,7 @@ import {
   formatCrmImmigrationDateKey,
   formatCrmImmigrationForApi,
   isCrmLeadPlaceholderBooking,
+  parseCrmImmigrationDateInput,
   parseCrmImmigrationInput,
   resolveStatusAfterImmigrationUpdate,
   sortCrmItemsByImmigrationDate,
@@ -82,13 +84,21 @@ export class RafacallCrmService {
     });
 
     const uniqueItems = this.buildUniqueCrmItems(items);
+    const paymentsByWhatsapp = await this.loadPaymentsByWhatsapp(
+      uniqueItems.map((item) => this.extractWhatsappDigits(item)),
+    );
 
     const columns = RAFA_CALL_CRM_STATUS_ORDER.map((status) => ({
       status,
       label: RAFA_CALL_CRM_STATUS_LABELS[status],
       items: sortCrmItemsByImmigrationDate(
         uniqueItems.filter((item) => item.crmStatus === status),
-      ).map((item) => this.serializeCrmItem(item)),
+      ).map((item) =>
+        this.serializeCrmItem(
+          item,
+          paymentsByWhatsapp.get(this.extractWhatsappDigits(item)) ?? [],
+        ),
+      ),
     }));
 
     return { columns };
@@ -189,7 +199,7 @@ export class RafacallCrmService {
 
     const now = new Date();
     const initialStatus = resolveStatusAfterImmigrationUpdate({
-      currentStatus: RafaCallCrmStatus.ENVIOU_MENSAGEM,
+      currentStatus: RafaCallCrmStatus.IMIGRACAO_NULL,
       expectedImmigrationAt: immigrationDate,
       immigrationImmediate,
       at: now,
@@ -223,7 +233,7 @@ export class RafacallCrmService {
         select: BOOKING_CRM_SELECT,
       });
 
-      return this.serializeCrmItem(restored);
+      return this.serializeCrmItemWithPayments(restored);
     }
 
     const { startsAt, endsAt, timezone } = buildCrmPlaceholderSlotTimes(now);
@@ -250,7 +260,7 @@ export class RafacallCrmService {
       select: BOOKING_CRM_SELECT,
     });
 
-    return this.serializeCrmItem(created);
+    return this.serializeCrmItemWithPayments(created);
   }
 
   async updateCrm(params: {
@@ -431,7 +441,7 @@ export class RafacallCrmService {
       crmHasPet: nextHasPet,
     });
 
-    return this.serializeCrmItem(merged);
+    return this.serializeCrmItemWithPayments(merged);
   }
 
   async removeFromCrm(params: { bookingId: string }) {
@@ -463,6 +473,8 @@ export class RafacallCrmService {
         id: true,
         status: true,
         crmStatus: true,
+        startsAt: true,
+        endsAt: true,
         userId: true,
       },
     });
@@ -505,6 +517,97 @@ export class RafacallCrmService {
       data: { crmExcludedAt: excludedAt },
     });
 
+    await this.prisma.rafaCallCrmPayment.deleteMany({
+      where: { whatsappDigits: whatsapp },
+    });
+
+    return { ok: true as const };
+  }
+
+  async createCrmPayment(params: {
+    bookingId: string;
+    paidAt: string;
+    amount: number;
+    receiptImageUrl: string;
+    comment?: string | null;
+  }) {
+    const whatsapp = await this.requireCrmWhatsapp(params.bookingId);
+    const paidAt = this.parsePaymentPaidAt(params.paidAt);
+    const amount = this.parsePaymentAmount(params.amount);
+    const receiptImageUrl = params.receiptImageUrl.trim();
+    if (!receiptImageUrl) {
+      throw new BadRequestException('Indica o comprovante do pagamento.');
+    }
+    const comment = params.comment?.trim() || null;
+
+    const created = await this.prisma.rafaCallCrmPayment.create({
+      data: {
+        whatsappDigits: whatsapp,
+        paidAt,
+        amount,
+        receiptImageUrl,
+        comment,
+      },
+    });
+
+    return this.serializePayment(created);
+  }
+
+  async updateCrmPayment(params: {
+    bookingId: string;
+    paymentId: string;
+    paidAt?: string;
+    amount?: number;
+    receiptImageUrl?: string;
+    comment?: string | null;
+  }) {
+    const whatsapp = await this.requireCrmWhatsapp(params.bookingId);
+    const existing = await this.prisma.rafaCallCrmPayment.findFirst({
+      where: { id: params.paymentId, whatsappDigits: whatsapp },
+    });
+    if (!existing) {
+      throw new BadRequestException('Pagamento não encontrado.');
+    }
+
+    const data: Prisma.RafaCallCrmPaymentUpdateInput = {};
+    if (params.paidAt !== undefined) {
+      data.paidAt = this.parsePaymentPaidAt(params.paidAt);
+    }
+    if (params.amount !== undefined) {
+      data.amount = this.parsePaymentAmount(params.amount);
+    }
+    if (params.receiptImageUrl !== undefined) {
+      const url = params.receiptImageUrl.trim();
+      if (!url) throw new BadRequestException('Indica o comprovante do pagamento.');
+      data.receiptImageUrl = url;
+    }
+    if (params.comment !== undefined) {
+      data.comment = params.comment?.trim() || null;
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Nenhuma alteração para guardar.');
+    }
+
+    const updated = await this.prisma.rafaCallCrmPayment.update({
+      where: { id: existing.id },
+      data,
+    });
+
+    return this.serializePayment(updated);
+  }
+
+  async deleteCrmPayment(params: { bookingId: string; paymentId: string }) {
+    const whatsapp = await this.requireCrmWhatsapp(params.bookingId);
+    const existing = await this.prisma.rafaCallCrmPayment.findFirst({
+      where: { id: params.paymentId, whatsappDigits: whatsapp },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new BadRequestException('Pagamento não encontrado.');
+    }
+
+    await this.prisma.rafaCallCrmPayment.delete({ where: { id: existing.id } });
     return { ok: true as const };
   }
 
@@ -600,7 +703,7 @@ export class RafacallCrmService {
     const crmSource = this.pickCrmSource(siblings);
 
     const shouldPromoteToVideo: RafaCallCrmStatus[] = [
-      RafaCallCrmStatus.ENVIOU_MENSAGEM,
+      RafaCallCrmStatus.IMIGRACAO_NULL,
       RafaCallCrmStatus.IMIGRACAO_LONGE,
       RafaCallCrmStatus.IMIGRACAO_PERTO,
       RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
@@ -687,7 +790,7 @@ export class RafacallCrmService {
 
     await this.recordStatusChange({
       bookingId,
-      crmStatus: RafaCallCrmStatus.ENVIOU_MENSAGEM,
+      crmStatus: RafaCallCrmStatus.IMIGRACAO_NULL,
     });
 
     if (hasOtherVisibleBooking) {
@@ -820,7 +923,7 @@ export class RafacallCrmService {
       }
 
       const nextStatus = resolveStatusAfterImmigrationUpdate({
-        currentStatus: RafaCallCrmStatus.ENVIOU_MENSAGEM,
+        currentStatus: RafaCallCrmStatus.IMIGRACAO_NULL,
         expectedImmigrationAt: params.crmSource.crmExpectedImmigrationAt,
         immigrationImmediate: params.crmSource.crmImmigrationImmediate,
         at: params.at,
@@ -859,13 +962,25 @@ export class RafacallCrmService {
       );
     }
 
-    const endsAt = await this.assertScheduleSlotAvailable(startsAt, booking.id);
     const timezone = params.timezone.trim() || booking.timezone || 'Europe/Lisbon';
+    const isPastCall = startsAt.getTime() <= params.at.getTime();
+
+    let endsAt: Date;
+    let nextBookingStatus: RafaCallBookingStatus;
+    if (isPastCall) {
+      // Documentar chamada já realizada — não ocupa slot na agenda futura.
+      const duration = this.slotDurationMinutes;
+      endsAt = new Date(startsAt.getTime() + duration * 60000);
+      nextBookingStatus = RafaCallBookingStatus.COMPLETED;
+    } else {
+      endsAt = await this.assertScheduleSlotAvailable(startsAt, booking.id);
+      nextBookingStatus = RafaCallBookingStatus.SCHEDULED;
+    }
 
     const updated = await this.prisma.rafaCallBooking.update({
       where: { id: booking.id },
       data: {
-        status: RafaCallBookingStatus.SCHEDULED,
+        status: nextBookingStatus,
         startsAt,
         endsAt,
         timezone,
@@ -874,14 +989,29 @@ export class RafacallCrmService {
     });
 
     const shouldPromoteToVideo: RafaCallCrmStatus[] = [
-      RafaCallCrmStatus.ENVIOU_MENSAGEM,
+      RafaCallCrmStatus.IMIGRACAO_NULL,
       RafaCallCrmStatus.IMIGRACAO_LONGE,
       RafaCallCrmStatus.IMIGRACAO_PERTO,
       RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
     ];
 
     let nextStatus: RafaCallCrmStatus | undefined;
-    if (shouldPromoteToVideo.includes(params.crmSource.crmStatus)) {
+    if (isPastCall) {
+      // Manter / promover para «Realizou» quando se documenta data/hora real no passado.
+      if (
+        params.crmSource.crmStatus === RafaCallCrmStatus.IMIGRACAO_NULL ||
+        params.crmSource.crmStatus === RafaCallCrmStatus.IMIGRACAO_LONGE ||
+        params.crmSource.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO ||
+        params.crmSource.crmStatus === RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA
+      ) {
+        nextStatus = RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA;
+        await this.prisma.rafaCallBooking.update({
+          where: { id: booking.id },
+          data: { crmStatus: nextStatus },
+        });
+        updated.crmStatus = nextStatus;
+      }
+    } else if (shouldPromoteToVideo.includes(params.crmSource.crmStatus)) {
       nextStatus = RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA;
       await this.prisma.rafaCallBooking.update({
         where: { id: booking.id },
@@ -1050,6 +1180,85 @@ export class RafacallCrmService {
     };
   }
 
+  private async serializeCrmItemWithPayments(item: BookingCrmRow) {
+    const whatsappDigits = this.extractWhatsappDigits(item);
+    const payments =
+      (await this.loadPaymentsByWhatsapp([whatsappDigits])).get(whatsappDigits) ??
+      [];
+    return this.serializeCrmItem(item, payments);
+  }
+
+  private async loadPaymentsByWhatsapp(
+    whatsappDigitsList: string[],
+  ): Promise<Map<string, ReturnType<RafacallCrmService['serializePayment']>[]>> {
+    const digits = [...new Set(whatsappDigitsList.map((d) => waDigits(d)).filter(Boolean))];
+    const map = new Map<string, ReturnType<RafacallCrmService['serializePayment']>[]>();
+    if (digits.length === 0) return map;
+
+    const rows = await this.prisma.rafaCallCrmPayment.findMany({
+      where: { whatsappDigits: { in: digits } },
+      orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    for (const row of rows) {
+      const list = map.get(row.whatsappDigits) ?? [];
+      list.push(this.serializePayment(row));
+      map.set(row.whatsappDigits, list);
+    }
+    return map;
+  }
+
+  private async requireCrmWhatsapp(bookingId: string): Promise<string> {
+    const booking = await this.prisma.rafaCallBooking.findFirst({
+      where: {
+        id: bookingId,
+        ...this.visibleCrmBookingWhere(),
+      },
+      select: BOOKING_CRM_SELECT,
+    });
+    if (!booking) {
+      throw new BadRequestException('Cliente não encontrado no CRM.');
+    }
+    const whatsapp = this.extractWhatsappDigits(booking);
+    if (!whatsapp) {
+      throw new BadRequestException('Cliente sem WhatsApp válido no CRM.');
+    }
+    return whatsapp;
+  }
+
+  private parsePaymentPaidAt(value: string): Date {
+    try {
+      const date = parseCrmImmigrationDateInput(value.trim());
+      if (!date) throw new Error('INVALID');
+      return date;
+    } catch {
+      throw new BadRequestException('Data do pagamento inválida.');
+    }
+  }
+
+  private parsePaymentAmount(value: number): Prisma.Decimal {
+    if (!Number.isFinite(value) || value < 0.01) {
+      throw new BadRequestException('Valor do pagamento inválido.');
+    }
+    return new Prisma.Decimal(value.toFixed(2));
+  }
+
+  private serializePayment(row: {
+    id: string;
+    paidAt: Date;
+    amount: Prisma.Decimal;
+    receiptImageUrl: string;
+    comment: string | null;
+  }) {
+    return {
+      id: row.id,
+      paidAt: formatCrmImmigrationDateKey(row.paidAt) ?? row.paidAt.toISOString().slice(0, 10),
+      amount: Number(row.amount),
+      receiptImageUrl: row.receiptImageUrl,
+      comment: row.comment,
+    };
+  }
+
   private extractWhatsappDigits(item: {
     guestWhatsapp: string | null;
     user: { whatsapp: string | null } | null;
@@ -1061,6 +1270,8 @@ export class RafacallCrmService {
   private hasDisplayableVideoCall(item: {
     status: RafaCallBookingStatus;
     crmStatus: RafaCallCrmStatus;
+    startsAt: Date;
+    endsAt: Date;
   }): boolean {
     if (item.status === RafaCallBookingStatus.SCHEDULED) return true;
     if (item.status === RafaCallBookingStatus.CANCELLED) return true;
@@ -1070,26 +1281,32 @@ export class RafacallCrmService {
     );
   }
 
-  private serializeCrmItem(item: {
-    id: string;
-    status: RafaCallBookingStatus;
-    crmStatus: RafaCallCrmStatus;
-    crmComments: string | null;
-    crmExpectedImmigrationAt: Date | null;
-    crmImmigrationImmediate: boolean;
-    crmPropertyTypology: RafaCallCrmPropertyTypology | null;
-    crmPreferredCity: string | null;
-    crmHasPet: boolean | null;
-    startsAt: Date;
-    endsAt: Date;
-    timezone: string;
-    origin: string;
-    guestName: string | null;
-    guestWhatsapp: string | null;
-    user: { id: string; name: string | null; whatsapp: string | null } | null;
-  }) {
+  private serializeCrmItem(
+    item: {
+      id: string;
+      status: RafaCallBookingStatus;
+      crmStatus: RafaCallCrmStatus;
+      crmComments: string | null;
+      crmExpectedImmigrationAt: Date | null;
+      crmImmigrationImmediate: boolean;
+      crmPropertyTypology: RafaCallCrmPropertyTypology | null;
+      crmPreferredCity: string | null;
+      crmHasPet: boolean | null;
+      startsAt: Date;
+      endsAt: Date;
+      timezone: string;
+      origin: string;
+      guestName: string | null;
+      guestWhatsapp: string | null;
+      user: { id: string; name: string | null; whatsapp: string | null } | null;
+    },
+    payments: ReturnType<RafacallCrmService['serializePayment']>[] = [],
+  ) {
     const whatsappDigits = this.extractWhatsappDigits(item);
     const hasVideoCall = this.hasDisplayableVideoCall(item);
+    const paymentsTotal = Math.round(
+      payments.reduce((sum, payment) => sum + payment.amount, 0) * 100,
+    ) / 100;
     return {
       id: item.id,
       bookingStatus: item.status,
@@ -1103,6 +1320,8 @@ export class RafacallCrmService {
       crmPropertyTypology: item.crmPropertyTypology,
       crmPreferredCity: item.crmPreferredCity,
       crmHasPet: item.crmHasPet,
+      payments,
+      paymentsTotal,
       startsAt: item.startsAt.toISOString(),
       endsAt: item.endsAt.toISOString(),
       bookingTimezone: item.timezone,
