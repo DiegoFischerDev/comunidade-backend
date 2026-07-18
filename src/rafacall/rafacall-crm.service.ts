@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  FinanceEntryKind,
   Prisma,
   RafaCallBookingOrigin,
   RafaCallBookingStatus,
@@ -10,6 +11,7 @@ import {
 import {
   RAFA_CALL_CRM_STATUS_LABELS,
   RAFA_CALL_CRM_STATUS_ORDER,
+  CRM_PAYMENT_DEFAULT_TITLE,
   buildCrmPlaceholderSlotTimes,
   formatCrmImmigrationDateKey,
   formatCrmImmigrationForApi,
@@ -517,10 +519,7 @@ export class RafacallCrmService {
       data: { crmExcludedAt: excludedAt },
     });
 
-    await this.prisma.rafaCallCrmPayment.deleteMany({
-      where: { whatsappDigits: whatsapp },
-    });
-
+    // Mantém lançamentos financeiros (aparecem no dashboard Financeiro).
     return { ok: true as const };
   }
 
@@ -528,20 +527,19 @@ export class RafacallCrmService {
     bookingId: string;
     paidAt: string;
     amount: number;
-    receiptImageUrl: string;
+    receiptImageUrl?: string | null;
     comment?: string | null;
   }) {
     const whatsapp = await this.requireCrmWhatsapp(params.bookingId);
     const paidAt = this.parsePaymentPaidAt(params.paidAt);
     const amount = this.parsePaymentAmount(params.amount);
-    const receiptImageUrl = params.receiptImageUrl.trim();
-    if (!receiptImageUrl) {
-      throw new BadRequestException('Indica o comprovante do pagamento.');
-    }
+    const receiptImageUrl = params.receiptImageUrl?.trim() || null;
     const comment = params.comment?.trim() || null;
 
     const created = await this.prisma.rafaCallCrmPayment.create({
       data: {
+        kind: FinanceEntryKind.INCOME,
+        title: CRM_PAYMENT_DEFAULT_TITLE,
         whatsappDigits: whatsapp,
         paidAt,
         amount,
@@ -558,12 +556,16 @@ export class RafacallCrmService {
     paymentId: string;
     paidAt?: string;
     amount?: number;
-    receiptImageUrl?: string;
+    receiptImageUrl?: string | null;
     comment?: string | null;
   }) {
     const whatsapp = await this.requireCrmWhatsapp(params.bookingId);
     const existing = await this.prisma.rafaCallCrmPayment.findFirst({
-      where: { id: params.paymentId, whatsappDigits: whatsapp },
+      where: {
+        id: params.paymentId,
+        whatsappDigits: whatsapp,
+        kind: FinanceEntryKind.INCOME,
+      },
     });
     if (!existing) {
       throw new BadRequestException('Pagamento não encontrado.');
@@ -577,9 +579,7 @@ export class RafacallCrmService {
       data.amount = this.parsePaymentAmount(params.amount);
     }
     if (params.receiptImageUrl !== undefined) {
-      const url = params.receiptImageUrl.trim();
-      if (!url) throw new BadRequestException('Indica o comprovante do pagamento.');
-      data.receiptImageUrl = url;
+      data.receiptImageUrl = params.receiptImageUrl?.trim() || null;
     }
     if (params.comment !== undefined) {
       data.comment = params.comment?.trim() || null;
@@ -600,7 +600,11 @@ export class RafacallCrmService {
   async deleteCrmPayment(params: { bookingId: string; paymentId: string }) {
     const whatsapp = await this.requireCrmWhatsapp(params.bookingId);
     const existing = await this.prisma.rafaCallCrmPayment.findFirst({
-      where: { id: params.paymentId, whatsappDigits: whatsapp },
+      where: {
+        id: params.paymentId,
+        whatsappDigits: whatsapp,
+        kind: FinanceEntryKind.INCOME,
+      },
       select: { id: true },
     });
     if (!existing) {
@@ -1196,14 +1200,19 @@ export class RafacallCrmService {
     if (digits.length === 0) return map;
 
     const rows = await this.prisma.rafaCallCrmPayment.findMany({
-      where: { whatsappDigits: { in: digits } },
+      where: {
+        kind: FinanceEntryKind.INCOME,
+        whatsappDigits: { in: digits },
+      },
       orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
     });
 
     for (const row of rows) {
-      const list = map.get(row.whatsappDigits) ?? [];
+      const key = row.whatsappDigits?.trim();
+      if (!key) continue;
+      const list = map.get(key) ?? [];
       list.push(this.serializePayment(row));
-      map.set(row.whatsappDigits, list);
+      map.set(key, list);
     }
     return map;
   }
@@ -1245,13 +1254,15 @@ export class RafacallCrmService {
 
   private serializePayment(row: {
     id: string;
+    title: string;
     paidAt: Date;
     amount: Prisma.Decimal;
-    receiptImageUrl: string;
+    receiptImageUrl: string | null;
     comment: string | null;
   }) {
     return {
       id: row.id,
+      title: row.title,
       paidAt: formatCrmImmigrationDateKey(row.paidAt) ?? row.paidAt.toISOString().slice(0, 10),
       amount: Number(row.amount),
       receiptImageUrl: row.receiptImageUrl,

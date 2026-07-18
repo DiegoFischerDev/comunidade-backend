@@ -12,9 +12,9 @@ export class CreateRafacallCrmPaymentDto {
   @Min(0.01)
   amount!: number;
 
+  @IsOptional()
   @IsString()
-  @MinLength(1)
-  receiptImageUrl!: string;
+  receiptImageUrl?: string | null;
 
   @IsOptional()
   @IsString()
@@ -35,8 +35,7 @@ export class UpdateRafacallCrmPaymentDto {
 
   @IsOptional()
   @IsString()
-  @MinLength(1)
-  receiptImageUrl?: string;
+  receiptImageUrl?: string | null;
 
   @IsOptional()
   @IsString()

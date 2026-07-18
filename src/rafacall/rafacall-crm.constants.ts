@@ -24,6 +24,9 @@ const CRM_IMMIGRATION_TZ = 'Europe/Lisbon';
 export const CRM_IMMIGRATION_IMMEDIATE_VALUE = 'IMEDIATO';
 export const CRM_IMMIGRATION_NEAR_THRESHOLD_DAYS = 90;
 
+/** Título automático de receitas criadas via pagamentos do CRM. */
+export const CRM_PAYMENT_DEFAULT_TITLE = 'Pagamento Relocation';
+
 const CRM_POST_CALL_STATUSES: RafaCallCrmStatus[] = [
   RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
   RafaCallCrmStatus.AGUARDANDO_ASSINATURA,

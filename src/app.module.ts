@@ -21,6 +21,7 @@ import { LeadsModule } from './leads/leads.module';
 import { LeadDocumentsModule } from './lead-documents/lead-documents.module';
 import { WhatsappScanModule } from './whatsapp-scan/whatsapp-scan.module';
 import { JobOffersModule } from './job-offers/job-offers.module';
+import { FinanceModule } from './finance/finance.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { JobOffersModule } from './job-offers/job-offers.module';
     FinancingQuizModule,
     WhatsappScanModule,
     JobOffersModule,
+    FinanceModule,
   ],
   controllers: [AppController],
   providers: [
