@@ -823,7 +823,7 @@ model JobOffer {
   /** Contactos para candidatura: [{ type: "email"|"phone"|"url", value: string }]. */
   advertiserContacts Json @default("[]") @map("advertiser_contacts")
   publishedAt DateTime @map("published_at")
-  /** Região inferida a partir de `city` (filtro WhatsApp e futuros grupos regionais). */
+  /** Região inferida a partir de `city` (legado / analytics). */
   region      JobOfferRegion @default(SUL)
   /** Imagem do anúncio (screenshot WhatsApp), quando a vaga veio em foto. */
   imageUrl    String?  @map("image_url") @db.VarChar(2048)
@@ -857,13 +857,14 @@ model JobOfferWhatsappScan {
   @@map("job_offer_whatsapp_scans")
 }
 
-/// Grupo de destino fixo por região (NORTE, CENTRO, SUL).
+/// Grupo WhatsApp de destino — todas as ofertas são enviadas a todos os destinos ativos.
 model JobOfferWhatsappDestination {
-  region       JobOfferRegion @id
-  destGroupJid String?        @map("dest_group_jid")
-  destTitle    String?        @map("dest_title")
-  active       Boolean        @default(true)
-  updatedAt    DateTime       @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  destGroupJid String   @unique @map("dest_group_jid")
+  destTitle    String?  @map("dest_title")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   @@map("job_offer_whatsapp_destinations")
 }

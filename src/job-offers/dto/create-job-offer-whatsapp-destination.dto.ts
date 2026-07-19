@@ -6,19 +6,18 @@ import {
   MaxLength,
 } from 'class-validator';
 
-export class UpdateJobOfferWhatsappDestinationDto {
-  @IsOptional()
+export class CreateJobOfferWhatsappDestinationDto {
   @IsString()
   @Matches(/@g\.us$/i, {
     message: 'JID inválido (deve terminar em @g.us).',
   })
   @MaxLength(120)
-  destGroupJid?: string;
+  destGroupJid!: string;
 
   @IsOptional()
   @IsString()
   @MaxLength(160)
-  destTitle?: string | null;
+  destTitle?: string;
 
   @IsOptional()
   @IsBoolean()

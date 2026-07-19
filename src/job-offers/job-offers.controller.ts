@@ -17,7 +17,7 @@ import { IngestMessageDto } from '../whatsapp-scan/dto/ingest-message.dto';
 import { CreateJobOfferDto } from './dto/create-job-offer.dto';
 import { ParseJobOfferFromTextDto } from './dto/parse-job-offer-from-text.dto';
 import { UpdateJobOfferDto } from './dto/update-job-offer.dto';
-import { JobOfferRegion } from '@prisma/client';
+import { CreateJobOfferWhatsappDestinationDto } from './dto/create-job-offer-whatsapp-destination.dto';
 import { CreateJobOfferWhatsappScanDto } from './dto/create-job-offer-whatsapp-scan.dto';
 import { UpdateJobOfferWhatsappScanDto } from './dto/update-job-offer-whatsapp-scan.dto';
 import { UpdateJobOfferWhatsappDestinationDto } from './dto/update-job-offer-whatsapp-destination.dto';
@@ -102,13 +102,25 @@ export class JobOffersController {
     return this.jobOfferWhatsapp.listDestinations();
   }
 
-  @Patch('whatsapp/destinations/:region')
+  @Post('whatsapp/destinations')
+  @Roles(Role.ADMIN)
+  whatsappCreateDestination(@Body() dto: CreateJobOfferWhatsappDestinationDto) {
+    return this.jobOfferWhatsapp.createDestination(dto);
+  }
+
+  @Patch('whatsapp/destinations/:id')
   @Roles(Role.ADMIN)
   whatsappUpdateDestination(
-    @Param('region') region: JobOfferRegion,
+    @Param('id') id: string,
     @Body() dto: UpdateJobOfferWhatsappDestinationDto,
   ) {
-    return this.jobOfferWhatsapp.updateDestination(region, dto);
+    return this.jobOfferWhatsapp.updateDestination(id, dto);
+  }
+
+  @Delete('whatsapp/destinations/:id')
+  @Roles(Role.ADMIN)
+  whatsappDeleteDestination(@Param('id') id: string) {
+    return this.jobOfferWhatsapp.deleteDestination(id);
   }
 
   @Get('whatsapp/evolution-groups')

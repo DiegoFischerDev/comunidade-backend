@@ -4,12 +4,12 @@ import {
 } from './job-offer-published-window.util';
 
 describe('job-offer-published-window', () => {
-  it('listagem inclui até 2 dias civis atrás', () => {
+  it('listagem inclui até 3 dias civis atrás', () => {
     const from = getJobOfferListPublishedFrom();
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const expected = new Date(today);
-    expected.setDate(expected.getDate() - 2);
+    expected.setDate(expected.getDate() - 3);
     expect(from.getTime()).toBe(expected.getTime());
   });
 
