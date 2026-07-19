@@ -542,7 +542,19 @@ export class RedirectLinksService {
     const grain: 'year' | 'month' =
       params.periodGrain === 'month' ? 'month' : 'year';
 
-    const [total, byCountryRaw, byCustomRaw, byHouseRaw, yearsRaw, topCountryRaw] =
+    const monthWindowStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1, 0, 0, 0, 0),
+    );
+    const monthWindowEnd = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999),
+    );
+    const monthsWithClicksSql = [
+      ...kindSql,
+      Prisma.sql`"clicked_at" >= ${monthWindowStart}`,
+      Prisma.sql`"clicked_at" <= ${monthWindowEnd}`,
+    ];
+
+    const [total, byCountryRaw, byCustomRaw, byHouseRaw, yearsRaw, topCountryRaw, monthsWithClicksRaw] =
       await Promise.all([
         this.prisma.redirectClickEvent.count({ where }),
         this.prisma.redirectClickEvent.groupBy({
@@ -577,6 +589,15 @@ export class RedirectLinksService {
           },
           _count: { _all: true },
         }),
+        this.prisma.$queryRaw<{ ym: string; c: number }[]>`
+          SELECT to_char(date_trunc('month', "clicked_at"), 'YYYY-MM') AS ym,
+                 COUNT(*)::int AS c
+          FROM redirect_click_events
+          WHERE ${Prisma.join(monthsWithClicksSql, ' AND ')}
+          GROUP BY 1
+          HAVING COUNT(*) > 0
+          ORDER BY ym ASC
+        `,
       ]);
 
     const topCountries = [...topCountryRaw]
@@ -592,19 +613,19 @@ export class RedirectLinksService {
       .map((r) => Number(r.y))
       .filter((y) => Number.isFinite(y) && y >= 2000 && y <= 2100);
 
-    const recentMonths: { key: string; label: string }[] = [];
-    for (let i = 0; i < 12; i++) {
-      const d = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1),
-      );
-      const y = d.getUTCFullYear();
-      const m = d.getUTCMonth();
-      const key = `${y}-${String(m + 1).padStart(2, '0')}`;
-      recentMonths.push({
-        key,
-        label: `${MONTH_SHORT_PT[m]} ${y}`,
-      });
-    }
+    const recentMonths: { key: string; label: string }[] = monthsWithClicksRaw
+      .map((row) => {
+        const key = row.ym;
+        const [ys, ms] = key.split('-').map((x) => Number(x));
+        if (!Number.isFinite(ys) || !Number.isFinite(ms) || ms < 1 || ms > 12) {
+          return null;
+        }
+        return {
+          key,
+          label: `${MONTH_SHORT_PT[ms - 1]} ${ys}`,
+        };
+      })
+      .filter((m): m is { key: string; label: string } => m != null);
 
     let periodKey = (params.periodKey ?? '').trim();
     if (grain === 'year') {
@@ -618,7 +639,8 @@ export class RedirectLinksService {
         !/^\d{4}-\d{2}$/.test(periodKey) ||
         !recentMonths.some((m) => m.key === periodKey)
       ) {
-        periodKey = recentMonths[0]?.key ??
+        periodKey =
+          recentMonths[recentMonths.length - 1]?.key ??
           `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
       }
     }
