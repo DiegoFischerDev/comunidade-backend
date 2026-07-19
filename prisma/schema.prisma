@@ -898,7 +898,8 @@ model RedirectClickEvent {
   clickedAt DateTime          @default(now()) @map("clicked_at")
 
   /**
-   * Cookie HttpOnly `rd_vid` (UUID) no domínio da API — um contador por visitante por link.
+   * Legado: UUID de visitante quando havia cookie `rd_vid`. Novos hits ficam `null`
+   * (contagem por pedido, sem ID persistente no browser).
    */
   visitorKey String? @map("visitor_key") @db.VarChar(128)
 

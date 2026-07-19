@@ -24,11 +24,23 @@ import { RedirectClickKind } from '@prisma/client';
 import { RedirectLinksService } from './redirect-links.service';
 import { CreatePartnerShareLinkDto } from './dto/create-partner-share-link.dto';
 import { UpdatePartnerShareLinkDto } from './dto/update-partner-share-link.dto';
-import {
-  buildRedirectVisitorSetCookieHeader,
-  resolveRedirectVisitorId,
-} from './redirect-visitor-id';
 import { getCountryCodeFromRequest } from './redirect-request-country';
+
+/** Expira cookie legado `rd_vid` (já não usamos ID de visitante persistente). */
+function clearLegacyRedirectVisitorCookieHeader(): string {
+  const secure =
+    process.env.REDIRECT_COOKIE_SECURE === 'true' ||
+    process.env.NODE_ENV === 'production';
+  const parts = [
+    'rd_vid=',
+    'Path=/',
+    'Max-Age=0',
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+  if (secure) parts.push('Secure');
+  return parts.join('; ');
+}
 
 @Controller('redirect-links')
 export class RedirectLinksController {
@@ -43,6 +55,21 @@ export class RedirectLinksController {
     return this.redirectLinksService.adminOverview({ from, to });
   }
 
+  private parseAdminClickKind(
+    kindRaw?: string,
+  ): RedirectClickKind | undefined {
+    if (kindRaw == null || kindRaw === '') return undefined;
+    if (
+      kindRaw !== RedirectClickKind.CUSTOM_LINK &&
+      kindRaw !== RedirectClickKind.HOUSE
+    ) {
+      throw new BadRequestException(
+        'Parâmetro kind inválido (use CUSTOM_LINK ou HOUSE).',
+      );
+    }
+    return kindRaw as RedirectClickKind;
+  }
+
   @Get('admin/clicks')
   @Roles(Role.ADMIN)
   async adminClicks(
@@ -53,18 +80,7 @@ export class RedirectLinksController {
     @Query('limit') limitRaw?: string,
     @Query('offset') offsetRaw?: string,
   ) {
-    let kind: RedirectClickKind | undefined;
-    if (kindRaw != null && kindRaw !== '') {
-      if (
-        kindRaw !== RedirectClickKind.CUSTOM_LINK &&
-        kindRaw !== RedirectClickKind.HOUSE
-      ) {
-        throw new BadRequestException(
-          'Parâmetro kind inválido (use CUSTOM_LINK ou HOUSE).',
-        );
-      }
-      kind = kindRaw as RedirectClickKind;
-    }
+    const kind = this.parseAdminClickKind(kindRaw);
     const limit = limitRaw != null ? parseInt(limitRaw, 10) : 50;
     const offset = offsetRaw != null ? parseInt(offsetRaw, 10) : 0;
     if (Number.isNaN(limit) || Number.isNaN(offset)) {
@@ -78,6 +94,24 @@ export class RedirectLinksController {
       to: (to ?? '').trim() || undefined,
       limit,
       offset,
+    });
+  }
+
+  @Get('admin/clicks/stats')
+  @Roles(Role.ADMIN)
+  async adminClickStats(
+    @Query('kind') kindRaw?: string,
+    @Query('partnerShareLinkId') partnerShareLinkId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const kind = this.parseAdminClickKind(kindRaw);
+    const linkId = (partnerShareLinkId ?? '').trim();
+    return this.redirectLinksService.adminClickStats({
+      kind: linkId ? undefined : kind,
+      partnerShareLinkId: linkId || undefined,
+      from: (from ?? '').trim() || undefined,
+      to: (to ?? '').trim() || undefined,
     });
   }
 
@@ -169,22 +203,13 @@ export class RedirectLinksController {
     @Param('slug') slug: string,
     @Req() req: Request,
     @Res() res: Response,
-    @Query('rd_vid') rdVid?: string,
   ) {
-    const q = typeof rdVid === 'string' ? rdVid : undefined;
-    const { visitorKey, setCookie } = resolveRedirectVisitorId({
-      cookieHeader: req.headers.cookie,
-      queryRdVid: q,
-    });
     const country = getCountryCodeFromRequest(req);
     const url = await this.redirectLinksService.resolveCustomRedirect(
       slug,
-      visitorKey,
       country,
     );
-    if (setCookie) {
-      res.appendHeader('Set-Cookie', buildRedirectVisitorSetCookieHeader(visitorKey));
-    }
+    res.appendHeader('Set-Cookie', clearLegacyRedirectVisitorCookieHeader());
     return res.redirect(302, url);
   }
 
@@ -194,22 +219,13 @@ export class RedirectLinksController {
     @Param('houseKey') houseKey: string,
     @Req() req: Request,
     @Res() res: Response,
-    @Query('rd_vid') rdVid?: string,
   ) {
-    const q = typeof rdVid === 'string' ? rdVid : undefined;
-    const { visitorKey, setCookie } = resolveRedirectVisitorId({
-      cookieHeader: req.headers.cookie,
-      queryRdVid: q,
-    });
     const country = getCountryCodeFromRequest(req);
     const url = await this.redirectLinksService.resolveHouseRedirect(
       houseKey,
-      visitorKey,
       country,
     );
-    if (setCookie) {
-      res.appendHeader('Set-Cookie', buildRedirectVisitorSetCookieHeader(visitorKey));
-    }
+    res.appendHeader('Set-Cookie', clearLegacyRedirectVisitorCookieHeader());
     return res.redirect(302, url);
   }
 }

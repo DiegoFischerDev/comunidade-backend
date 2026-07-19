@@ -349,20 +349,13 @@ export class RedirectLinksService {
     return { ok: true };
   }
 
-  async adminClickHistory(params: {
+  private buildAdminClickWhere(params: {
     kind?: RedirectClickKind;
-    /** Se definido, lista só cliques deste link personalizado (ignora `kind`). */
     partnerShareLinkId?: string;
-    /** Intervalo opcional em `clickedAt` (AAAA-MM-DD, UTC); ambas vazias = sem filtro. */
     from?: string;
     to?: string;
-    limit: number;
-    offset: number;
-  }) {
-    const take = Math.min(Math.max(params.limit, 1), 200);
-    const skip = Math.max(params.offset, 0);
+  }): Prisma.RedirectClickEventWhereInput {
     const range = this.parseOptionalDateRange(params.from, params.to);
-
     let where: Prisma.RedirectClickEventWhereInput = {};
     if (params.partnerShareLinkId) {
       where = {
@@ -378,7 +371,22 @@ export class RedirectLinksService {
         clickedAt: { gte: range.gte, lte: range.lte },
       };
     }
-    where = mergeRedirectClickMetricsWhere(where);
+    return mergeRedirectClickMetricsWhere(where);
+  }
+
+  async adminClickHistory(params: {
+    kind?: RedirectClickKind;
+    /** Se definido, lista só cliques deste link personalizado (ignora `kind`). */
+    partnerShareLinkId?: string;
+    /** Intervalo opcional em `clickedAt` (AAAA-MM-DD, UTC); ambas vazias = sem filtro. */
+    from?: string;
+    to?: string;
+    limit: number;
+    offset: number;
+  }) {
+    const take = Math.min(Math.max(params.limit, 1), 200);
+    const skip = Math.max(params.offset, 0);
+    const where = this.buildAdminClickWhere(params);
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.redirectClickEvent.findMany({
@@ -433,6 +441,127 @@ export class RedirectLinksService {
       offset: skip,
       hasMore: skip + items.length < total,
     };
+  }
+
+  /**
+   * Agregados para gráficos admin: por país e por destino (link / imóvel).
+   * Respeita os mesmos filtros que `adminClickHistory`.
+   */
+  async adminClickStats(params: {
+    kind?: RedirectClickKind;
+    partnerShareLinkId?: string;
+    from?: string;
+    to?: string;
+    /** Máximo de barras por série (default 12). */
+    top?: number;
+  }) {
+    const top = Math.min(Math.max(params.top ?? 12, 1), 50);
+    const where = this.buildAdminClickWhere(params);
+
+    const [total, byCountryRaw, byCustomRaw, byHouseRaw] = await Promise.all([
+      this.prisma.redirectClickEvent.count({ where }),
+      this.prisma.redirectClickEvent.groupBy({
+        by: ['visitorCountryCode'],
+        where,
+        _count: { _all: true },
+      }),
+      this.prisma.redirectClickEvent.groupBy({
+        by: ['partnerShareLinkId'],
+        where: {
+          AND: [where, { partnerShareLinkId: { not: null } }],
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.redirectClickEvent.groupBy({
+        by: ['partnerHouseId'],
+        where: {
+          AND: [where, { partnerHouseId: { not: null } }],
+        },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const byCountry = [...byCountryRaw]
+      .sort((a, b) => b._count._all - a._count._all)
+      .slice(0, top)
+      .map((r) => ({
+        countryCode: r.visitorCountryCode,
+        count: r._count._all,
+      }));
+
+    const customIds = byCustomRaw
+      .map((r) => r.partnerShareLinkId)
+      .filter((id): id is string => id != null);
+    const houseIds = byHouseRaw
+      .map((r) => r.partnerHouseId)
+      .filter((id): id is string => id != null);
+
+    const [customLinks, houses] = await Promise.all([
+      customIds.length > 0
+        ? this.prisma.partnerShareLink.findMany({
+            where: { id: { in: customIds } },
+            select: { id: true, title: true, slug: true },
+          })
+        : Promise.resolve(
+            [] as { id: string; title: string; slug: string }[],
+          ),
+      houseIds.length > 0
+        ? this.prisma.partnerHouse.findMany({
+            where: { id: { in: houseIds } },
+            select: {
+              id: true,
+              houseId: true,
+              title: true,
+              partner: { select: { name: true } },
+            },
+          })
+        : Promise.resolve(
+            [] as {
+              id: string;
+              houseId: number;
+              title: string;
+              partner: { name: string };
+            }[],
+          ),
+    ]);
+
+    const customMap = new Map(
+      customLinks.map((l) => [l.id, l] as const),
+    );
+    const houseMap = new Map(houses.map((h) => [h.id, h] as const));
+
+    const byDestination = [
+      ...byCustomRaw
+        .filter((r) => r.partnerShareLinkId)
+        .map((r) => {
+          const link = customMap.get(r.partnerShareLinkId!);
+          return {
+            kind: 'CUSTOM_LINK' as const,
+            id: r.partnerShareLinkId!,
+            label: link?.title ?? 'Link removido',
+            sublabel: link ? `slug: ${link.slug}` : null,
+            count: r._count._all,
+          };
+        }),
+      ...byHouseRaw
+        .filter((r) => r.partnerHouseId)
+        .map((r) => {
+          const house = houseMap.get(r.partnerHouseId!);
+          return {
+            kind: 'HOUSE' as const,
+            id: r.partnerHouseId!,
+            label: house
+              ? `${house.title} (#${house.houseId})`
+              : 'Imóvel removido',
+            sublabel: house?.partner.name ?? null,
+            count: r._count._all,
+          };
+        }),
+    ]
+      .sort((a, b) => b.count - a.count)
+      .slice(0, top);
+
+    return { total, byCountry, byDestination };
   }
 
   /** Metadados de um link personalizado (admin). */
@@ -713,11 +842,10 @@ export class RedirectLinksService {
   }
 
   /**
-   * Regista clique (no máximo uma vez por visitante por link — cookie `rd_vid`) e devolve URL wa.me.
+   * Regista um hit de clique (sem ID de visitante persistente) e devolve URL de saída.
    */
   async resolveCustomRedirect(
     slugRaw: string,
-    visitorKey: string,
     visitorCountryCode?: string | null,
   ): Promise<string> {
     const slug = decodeURIComponent(slugRaw).trim();
@@ -730,7 +858,6 @@ export class RedirectLinksService {
     }
     await this.tryRecordRedirectClick({
       kind: RedirectClickKind.CUSTOM_LINK,
-      visitorKey,
       visitorCountryCode: visitorCountryCode ?? null,
       partnerShareLinkId: link.id,
     });
@@ -739,7 +866,6 @@ export class RedirectLinksService {
 
   async resolveHouseRedirect(
     houseKeyRaw: string,
-    visitorKey: string,
     visitorCountryCode?: string | null,
   ): Promise<string> {
     const key = decodeURIComponent(houseKeyRaw).trim();
@@ -764,7 +890,6 @@ export class RedirectLinksService {
     });
     await this.tryRecordRedirectClick({
       kind: RedirectClickKind.HOUSE,
-      visitorKey,
       visitorCountryCode: visitorCountryCode ?? null,
       partnerHouseId: house.id,
     });
@@ -772,13 +897,12 @@ export class RedirectLinksService {
   }
 
   /**
-   * Insere evento de clique uma vez por (`visitorKey`, link/imóvel). Pedidos em paralelo:
-   * índice único parcial + P2002.
+   * Insere evento de clique. Sem `visitorKey` (contagens por hit, não por dispositivo).
+   * Índice único parcial legado só aplica quando `visitor_key` IS NOT NULL.
    */
   private async tryRecordRedirectClick(params: {
-    kind: RedirectClickKind;
-    visitorKey: string;
     visitorCountryCode?: string | null;
+    kind: RedirectClickKind;
     partnerShareLinkId?: string;
     partnerHouseId?: string;
   }): Promise<void> {
@@ -789,7 +913,7 @@ export class RedirectLinksService {
       await this.prisma.redirectClickEvent.create({
         data: {
           kind: params.kind,
-          visitorKey: params.visitorKey,
+          visitorKey: null,
           visitorCountryCode: params.visitorCountryCode ?? null,
           partnerShareLinkId: params.partnerShareLinkId,
           partnerHouseId: params.partnerHouseId,
