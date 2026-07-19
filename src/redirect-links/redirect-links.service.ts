@@ -20,6 +20,22 @@ import {
   mergeRedirectClickMetricsWhere,
 } from './redirect-click-metrics';
 
+/** Abreviaturas de mês em português (UTC, índice 0 = janeiro). */
+const MONTH_SHORT_PT = [
+  'jan',
+  'fev',
+  'mar',
+  'abr',
+  'mai',
+  'jun',
+  'jul',
+  'ago',
+  'set',
+  'out',
+  'nov',
+  'dez',
+] as const;
+
 function normalizeWhatsappDigits(raw: string): string {
   return String(raw ?? '')
     .replace(/\D/g, '')
@@ -354,6 +370,8 @@ export class RedirectLinksService {
     partnerShareLinkId?: string;
     from?: string;
     to?: string;
+    /** ISO 3166-1 alpha-2; se definido, filtra todos os agregados. */
+    visitorCountryCode?: string;
   }): Prisma.RedirectClickEventWhereInput {
     const range = this.parseOptionalDateRange(params.from, params.to);
     let where: Prisma.RedirectClickEventWhereInput = {};
@@ -370,6 +388,10 @@ export class RedirectLinksService {
         ...where,
         clickedAt: { gte: range.gte, lte: range.lte },
       };
+    }
+    const country = (params.visitorCountryCode ?? '').trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(country)) {
+      where = { ...where, visitorCountryCode: country };
     }
     return mergeRedirectClickMetricsWhere(where);
   }
@@ -443,53 +465,84 @@ export class RedirectLinksService {
     };
   }
 
+  private buildRedirectClickKindSqlParts(params: {
+    kind?: RedirectClickKind;
+    partnerShareLinkId?: string;
+    visitorCountryCode?: string;
+  }): Prisma.Sql[] {
+    const parts: Prisma.Sql[] = [
+      Prisma.sql`("visitor_country_code" IS NULL OR "visitor_country_code" NOT IN ('US'))`,
+    ];
+    if (params.partnerShareLinkId) {
+      parts.push(
+        Prisma.sql`"kind" = CAST('CUSTOM_LINK' AS "RedirectClickKind")`,
+      );
+      parts.push(
+        Prisma.sql`"partner_share_link_id" = ${params.partnerShareLinkId}`,
+      );
+    } else if (params.kind === RedirectClickKind.CUSTOM_LINK) {
+      parts.push(
+        Prisma.sql`"kind" = CAST('CUSTOM_LINK' AS "RedirectClickKind")`,
+      );
+    } else if (params.kind === RedirectClickKind.HOUSE) {
+      parts.push(
+        Prisma.sql`"kind" = CAST('HOUSE' AS "RedirectClickKind")`,
+      );
+    }
+    const country = (params.visitorCountryCode ?? '').trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(country)) {
+      parts.push(Prisma.sql`"visitor_country_code" = ${country}`);
+    }
+    return parts;
+  }
+
   /**
    * Agregados para gráficos admin.
-   * Limites só no backend: país/links = 5 horizontais; imóveis/meses = 12 verticais.
-   * `byMonth` = últimos 12 meses (UTC), independentemente do filtro de datas da página.
+   * Limites só no backend: país/links = 5; imóveis = 12; período = 12 meses ou dias do mês.
+   * `byPeriod` ignora o intervalo de datas da página; respeita o filtro de tipo.
    */
   async adminClickStats(params: {
     kind?: RedirectClickKind;
     partnerShareLinkId?: string;
     from?: string;
     to?: string;
+    /** `year` = 12 meses do ano; `month` = dias do mês (YYYY-MM). */
+    periodGrain?: 'year' | 'month';
+    /** Ano `YYYY` ou mês `YYYY-MM`. Se omitido, escolhe o mais recente disponível. */
+    periodKey?: string;
+    /** Filtro global por país (ISO alpha-2). */
+    visitorCountryCode?: string;
   }) {
     const TOP_COUNTRY = 5;
     const TOP_CUSTOM = 5;
     const TOP_HOUSE = 12;
-    const where = this.buildAdminClickWhere(params);
 
+    const countryFilter = (() => {
+      const c = (params.visitorCountryCode ?? '').trim().toUpperCase();
+      return /^[A-Z]{2}$/.test(c) ? c : undefined;
+    })();
+
+    const whereBase = this.buildAdminClickWhere({
+      kind: params.kind,
+      partnerShareLinkId: params.partnerShareLinkId,
+      from: params.from,
+      to: params.to,
+    });
+    const where = this.buildAdminClickWhere({
+      ...params,
+      visitorCountryCode: countryFilter,
+    });
+    const kindSql = this.buildRedirectClickKindSqlParts({
+      kind: params.kind,
+      partnerShareLinkId: params.partnerShareLinkId,
+      visitorCountryCode: countryFilter,
+    });
     const now = new Date();
-    const monthEnd = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999),
-    );
-    const monthStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1, 0, 0, 0, 0),
-    );
 
-    const monthSqlParts: Prisma.Sql[] = [
-      Prisma.sql`"clicked_at" >= ${monthStart}`,
-      Prisma.sql`"clicked_at" <= ${monthEnd}`,
-      Prisma.sql`("visitor_country_code" IS NULL OR "visitor_country_code" NOT IN ('US'))`,
-    ];
-    if (params.partnerShareLinkId) {
-      monthSqlParts.push(
-        Prisma.sql`"kind" = CAST('CUSTOM_LINK' AS "RedirectClickKind")`,
-      );
-      monthSqlParts.push(
-        Prisma.sql`"partner_share_link_id" = ${params.partnerShareLinkId}`,
-      );
-    } else if (params.kind === RedirectClickKind.CUSTOM_LINK) {
-      monthSqlParts.push(
-        Prisma.sql`"kind" = CAST('CUSTOM_LINK' AS "RedirectClickKind")`,
-      );
-    } else if (params.kind === RedirectClickKind.HOUSE) {
-      monthSqlParts.push(
-        Prisma.sql`"kind" = CAST('HOUSE' AS "RedirectClickKind")`,
-      );
-    }
+    const grain: 'year' | 'month' =
+      params.periodGrain === 'month' ? 'month' : 'year';
 
-    const [total, byCountryRaw, byCustomRaw, byHouseRaw, monthAgg] =
+    const [total, byCountryRaw, byCustomRaw, byHouseRaw, yearsRaw, topCountryRaw] =
       await Promise.all([
         this.prisma.redirectClickEvent.count({ where }),
         this.prisma.redirectClickEvent.groupBy({
@@ -511,14 +564,129 @@ export class RedirectLinksService {
           },
           _count: { _all: true },
         }),
-        this.prisma.$queryRaw<{ ym: string; c: number }[]>`
-          SELECT to_char(date_trunc('month', "clicked_at"), 'YYYY-MM') AS ym,
-                 COUNT(*)::int AS c
+        this.prisma.$queryRaw<{ y: number }[]>`
+          SELECT DISTINCT EXTRACT(YEAR FROM "clicked_at")::int AS y
           FROM redirect_click_events
-          WHERE ${Prisma.join(monthSqlParts, ' AND ')}
-          GROUP BY 1
+          WHERE ${Prisma.join(kindSql, ' AND ')}
+          ORDER BY y DESC
         `,
+        this.prisma.redirectClickEvent.groupBy({
+          by: ['visitorCountryCode'],
+          where: {
+            AND: [whereBase, { visitorCountryCode: { not: null } }],
+          },
+          _count: { _all: true },
+        }),
       ]);
+
+    const topCountries = [...topCountryRaw]
+      .filter((r) => r.visitorCountryCode)
+      .sort((a, b) => b._count._all - a._count._all)
+      .slice(0, TOP_COUNTRY)
+      .map((r) => ({
+        countryCode: r.visitorCountryCode as string,
+        count: r._count._all,
+      }));
+
+    const availableYears = yearsRaw
+      .map((r) => Number(r.y))
+      .filter((y) => Number.isFinite(y) && y >= 2000 && y <= 2100);
+
+    const recentMonths: { key: string; label: string }[] = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1),
+      );
+      const y = d.getUTCFullYear();
+      const m = d.getUTCMonth();
+      const key = `${y}-${String(m + 1).padStart(2, '0')}`;
+      recentMonths.push({
+        key,
+        label: `${MONTH_SHORT_PT[m]} ${y}`,
+      });
+    }
+
+    let periodKey = (params.periodKey ?? '').trim();
+    if (grain === 'year') {
+      if (!/^\d{4}$/.test(periodKey) || !availableYears.includes(Number(periodKey))) {
+        periodKey = String(
+          availableYears[0] ?? now.getUTCFullYear(),
+        );
+      }
+    } else {
+      if (
+        !/^\d{4}-\d{2}$/.test(periodKey) ||
+        !recentMonths.some((m) => m.key === periodKey)
+      ) {
+        periodKey = recentMonths[0]?.key ??
+          `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+      }
+    }
+
+    let periodStart: Date;
+    let periodEnd: Date;
+    let truncUnit: 'month' | 'day';
+    let keyFormat: string;
+
+    if (grain === 'year') {
+      const year = Number(periodKey);
+      periodStart = new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
+      periodEnd = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
+      truncUnit = 'month';
+      keyFormat = 'YYYY-MM';
+    } else {
+      const [ys, ms] = periodKey.split('-').map((x) => Number(x));
+      periodStart = new Date(Date.UTC(ys, ms - 1, 1, 0, 0, 0, 0));
+      periodEnd = new Date(Date.UTC(ys, ms, 0, 23, 59, 59, 999));
+      truncUnit = 'day';
+      keyFormat = 'YYYY-MM-DD';
+    }
+
+    const periodSqlParts = [
+      ...kindSql,
+      Prisma.sql`"clicked_at" >= ${periodStart}`,
+      Prisma.sql`"clicked_at" <= ${periodEnd}`,
+    ];
+
+    const periodAgg = await this.prisma.$queryRaw<{ k: string; c: number }[]>`
+      SELECT to_char(
+               date_trunc(${Prisma.raw(`'${truncUnit}'`)}, "clicked_at"),
+               ${Prisma.raw(`'${keyFormat}'`)}
+             ) AS k,
+             COUNT(*)::int AS c
+      FROM redirect_click_events
+      WHERE ${Prisma.join(periodSqlParts, ' AND ')}
+      GROUP BY 1
+    `;
+
+    const periodCounts = new Map<string, number>();
+    for (const row of periodAgg) {
+      periodCounts.set(row.k, Number(row.c) || 0);
+    }
+
+    const byPeriod: { key: string; label: string; count: number }[] = [];
+    if (grain === 'year') {
+      const year = Number(periodKey);
+      for (let m = 0; m < 12; m++) {
+        const key = `${year}-${String(m + 1).padStart(2, '0')}`;
+        byPeriod.push({
+          key,
+          label: MONTH_SHORT_PT[m],
+          count: periodCounts.get(key) ?? 0,
+        });
+      }
+    } else {
+      const [ys, ms] = periodKey.split('-').map((x) => Number(x));
+      const daysInMonth = new Date(Date.UTC(ys, ms, 0)).getUTCDate();
+      for (let day = 1; day <= daysInMonth; day++) {
+        const key = `${periodKey}-${String(day).padStart(2, '0')}`;
+        byPeriod.push({
+          key,
+          label: String(day),
+          count: periodCounts.get(key) ?? 0,
+        });
+      }
+    }
 
     const byCountry = [...byCountryRaw]
       .sort((a, b) => b._count._all - a._count._all)
@@ -611,32 +779,20 @@ export class RedirectLinksService {
       };
     });
 
-    const monthCounts = new Map<string, number>();
-    for (const row of monthAgg) {
-      monthCounts.set(row.ym, Number(row.c) || 0);
-    }
-
-    const byMonth: { month: string; label: string; count: number }[] = [];
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1),
-      );
-      const y = d.getUTCFullYear();
-      const m = d.getUTCMonth();
-      const key = `${y}-${String(m + 1).padStart(2, '0')}`;
-      const label = d.toLocaleDateString('pt-PT', {
-        month: 'short',
-        year: '2-digit',
-        timeZone: 'UTC',
-      });
-      byMonth.push({
-        month: key,
-        label,
-        count: monthCounts.get(key) ?? 0,
-      });
-    }
-
-    return { total, byCountry, byCustomLink, byHouse, byMonth };
+    return {
+      total,
+      byCountry,
+      byCustomLink,
+      byHouse,
+      topCountries,
+      period: {
+        grain,
+        key: periodKey,
+        availableYears,
+        recentMonths,
+        series: byPeriod,
+      },
+    };
   }
 
   /** Metadados de um link personalizado (admin). */

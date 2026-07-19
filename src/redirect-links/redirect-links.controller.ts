@@ -104,14 +104,35 @@ export class RedirectLinksController {
     @Query('partnerShareLinkId') partnerShareLinkId?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('periodGrain') periodGrainRaw?: string,
+    @Query('periodKey') periodKeyRaw?: string,
+    @Query('country') countryRaw?: string,
   ) {
     const kind = this.parseAdminClickKind(kindRaw);
     const linkId = (partnerShareLinkId ?? '').trim();
+    const grainRaw = (periodGrainRaw ?? '').trim().toLowerCase();
+    let periodGrain: 'year' | 'month' | undefined;
+    if (grainRaw === 'year' || grainRaw === 'month') {
+      periodGrain = grainRaw;
+    } else if (grainRaw) {
+      throw new BadRequestException(
+        'periodGrain inválido (use year ou month).',
+      );
+    }
+    const country = (countryRaw ?? '').trim().toUpperCase();
+    if (country && !/^[A-Z]{2}$/.test(country)) {
+      throw new BadRequestException(
+        'country inválido (use código ISO de 2 letras, ex.: PT).',
+      );
+    }
     return this.redirectLinksService.adminClickStats({
       kind: linkId ? undefined : kind,
       partnerShareLinkId: linkId || undefined,
       from: (from ?? '').trim() || undefined,
       to: (to ?? '').trim() || undefined,
+      periodGrain,
+      periodKey: (periodKeyRaw ?? '').trim() || undefined,
+      visitorCountryCode: country || undefined,
     });
   }
 
