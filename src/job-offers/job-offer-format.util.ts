@@ -6,15 +6,22 @@ import {
 } from './job-offer-contacts.util';
 import { formatJobOfferDetailsUrl } from './job-offer-public-url.util';
 
+/** Limite típico de legenda de imagem no WhatsApp. */
+export const JOB_OFFER_WHATSAPP_IMAGE_CAPTION_MAX = 1024;
+
 /** Mensagem padronizada republicada no grupo WhatsApp de destino. */
-export function formatJobOfferWhatsappText(offer: {
-  publicNumber: number;
-  jobFunction: string;
-  city: string;
-  company?: string | null;
-  summary: string;
-  advertiserContacts: JobOfferAdvertiserContact[] | unknown;
-}): string {
+export function formatJobOfferWhatsappText(
+  offer: {
+    publicNumber: number;
+    jobFunction: string;
+    city: string;
+    company?: string | null;
+    summary: string;
+    advertiserContacts: JobOfferAdvertiserContact[] | unknown;
+  },
+  opts?: { maxLength?: number },
+): string {
+  const maxLength = Math.max(200, opts?.maxLength ?? 4000);
   const lines: string[] = [];
   const fn = offer.jobFunction.trim();
   const city = offer.city.trim();
@@ -49,14 +56,16 @@ export function formatJobOfferWhatsappText(offer: {
   const header = lines.join('\n');
   let summary = stripUrlsForWhatsappJobShare(offer.summary ?? '');
   const headerBlock = header.length ? `${header}\n\n` : '';
-  const maxSummaryLen = 4000 - headerBlock.length - footer.length;
+  const maxSummaryLen = maxLength - headerBlock.length - footer.length;
   if (summary && summary.length > maxSummaryLen && maxSummaryLen > 80) {
     summary = `${summary.slice(0, maxSummaryLen - 1).trimEnd()}…`;
+  } else if (summary && maxSummaryLen <= 80) {
+    summary = '';
   }
 
   const parts: string[] = [];
   if (header) parts.push(header);
   if (summary) parts.push(summary);
   parts.push(detailsLine);
-  return parts.join('\n\n').slice(0, 4000);
+  return parts.join('\n\n').slice(0, maxLength);
 }

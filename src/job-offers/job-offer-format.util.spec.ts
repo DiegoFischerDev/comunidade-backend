@@ -64,4 +64,21 @@ describe('formatJobOfferWhatsappText', () => {
     expect(text).not.toContain('*Candidaturas:*');
     expect(text).not.toContain('site-externo.com');
   });
+
+  it('respeita maxLength para legenda de imagem', () => {
+    const text = formatJobOfferWhatsappText(
+      {
+        publicNumber: 9,
+        jobFunction: 'Cozinheiro',
+        city: 'Faro',
+        company: 'Restaurante Sol',
+        summary: 'A'.repeat(2000),
+        advertiserContacts: [{ type: 'phone', value: '912345678' }],
+      },
+      { maxLength: 1024 },
+    );
+    expect(text.length).toBeLessThanOrEqual(1024);
+    expect(text).toContain('Mais detalhes:');
+    expect(text).toContain('/ofertas-trabalho/9');
+  });
 });

@@ -19,7 +19,10 @@ import { CreateJobOfferWhatsappDestinationDto } from './dto/create-job-offer-wha
 import { CreateJobOfferWhatsappScanDto } from './dto/create-job-offer-whatsapp-scan.dto';
 import { UpdateJobOfferWhatsappScanDto } from './dto/update-job-offer-whatsapp-scan.dto';
 import { UpdateJobOfferWhatsappDestinationDto } from './dto/update-job-offer-whatsapp-destination.dto';
-import { formatJobOfferWhatsappText } from './job-offer-format.util';
+import {
+  JOB_OFFER_WHATSAPP_IMAGE_CAPTION_MAX,
+  formatJobOfferWhatsappText,
+} from './job-offer-format.util';
 import { validateParsedJobOffer } from './job-offer-parse-validation.util';
 import {
   type JobOfferDuplicateCompareInput,
@@ -28,6 +31,7 @@ import {
   jobOfferDuplicateLookbackDays,
 } from './job-offer-duplicate.util';
 import { resolveJobOfferRegionFromCity } from './job-offer-region.util';
+import { toAbsoluteMediaUrl } from '../common/public-media-url';
 
 type ScanRow = {
   id: string;
@@ -48,6 +52,23 @@ type DestinationRow = {
   createdAt: Date;
   updatedAt: Date;
 };
+
+function jobOfferImageMimeForSend(
+  imageUrl: string,
+  publicNumber: number,
+): { mimeType: string; fileName: string } {
+  const path = imageUrl.split('?')[0]!.toLowerCase();
+  if (path.endsWith('.png')) {
+    return { mimeType: 'image/png', fileName: `oferta-${publicNumber}.png` };
+  }
+  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) {
+    return { mimeType: 'image/jpeg', fileName: `oferta-${publicNumber}.jpg` };
+  }
+  if (path.endsWith('.gif')) {
+    return { mimeType: 'image/gif', fileName: `oferta-${publicNumber}.gif` };
+  }
+  return { mimeType: 'image/webp', fileName: `oferta-${publicNumber}.webp` };
+}
 
 function mapScanRow(r: ScanRow) {
   return {
@@ -631,12 +652,14 @@ export class JobOfferWhatsappService {
         return 'skipped_no_destination';
       }
 
-      const waText = formatJobOfferWhatsappText(offer);
+      const imageUrl = (offer.imageUrl ?? storedImageUrl)?.trim() || '';
       const sendErrors: string[] = [];
       for (const dest of activeDestinations) {
         try {
-          await this.whatsapp.sendText(dest.destGroupJid, waText, {
-            requireDelivery: true,
+          await this.publishOfferToWhatsappDestination({
+            destGroupJid: dest.destGroupJid,
+            offer,
+            imageUrl,
           });
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -678,6 +701,50 @@ export class JobOfferWhatsappService {
       });
       return 'error_create';
     }
+  }
+
+  /**
+   * Republica a oferta no grupo destino: imagem + texto na mesma mensagem (caption),
+   * ou só texto quando não há imagem.
+   */
+  private async publishOfferToWhatsappDestination(input: {
+    destGroupJid: string;
+    offer: {
+      publicNumber: number;
+      jobFunction: string;
+      city: string;
+      company: string;
+      summary: string;
+      advertiserContacts: unknown;
+    };
+    imageUrl: string;
+  }): Promise<void> {
+    const hasImage = Boolean(input.imageUrl);
+    const waText = formatJobOfferWhatsappText(input.offer, {
+      maxLength: hasImage ? JOB_OFFER_WHATSAPP_IMAGE_CAPTION_MAX : 4000,
+    });
+
+    if (!hasImage) {
+      await this.whatsapp.sendText(input.destGroupJid, waText, {
+        requireDelivery: true,
+      });
+      return;
+    }
+
+    const abs = toAbsoluteMediaUrl(input.imageUrl);
+    const { mimeType, fileName } = jobOfferImageMimeForSend(
+      input.imageUrl,
+      input.offer.publicNumber,
+    );
+    await this.whatsapp.sendMedia({
+      to: input.destGroupJid,
+      caption: waText,
+      mediaUrl: abs,
+      mimeType,
+      fileName,
+      mediaType: 'image',
+      requireDelivery: true,
+    });
   }
 
   /** Ofertas criadas nos últimos N dias com perfil semelhante (republicação no grupo). */
