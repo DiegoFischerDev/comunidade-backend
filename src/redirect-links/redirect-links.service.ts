@@ -444,66 +444,115 @@ export class RedirectLinksService {
   }
 
   /**
-   * Agregados para gráficos admin: por país e por destino (link / imóvel).
-   * Respeita os mesmos filtros que `adminClickHistory`.
+   * Agregados para gráficos admin.
+   * Limites só no backend: país/links = 5 horizontais; imóveis/meses = 12 verticais.
+   * `byMonth` = últimos 12 meses (UTC), independentemente do filtro de datas da página.
    */
   async adminClickStats(params: {
     kind?: RedirectClickKind;
     partnerShareLinkId?: string;
     from?: string;
     to?: string;
-    /** Máximo de barras por série (default 12). */
-    top?: number;
   }) {
-    const top = Math.min(Math.max(params.top ?? 12, 1), 50);
+    const TOP_COUNTRY = 5;
+    const TOP_CUSTOM = 5;
+    const TOP_HOUSE = 12;
     const where = this.buildAdminClickWhere(params);
 
-    const [total, byCountryRaw, byCustomRaw, byHouseRaw] = await Promise.all([
-      this.prisma.redirectClickEvent.count({ where }),
-      this.prisma.redirectClickEvent.groupBy({
-        by: ['visitorCountryCode'],
-        where,
-        _count: { _all: true },
-      }),
-      this.prisma.redirectClickEvent.groupBy({
-        by: ['partnerShareLinkId'],
-        where: {
-          AND: [where, { partnerShareLinkId: { not: null } }],
-        },
-        _count: { _all: true },
-      }),
-      this.prisma.redirectClickEvent.groupBy({
-        by: ['partnerHouseId'],
-        where: {
-          AND: [where, { partnerHouseId: { not: null } }],
-        },
-        _count: { _all: true },
-      }),
-    ]);
+    const now = new Date();
+    const monthEnd = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999),
+    );
+    const monthStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1, 0, 0, 0, 0),
+    );
+
+    const monthSqlParts: Prisma.Sql[] = [
+      Prisma.sql`"clicked_at" >= ${monthStart}`,
+      Prisma.sql`"clicked_at" <= ${monthEnd}`,
+      Prisma.sql`("visitor_country_code" IS NULL OR "visitor_country_code" NOT IN ('US'))`,
+    ];
+    if (params.partnerShareLinkId) {
+      monthSqlParts.push(
+        Prisma.sql`"kind" = CAST('CUSTOM_LINK' AS "RedirectClickKind")`,
+      );
+      monthSqlParts.push(
+        Prisma.sql`"partner_share_link_id" = ${params.partnerShareLinkId}`,
+      );
+    } else if (params.kind === RedirectClickKind.CUSTOM_LINK) {
+      monthSqlParts.push(
+        Prisma.sql`"kind" = CAST('CUSTOM_LINK' AS "RedirectClickKind")`,
+      );
+    } else if (params.kind === RedirectClickKind.HOUSE) {
+      monthSqlParts.push(
+        Prisma.sql`"kind" = CAST('HOUSE' AS "RedirectClickKind")`,
+      );
+    }
+
+    const [total, byCountryRaw, byCustomRaw, byHouseRaw, monthAgg] =
+      await Promise.all([
+        this.prisma.redirectClickEvent.count({ where }),
+        this.prisma.redirectClickEvent.groupBy({
+          by: ['visitorCountryCode'],
+          where,
+          _count: { _all: true },
+        }),
+        this.prisma.redirectClickEvent.groupBy({
+          by: ['partnerShareLinkId'],
+          where: {
+            AND: [where, { partnerShareLinkId: { not: null } }],
+          },
+          _count: { _all: true },
+        }),
+        this.prisma.redirectClickEvent.groupBy({
+          by: ['partnerHouseId'],
+          where: {
+            AND: [where, { partnerHouseId: { not: null } }],
+          },
+          _count: { _all: true },
+        }),
+        this.prisma.$queryRaw<{ ym: string; c: number }[]>`
+          SELECT to_char(date_trunc('month', "clicked_at"), 'YYYY-MM') AS ym,
+                 COUNT(*)::int AS c
+          FROM redirect_click_events
+          WHERE ${Prisma.join(monthSqlParts, ' AND ')}
+          GROUP BY 1
+        `,
+      ]);
 
     const byCountry = [...byCountryRaw]
       .sort((a, b) => b._count._all - a._count._all)
-      .slice(0, top)
+      .slice(0, TOP_COUNTRY)
       .map((r) => ({
         countryCode: r.visitorCountryCode,
         count: r._count._all,
       }));
 
-    const customIds = byCustomRaw
-      .map((r) => r.partnerShareLinkId)
-      .filter((id): id is string => id != null);
-    const houseIds = byHouseRaw
-      .map((r) => r.partnerHouseId)
-      .filter((id): id is string => id != null);
+    const topCustom = [...byCustomRaw]
+      .filter((r) => r.partnerShareLinkId)
+      .sort((a, b) => b._count._all - a._count._all)
+      .slice(0, TOP_CUSTOM);
+    const topHouses = [...byHouseRaw]
+      .filter((r) => r.partnerHouseId)
+      .sort((a, b) => b._count._all - a._count._all)
+      .slice(0, TOP_HOUSE);
+
+    const customIds = topCustom.map((r) => r.partnerShareLinkId!);
+    const houseIds = topHouses.map((r) => r.partnerHouseId!);
 
     const [customLinks, houses] = await Promise.all([
       customIds.length > 0
         ? this.prisma.partnerShareLink.findMany({
             where: { id: { in: customIds } },
-            select: { id: true, title: true, slug: true },
+            select: { id: true, title: true, slug: true, ogImageUrl: true },
           })
         : Promise.resolve(
-            [] as { id: string; title: string; slug: string }[],
+            [] as {
+              id: string;
+              title: string;
+              slug: string;
+              ogImageUrl: string | null;
+            }[],
           ),
       houseIds.length > 0
         ? this.prisma.partnerHouse.findMany({
@@ -512,6 +561,8 @@ export class RedirectLinksService {
               id: true,
               houseId: true,
               title: true,
+              coverImageUrl: true,
+              imageUrls: true,
               partner: { select: { name: true } },
             },
           })
@@ -520,6 +571,8 @@ export class RedirectLinksService {
               id: string;
               houseId: number;
               title: string;
+              coverImageUrl: string | null;
+              imageUrls: string[];
               partner: { name: string };
             }[],
           ),
@@ -530,38 +583,60 @@ export class RedirectLinksService {
     );
     const houseMap = new Map(houses.map((h) => [h.id, h] as const));
 
-    const byDestination = [
-      ...byCustomRaw
-        .filter((r) => r.partnerShareLinkId)
-        .map((r) => {
-          const link = customMap.get(r.partnerShareLinkId!);
-          return {
-            kind: 'CUSTOM_LINK' as const,
-            id: r.partnerShareLinkId!,
-            label: link?.title ?? 'Link removido',
-            sublabel: link ? `slug: ${link.slug}` : null,
-            count: r._count._all,
-          };
-        }),
-      ...byHouseRaw
-        .filter((r) => r.partnerHouseId)
-        .map((r) => {
-          const house = houseMap.get(r.partnerHouseId!);
-          return {
-            kind: 'HOUSE' as const,
-            id: r.partnerHouseId!,
-            label: house
-              ? `${house.title} (#${house.houseId})`
-              : 'Imóvel removido',
-            sublabel: house?.partner.name ?? null,
-            count: r._count._all,
-          };
-        }),
-    ]
-      .sort((a, b) => b.count - a.count)
-      .slice(0, top);
+    const byCustomLink = topCustom.map((r) => {
+      const link = customMap.get(r.partnerShareLinkId!);
+      return {
+        id: r.partnerShareLinkId!,
+        label: link?.title ?? 'Link removido',
+        sublabel: link ? `slug: ${link.slug}` : null,
+        imageUrl: link?.ogImageUrl ?? null,
+        count: r._count._all,
+      };
+    });
 
-    return { total, byCountry, byDestination };
+    const byHouse = topHouses.map((r) => {
+      const house = houseMap.get(r.partnerHouseId!);
+      const imageUrl =
+        house?.coverImageUrl?.trim() ||
+        house?.imageUrls.find((u) => u.trim().length > 0) ||
+        null;
+      return {
+        id: r.partnerHouseId!,
+        label: house
+          ? `${house.title} (#${house.houseId})`
+          : 'Imóvel removido',
+        sublabel: house?.partner.name ?? null,
+        imageUrl,
+        count: r._count._all,
+      };
+    });
+
+    const monthCounts = new Map<string, number>();
+    for (const row of monthAgg) {
+      monthCounts.set(row.ym, Number(row.c) || 0);
+    }
+
+    const byMonth: { month: string; label: string; count: number }[] = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1),
+      );
+      const y = d.getUTCFullYear();
+      const m = d.getUTCMonth();
+      const key = `${y}-${String(m + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('pt-PT', {
+        month: 'short',
+        year: '2-digit',
+        timeZone: 'UTC',
+      });
+      byMonth.push({
+        month: key,
+        label,
+        count: monthCounts.get(key) ?? 0,
+      });
+    }
+
+    return { total, byCountry, byCustomLink, byHouse, byMonth };
   }
 
   /** Metadados de um link personalizado (admin). */
