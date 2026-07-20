@@ -22,6 +22,7 @@ import { LeadDocumentsModule } from './lead-documents/lead-documents.module';
 import { WhatsappScanModule } from './whatsapp-scan/whatsapp-scan.module';
 import { JobOffersModule } from './job-offers/job-offers.module';
 import { FinanceModule } from './finance/finance.module';
+import { WhatsappAutomationsModule } from './whatsapp-automations/whatsapp-automations.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { FinanceModule } from './finance/finance.module';
     WhatsappScanModule,
     JobOffersModule,
     FinanceModule,
+    WhatsappAutomationsModule,
   ],
   controllers: [AppController],
   providers: [

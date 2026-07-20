@@ -87,7 +87,7 @@ export class WhatsAppService {
   private async evolutionMediaField(params: {
     mediaUrl?: string;
     base64?: string;
-    mediaType?: 'image' | 'video' | 'document';
+    mediaType?: 'image' | 'video' | 'document' | 'audio';
   }): Promise<string> {
     const urlTrim = params.mediaUrl?.trim();
     let mediaPayload =
@@ -540,21 +540,16 @@ export class WhatsAppService {
     }
   }
 
-  async sendMedia(params: {
+  /**
+   * Nota de voz (PTT) via Evolution `POST /message/sendWhatsAppAudio/{instance}`.
+   * Preferir Ogg Opus; URL pública ou base64.
+   */
+  async sendWhatsAppAudio(params: {
     to: string;
-    caption: string;
-    /** Obrigatório se `mediaUrl` não for uma URL http(s) válida. */
-    base64?: string;
-    /**
-     * URL pública https (ou http) do ficheiro — Evolution usa isto no JSON em vez de base64
-     * (evita 413 no proxy / limite de body da própria API).
-     */
     mediaUrl?: string;
-    mimeType: string;
-    fileName: string;
-    mediaType?: 'image' | 'video' | 'document';
-    /** Se true, lança erro quando Evolution falhar (ex. grupo de casas). */
+    base64?: string;
     requireDelivery?: boolean;
+    preferredInstance?: string;
   }): Promise<void> {
     const requireDelivery = params.requireDelivery === true;
     const base = this.base;
@@ -573,8 +568,98 @@ export class WhatsAppService {
       return;
     }
 
-    const instances = this.instancesOrdered;
-    const attempts = this.failoverEnabled ? instances : instances.slice(0, 1);
+    let audioPayload: string;
+    try {
+      audioPayload = await this.evolutionMediaField({
+        mediaUrl: params.mediaUrl,
+        base64: params.base64,
+        mediaType: 'audio',
+      });
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error ? e.message : 'sendWhatsAppAudio: erro ao preparar áudio.';
+      this.logger.warn(msg);
+      if (requireDelivery) throw new Error(msg);
+      return;
+    }
+    if (!audioPayload?.length) {
+      const msg = 'sendWhatsAppAudio: falta mediaUrl ou base64.';
+      this.logger.warn(msg);
+      if (requireDelivery) throw new Error(msg);
+      return;
+    }
+
+    const attempts = this.resolveSendInstances(params.preferredInstance);
+    let lastError = '';
+    const reqSignal = this.evolutionRequestSignal();
+
+    for (let i = 0; i < attempts.length; i++) {
+      const instance = attempts[i];
+      try {
+        const res = await fetch(`${base}/message/sendWhatsAppAudio/${instance}`, {
+          method: 'POST',
+          headers: { apikey: key, 'content-type': 'application/json' },
+          body: JSON.stringify({ number, audio: audioPayload }),
+          ...(reqSignal ? { signal: reqSignal } : {}),
+        });
+        if (res.ok) {
+          if (i > 0) {
+            this.logger.warn(
+              `sendWhatsAppAudio entregue via instância de reserva: ${instance}`,
+            );
+          }
+          return;
+        }
+        const body = await res.text().catch(() => '');
+        lastError = `${res.status} ${body}`.trim();
+      } catch (err: unknown) {
+        lastError =
+          err instanceof Error && err.message ? err.message : 'erro de rede';
+      }
+    }
+    this.logger.warn(
+      `Evolution sendWhatsAppAudio falhou em todas as instâncias: ${lastError}`,
+    );
+    if (requireDelivery) {
+      throw new Error(lastError || 'Evolution sendWhatsAppAudio falhou.');
+    }
+  }
+
+  async sendMedia(params: {
+    to: string;
+    caption: string;
+    /** Obrigatório se `mediaUrl` não for uma URL http(s) válida. */
+    base64?: string;
+    /**
+     * URL pública https (ou http) do ficheiro — Evolution usa isto no JSON em vez de base64
+     * (evita 413 no proxy / limite de body da própria API).
+     */
+    mediaUrl?: string;
+    mimeType: string;
+    fileName: string;
+    mediaType?: 'image' | 'video' | 'document' | 'audio';
+    /** Se true, lança erro quando Evolution falhar (ex. grupo de casas). */
+    requireDelivery?: boolean;
+    preferredInstance?: string;
+  }): Promise<void> {
+    const requireDelivery = params.requireDelivery === true;
+    const base = this.base;
+    const key = this.key;
+    if (!base || !key) {
+      const msg =
+        'EVOLUTION_API_URL ou EVOLUTION_API_KEY ausentes; WhatsApp não enviado.';
+      this.logger.warn(msg);
+      if (requireDelivery) throw new Error(msg);
+      return;
+    }
+
+    const number = this.normalizeRecipient(params.to);
+    if (!number) {
+      if (requireDelivery) throw new Error('Destino WhatsApp vazio (number).');
+      return;
+    }
+
+    const attempts = this.resolveSendInstances(params.preferredInstance);
     let lastError = '';
 
     let mediaPayload: string;
@@ -599,6 +684,14 @@ export class WhatsAppService {
 
     const mediaKind = params.mediaType === 'video' ? 'video' : 'default';
     const mediaSignal = this.evolutionRequestSignal(mediaKind);
+    const mediatype =
+      params.mediaType === 'video'
+        ? 'video'
+        : params.mediaType === 'document'
+          ? 'document'
+          : params.mediaType === 'audio'
+            ? 'audio'
+            : 'image';
     for (let i = 0; i < attempts.length; i++) {
       const instance = attempts[i];
       try {
@@ -608,12 +701,7 @@ export class WhatsAppService {
           body: JSON.stringify({
             number,
             // Evolution v2.x valida enum em minúsculas: image | document | video | audio
-            mediatype:
-              params.mediaType === 'video'
-                ? 'video'
-                : params.mediaType === 'document'
-                  ? 'document'
-                  : 'image',
+            mediatype,
             mimetype: params.mimeType,
             caption: params.caption ?? '',
             media: mediaPayload,

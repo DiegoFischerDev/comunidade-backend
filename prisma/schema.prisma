@@ -1114,3 +1114,65 @@ model SupportTicket {
   @@index([status])
   @@map("support_tickets")
 }
+
+/// Tipo de passo numa automação WhatsApp disparada pelo cliente (DM).
+enum WhatsappClientAutomationStepType {
+  TEXT
+  AUDIO
+  IMAGE
+}
+
+/// Automação configurável no admin: frase do cliente (contém) → sequência de respostas.
+model WhatsappClientAutomation {
+  id            String   @id @default(cuid())
+  /// Nome interno (só admin).
+  name          String
+  /// Frase-gatilho: a mensagem do cliente deve *conter* este texto (case-insensitive).
+  triggerPhrase String   @map("trigger_phrase") @db.Text
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  steps   WhatsappClientAutomationStep[]
+  firings WhatsappClientAutomationFiring[]
+
+  @@index([active])
+  @@map("whatsapp_client_automations")
+}
+
+/// Passo ordenado da resposta (texto, nota de voz PTT ou imagem).
+model WhatsappClientAutomationStep {
+  id            String                          @id @default(cuid())
+  automationId  String                          @map("automation_id")
+  automation    WhatsappClientAutomation        @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  sortOrder     Int                             @map("sort_order")
+  type          WhatsappClientAutomationStepType
+  /// Conteúdo de texto (type = TEXT) ou legenda opcional (IMAGE).
+  textContent   String?                         @map("text_content") @db.Text
+  /// URL relativa (`/uploads/...`, `/brand/...`) ou absoluta.
+  mediaUrl      String?                         @map("media_url")
+  mediaMimeType String?                         @map("media_mime_type")
+  mediaFileName String?                         @map("media_file_name")
+  /// Pausa após este passo antes do seguinte (ms).
+  delayMsAfter  Int                             @default(650) @map("delay_ms_after")
+  createdAt     DateTime                        @default(now()) @map("created_at")
+  updatedAt     DateTime                        @updatedAt @map("updated_at")
+
+  @@index([automationId, sortOrder])
+  @@map("whatsapp_client_automation_steps")
+}
+
+/// Registo de disparo — cooldown 1× por contacto / automação / 24h.
+model WhatsappClientAutomationFiring {
+  id                String                   @id @default(cuid())
+  automationId      String                   @map("automation_id")
+  automation        WhatsappClientAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  /// WhatsApp do cliente (só dígitos, com indicativo).
+  whatsappDigits    String                   @map("whatsapp_digits")
+  firedAt           DateTime                 @default(now()) @map("fired_at")
+  /// ID da mensagem Evolution (dedup de reentregas do webhook).
+  externalMessageId String?                  @unique @map("external_message_id")
+
+  @@index([automationId, whatsappDigits, firedAt])
+  @@map("whatsapp_client_automation_firings")
+}
