@@ -205,6 +205,21 @@ export class LeadDocumentsService {
       );
     }
 
+    // No primeiro envio principal, o RGPD assinado é obrigatório e deve ir no email.
+    if (mode === 'main' && !ctx.docsSentAt && !acceptedFields.has('rgpd')) {
+      throw new BadRequestException(
+        'O documento RGPD assinado é obrigatório. Descarrega, assina e anexa-o antes de enviar.',
+      );
+    }
+
+    // Garante que o RGPD aparece primeiro na lista de anexos do email.
+    attachments.sort((a, b) => {
+      const aIsRgpd = a.filename.startsWith(DOC_STANDARD_NAMES.rgpd);
+      const bIsRgpd = b.filename.startsWith(DOC_STANDARD_NAMES.rgpd);
+      if (aIsRgpd === bIsRgpd) return 0;
+      return aIsRgpd ? -1 : 1;
+    });
+
     // Envia o email ao parceiro (com CC para o lead) — se falhar, abortamos antes de
     // persistir a submissão para não criar lixo na DB.
     // Aceitamos override de nome/email feitos pelo lead na própria página de upload (caso

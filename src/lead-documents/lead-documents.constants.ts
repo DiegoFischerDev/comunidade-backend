@@ -47,6 +47,7 @@ export function isVinculoLaboral(value: unknown): value is VinculoLaboral {
  * (.pdf/.jpg/.jpeg/.png) ao montar os attachments do email.
  */
 export const DOC_STANDARD_NAMES: Record<DocFieldName, string> = {
+  rgpd: 'RGPD assinado',
   cartao_residencia_ou_passaporte: 'Cartão de residência ou passaporte',
   recibo_vencimento_1: 'Recibo de vencimento 1',
   recibo_vencimento_2: 'Recibo de vencimento 2',
@@ -67,6 +68,7 @@ export const DOC_STANDARD_NAMES: Record<DocFieldName, string> = {
 
 /** Conjunto fechado de chaves de campo aceites no upload. */
 export type DocFieldName =
+  | 'rgpd'
   | 'cartao_residencia_ou_passaporte'
   | 'recibo_vencimento_1'
   | 'recibo_vencimento_2'
