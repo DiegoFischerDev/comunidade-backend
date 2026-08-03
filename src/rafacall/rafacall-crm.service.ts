@@ -831,8 +831,8 @@ export class RafacallCrmService {
   }
 
   private get slotDurationMinutes(): number {
-    const value = Number(process.env.RAFA_CALL_DURATION_MINUTES ?? 40);
-    return Number.isFinite(value) && value > 0 ? value : 40;
+    const value = Number(process.env.RAFA_CALL_DURATION_MINUTES ?? 15);
+    return Number.isFinite(value) && value > 0 ? value : 15;
   }
 
   private get slotBufferMinutes(): number {

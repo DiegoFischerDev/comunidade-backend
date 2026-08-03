@@ -135,8 +135,8 @@ export class RafacallBookingService {
   ) {}
 
   private get durationMinutes(): number {
-    const v = Number(process.env.RAFA_CALL_DURATION_MINUTES ?? 40);
-    return Number.isFinite(v) && v > 0 ? v : 30;
+    const v = Number(process.env.RAFA_CALL_DURATION_MINUTES ?? 15);
+    return Number.isFinite(v) && v > 0 ? v : 15;
   }
   private get bufferMinutes(): number {
     const v = Number(process.env.RAFA_CALL_BUFFER_MINUTES ?? 10);
