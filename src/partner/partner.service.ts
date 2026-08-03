@@ -60,6 +60,7 @@ import {
 } from './partner-public-slug';
 import { PartnerContactLinksService } from './partner-contact-links.service';
 import {
+  FINANCIAMENTO_CATEGORY_SLUG,
   isPartnerCategorySlug,
   RELOCATION_CATEGORY_SLUG,
 } from './partner-categories';
@@ -771,6 +772,7 @@ export class PartnerService {
     let oldLogoToDelete: string | null = null;
     let oldBackgroundToDelete: string | null = null;
     let oldCatalogVideoToDelete: string | null = null;
+    let oldRgpdDocumentToDelete: string | null = null;
     const oldCatalogImages = partner.catalogImageUrls ?? [];
 
     const nextCatalogVideoUrl =
@@ -783,6 +785,27 @@ export class PartnerService {
       partner.catalogVideoUrl !== nextCatalogVideoUrl
     ) {
       oldCatalogVideoToDelete = partner.catalogVideoUrl;
+    }
+
+    const nextRgpdDocumentUrl =
+      dto.rgpdDocumentUrl !== undefined
+        ? dto.rgpdDocumentUrl.trim() || null
+        : partner.rgpdDocumentUrl;
+    if (
+      dto.rgpdDocumentUrl !== undefined &&
+      partner.rgpdDocumentUrl &&
+      partner.rgpdDocumentUrl !== nextRgpdDocumentUrl
+    ) {
+      oldRgpdDocumentToDelete = partner.rgpdDocumentUrl;
+    }
+    if (
+      dto.rgpdDocumentUrl !== undefined &&
+      nextRgpdDocumentUrl &&
+      partner.categorySlug !== FINANCIAMENTO_CATEGORY_SLUG
+    ) {
+      throw new ForbiddenException(
+        'Apenas intermediárias de crédito (categoria financiamento) podem definir documento RGPD.',
+      );
     }
 
     if (dto.logoUrl && dto.logoUrl !== partner.logoUrl) {
@@ -871,6 +894,7 @@ export class PartnerService {
               dto.backgroundImageUrl ?? partner.backgroundImageUrl,
             catalogImageUrls: newCatalogImages,
             catalogVideoUrl: nextCatalogVideoUrl,
+            rgpdDocumentUrl: nextRgpdDocumentUrl,
             instagram:
               dto.instagram !== undefined ? dto.instagram : partner.instagram,
             billingName:
@@ -923,6 +947,10 @@ export class PartnerService {
       await this.houseImages.deleteStoredUrl(oldCatalogVideoToDelete);
     }
 
+    if (oldRgpdDocumentToDelete) {
+      await this.houseImages.deleteStoredUrl(oldRgpdDocumentToDelete);
+    }
+
     return updated;
   }
 
@@ -953,6 +981,65 @@ export class PartnerService {
     const updated = await this.prisma.partner.update({
       where: { id: partner.id },
       data: { catalogVideoUrl: publicUrl },
+    });
+
+    if (oldUrl && oldUrl !== publicUrl) {
+      await this.houseImages.deleteStoredUrl(oldUrl);
+    }
+
+    return updated;
+  }
+
+  /**
+   * Upload do PDF RGPD da intermediária de crédito (`categorySlug = financiamento`).
+   * Substitui o documento anterior (se existir) e limpa o ficheiro antigo do storage.
+   */
+  async uploadMyRgpdDocument(
+    userId: string,
+    pdfFile: Express.Multer.File | undefined,
+  ) {
+    if (!pdfFile?.size) {
+      throw new BadRequestException(
+        'Envia um ficheiro PDF no campo «document».',
+      );
+    }
+
+    const partner = await this.prisma.partner.findUnique({
+      where: { userId },
+    });
+    if (!partner) {
+      throw new NotFoundException('Parceiro não encontrado para este usuário.');
+    }
+    if (partner.categorySlug !== FINANCIAMENTO_CATEGORY_SLUG) {
+      throw new ForbiddenException(
+        'Apenas intermediárias de crédito (categoria financiamento) podem carregar documento RGPD.',
+      );
+    }
+
+    const oldUrl = partner.rgpdDocumentUrl;
+
+    let publicUrl: string;
+    try {
+      ({ publicUrl } = await this.houseImages.storePartnerRgpdPdf(pdfFile));
+    } catch (e) {
+      const code = e instanceof Error ? e.message : '';
+      if (code === 'invalid_rgpd_pdf') {
+        throw new BadRequestException(
+          'O ficheiro tem de ser um PDF válido.',
+        );
+      }
+      if (code === 'empty_rgpd_pdf') {
+        throw new BadRequestException('O ficheiro PDF está vazio.');
+      }
+      throw e;
+    }
+    if (pdfFile.path) {
+      await unlink(pdfFile.path).catch(() => undefined);
+    }
+
+    const updated = await this.prisma.partner.update({
+      where: { id: partner.id },
+      data: { rgpdDocumentUrl: publicUrl },
     });
 
     if (oldUrl && oldUrl !== publicUrl) {

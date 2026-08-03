@@ -46,6 +46,11 @@ export class UpdatePartnerProfileDto {
   @IsString()
   catalogVideoUrl?: string;
 
+  /** Definir vazio remove o PDF RGPD da intermediária. */
+  @IsOptional()
+  @IsString()
+  rgpdDocumentUrl?: string;
+
   @IsOptional()
   @IsString()
   @ValidateIf((_o, v) => v !== undefined && v !== null && v !== '')

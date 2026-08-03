@@ -406,6 +406,70 @@ export class HouseImageStorageService {
     return { publicUrl };
   }
 
+  /**
+   * PDF RGPD / Informação Prévia da intermediária de crédito.
+   * Aceita apenas PDF (MIME ou extensão). Grava em R2 (`partners/rgpd/…`) ou
+   * `uploads/partners/rgpd/…` em disco.
+   */
+  async storePartnerRgpdPdf(
+    file: Express.Multer.File,
+  ): Promise<{ publicUrl: string }> {
+    const buf = await this.readBuffer(file);
+    if (!buf?.length) {
+      throw new Error('empty_rgpd_pdf');
+    }
+    const mime = (file.mimetype || '').toLowerCase();
+    const name = (file.originalname || '').toLowerCase();
+    const isPdf =
+      mime === 'application/pdf' ||
+      mime === 'application/x-pdf' ||
+      name.endsWith('.pdf');
+    if (!isPdf) {
+      throw new Error('invalid_rgpd_pdf');
+    }
+    // Magic number %PDF
+    const header = buf.subarray(0, 4).toString('ascii');
+    if (header !== '%PDF') {
+      throw new Error('invalid_rgpd_pdf');
+    }
+    const publicUrl = await this.uploadUnderPrefix(
+      buf,
+      'application/pdf',
+      'partners/rgpd',
+      '.pdf',
+    );
+    return { publicUrl };
+  }
+
+  /** Upload genérico sob um prefixo (R2 key ou `uploads/<prefix>/…`). */
+  private async uploadUnderPrefix(
+    body: Buffer,
+    contentType: string,
+    keyPrefix: string,
+    extension: string,
+  ): Promise<string> {
+    const key = `${keyPrefix}/${Date.now()}-${randomBytes(8).toString('hex')}${extension}`;
+    const r2 = this.getR2Context();
+    if (r2) {
+      await r2.client.send(
+        new PutObjectCommand({
+          Bucket: r2.bucket,
+          Key: key,
+          Body: body,
+          ContentType: contentType,
+          CacheControl: 'public, max-age=31536000, immutable',
+        }),
+      );
+      return `${r2.publicBase}/${key}`;
+    }
+
+    const dir = join(process.cwd(), 'uploads', ...keyPrefix.split('/'));
+    await mkdir(dir, { recursive: true });
+    const fileName = `${Date.now()}-${randomBytes(8).toString('hex')}${extension}`;
+    await writeFile(join(dir, fileName), body);
+    return `/uploads/${keyPrefix}/${fileName}`;
+  }
+
   private async uploadBinary(
     body: Buffer,
     contentType: string,

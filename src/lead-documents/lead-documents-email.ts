@@ -175,7 +175,7 @@ export function buildLeadDocumentsEmailHtml(input: {
 
         <hr style="border:0;border-top:1px solid ${BORDER};margin:22px 0 16px;" />
         <p style="margin:0;font-size:12px;color:${TEXT_MUTED};line-height:1.5;">
-          Este email foi gerado automaticamente quando concluiu o envio de documentos na Comunidade Rafa Portugal. Apenas a gestora de crédito tem acesso aos documentos.       </p>
+          Este email foi gerado automaticamente quando concluiu o envio de documentos na Comunidade Rafa Portugal. Apenas a intermediadora de crédito tem acesso aos documentos.       </p>
       </div>
     </div>
   `;

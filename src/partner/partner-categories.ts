@@ -33,3 +33,6 @@ export function partnerCategoryName(slug: string | null | undefined): string | n
 
 /** Slug da categoria Relocation — exportado em constante para uso direto nas queries. */
 export const RELOCATION_CATEGORY_SLUG: PartnerCategorySlug = 'relocation';
+
+/** Slug da categoria Financiamento (intermediárias de crédito). */
+export const FINANCIAMENTO_CATEGORY_SLUG: PartnerCategorySlug = 'financiamento';

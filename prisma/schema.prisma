@@ -581,6 +581,10 @@ model Partner {
   catalogImageUrls           String[] @default([]) @map("catalog_image_urls")
   /// Vídeo único exibido na página pública antes do carrossel de imagens (URL absoluta ou `/uploads/...`).
   catalogVideoUrl            String?  @map("catalog_video_url")
+  /// PDF de Informação Prévia / RGPD da intermediária de crédito (`categorySlug = financiamento`).
+  /// Quando definido, o lead em `/financiamento/documentos` tem de descarregar, assinar e anexar.
+  /// Quando `null`, essa etapa não é exibida nem exigida.
+  rgpdDocumentUrl            String?  @map("rgpd_document_url")
   instagram                  String?  @map("instagram")
   /// Dados de faturação (para emissão de fatura da comissão em Portugal)
   billingName                String?  @map("billing_name")

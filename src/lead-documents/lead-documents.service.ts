@@ -36,6 +36,8 @@ export type LeadDocumentsContext = {
     logoUrl: string | null;
     shortDescription: string | null;
     email: string | null;
+    /** PDF RGPD da intermediária; `null` = etapa RGPD não aplicável. */
+    rgpdDocumentUrl: string | null;
   };
   docsSentAt: Date | null;
   lastSubmissionAt: Date | null;
@@ -78,6 +80,7 @@ export class LeadDocumentsService {
             whatsapp: true,
             logoUrl: true,
             shortDescription: true,
+            rgpdDocumentUrl: true,
             user: { select: { email: true } },
           },
         },
@@ -107,6 +110,7 @@ export class LeadDocumentsService {
         logoUrl: lead.partner.logoUrl,
         shortDescription: lead.partner.shortDescription,
         email: lead.partner.user?.email ?? null,
+        rgpdDocumentUrl: lead.partner.rgpdDocumentUrl?.trim() || null,
       },
       docsSentAt: lead.docsSentAt,
       lastSubmissionAt: lastSubmission?.submittedAt ?? null,
@@ -205,8 +209,15 @@ export class LeadDocumentsService {
       );
     }
 
-    // No primeiro envio principal, o RGPD assinado é obrigatório e deve ir no email.
-    if (mode === 'main' && !ctx.docsSentAt && !acceptedFields.has('rgpd')) {
+    // No primeiro envio principal, o RGPD assinado é obrigatório apenas se a
+    // intermediária atribuída tiver um documento RGPD configurado.
+    const requiresRgpd = !!ctx.partner.rgpdDocumentUrl;
+    if (
+      requiresRgpd &&
+      mode === 'main' &&
+      !ctx.docsSentAt &&
+      !acceptedFields.has('rgpd')
+    ) {
       throw new BadRequestException(
         'O documento RGPD assinado é obrigatório. Descarrega, assina e anexa-o antes de enviar.',
       );

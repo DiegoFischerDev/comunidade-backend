@@ -204,6 +204,25 @@ export class PartnerController {
     return this.partnerService.uploadMyCatalogVideo(user.id, video);
   }
 
+  /** PDF RGPD da intermediária de crédito — multipart campo `document`. */
+  @Post('me/rgpd-document')
+  @Roles(Role.PARTNER)
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('document', {
+      limits: {
+        fileSize: 15 * 1024 * 1024,
+      },
+      storage: memoryStorage(),
+    }),
+  )
+  async uploadMyRgpdDocument(
+    @CurrentUser() user: { id: string },
+    @UploadedFile() document: Express.Multer.File | undefined,
+  ) {
+    return this.partnerService.uploadMyRgpdDocument(user.id, document);
+  }
+
   @Get('me/services')
   @Roles(Role.PARTNER)
   async listMyServices(@CurrentUser() user: { id: string }) {
