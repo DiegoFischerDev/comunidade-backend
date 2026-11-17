@@ -115,7 +115,7 @@ export class JoanaService {
     }
   }
 
-  /** Guarda a mensagem e deixa o flush dos 30s responder. */
+  /** Guarda a mensagem e deixa o flush dos 15s responder. */
   async bufferInbound(input: {
     whatsapp: string;
     text: string;

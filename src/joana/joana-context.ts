@@ -51,7 +51,7 @@ export function joanaWhatsappInstance(): string {
 }
 
 export function joanaDebounceMs(): number {
-  const raw = Number(process.env.JOANA_DEBOUNCE_MS ?? 30_000);
-  if (!Number.isFinite(raw) || raw < 0) return 30_000;
+  const raw = Number(process.env.JOANA_DEBOUNCE_MS ?? 15_000);
+  if (!Number.isFinite(raw) || raw < 0) return 15_000;
   return Math.min(raw, 120_000);
 }
