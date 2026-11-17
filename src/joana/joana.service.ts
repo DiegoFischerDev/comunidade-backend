@@ -354,10 +354,10 @@ export class JoanaService {
         );
         return null;
       }
-      return `Posso te passar o link para agendar a videochamada com o Rafa. São 20 a 30 minutos, então vale ter as dúvidas anotadas: ${link}`;
+      return `Posso te passar o link para agendar a videochamada com a Rafa. São 20 a 30 minutos, então vale ter as dúvidas anotadas: ${link}`;
     }
     if (status === RafaCallCrmStatus.IMIGRACAO_LONGE) {
-      return 'Como sua viagem ainda está a dois meses ou mais, o Rafa ainda não consegue te acompanhar na busca do imóvel agora. Quando faltarem menos de dois meses, é a hora certa de agendar a videochamada e começar a procura. Até lá, prepare o passaporte, o visto e compre a passagem. Quando estiver mais perto, me chama de novo que eu te mando o link para agendar.';
+      return 'Como sua viagem ainda está a dois meses ou mais, a Rafa ainda não consegue te acompanhar na busca do imóvel agora. Quando faltarem menos de dois meses, é a hora certa de agendar a videochamada e começar a procura. Até lá, prepare o passaporte, o visto e compre a passagem. Quando estiver mais perto, me chama de novo que eu te mando o link para agendar.';
     }
     return null;
   }
@@ -631,7 +631,7 @@ function composeReply(reply: string, append: string[]): string {
   return composeJoanaReply(
     reply,
     append,
-    'Oi, eu sou a Joana, atendente virtual do Rafa. O Rafa ajuda na busca do imóvel em Portugal, nas visitas por videochamada e na negociação com os proprietários.',
+    'Oi, eu sou a Joana, atendente virtual da Rafa. A Rafa ajuda na busca do imóvel em Portugal, nas visitas por videochamada e na negociação com os proprietários.',
   );
 }
 

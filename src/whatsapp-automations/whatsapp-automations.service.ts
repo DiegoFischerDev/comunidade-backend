@@ -147,7 +147,9 @@ export class WhatsappAutomationsService {
       const active = await this.getActiveAutomationsCached();
       const scripted = findExactTrigger(active, text);
       if (scripted) {
-        const status = await this.dispatchAutomation(scripted, dto, whatsapp);
+        const status = await this.dispatchAutomation(scripted, dto, whatsapp, {
+          ignoreCooldown: true,
+        });
         if (status === 'sent') {
           const assistantText = scriptedStepText(scripted.steps);
           try {
@@ -194,17 +196,20 @@ export class WhatsappAutomationsService {
     matched: AutomationWithSteps,
     dto: WhatsappClientAutomationInboundDto,
     whatsapp: string,
+    options?: { ignoreCooldown?: boolean },
   ): Promise<string> {
-    const since = new Date(Date.now() - COOLDOWN_MS);
-    const recent = await this.prisma.whatsappClientAutomationFiring.findFirst({
-      where: {
-        automationId: matched.id,
-        whatsappDigits: whatsapp,
-        firedAt: { gte: since },
-      },
-      select: { id: true },
-    });
-    if (recent) return 'ignored_cooldown';
+    if (!options?.ignoreCooldown) {
+      const since = new Date(Date.now() - COOLDOWN_MS);
+      const recent = await this.prisma.whatsappClientAutomationFiring.findFirst({
+        where: {
+          automationId: matched.id,
+          whatsappDigits: whatsapp,
+          firedAt: { gte: since },
+        },
+        select: { id: true },
+      });
+      if (recent) return 'ignored_cooldown';
+    }
 
     const externalMessageId = dto.externalMessageId?.trim() || null;
     try {

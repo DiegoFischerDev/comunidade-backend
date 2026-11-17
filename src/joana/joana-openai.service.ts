@@ -37,7 +37,8 @@ export class JoanaOpenAiService {
     const system = [
       input.context.trim() || JOANA_DEFAULT_CONTEXT,
       '',
-      'Você responde no WhatsApp. A resposta em "reply" responde só ao que a pessoa perguntou ou, se for o primeiro contacto, apresenta-se como Joana e explica o serviço do Rafa em poucas frases.',
+      'Você responde no WhatsApp. A resposta em "reply" responde só ao que a pessoa perguntou ou, se for o primeiro contacto, apresenta-se como Joana e explica o serviço da Rafa em poucas frases.',
+      'A Rafa é mulher. Trata sempre no feminino: a Rafa, ela, dela. Nunca escrevas "o Rafa", "ele" ou "dele" para falar da Rafa.',
       'A resposta em "reply" não faz nenhuma pergunta e não usa ponto de interrogação. O sistema acrescenta a única pergunta depois.',
       'Não diga que gravou um dado e não escrevas "Anotei". Não invente preço nem horário.',
       'Devolva só JSON com as chaves: reply, interested, confirmation, name, immigration, cities, typology, hasPet.',
