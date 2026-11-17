@@ -29,6 +29,7 @@ import {
   isPlaceholderLeadName,
   missingFieldQuestion,
   shouldOfferSchedulingLink,
+  withInferredConfirmation,
   withInferredName,
   type JoanaCrmPatch,
   type JoanaProfile,
@@ -403,7 +404,8 @@ export class JoanaService {
           profileSummary: describeProfile(profile, lead.kind, {
             hasScheduledVideoCall,
           }),
-          pendingQuestion: pending?.question ?? null,
+          pendingQuestion:
+            pending?.field === 'immigration' ? pending.question : null,
           combinedText: combined,
         });
         reply = interpreted.reply;
@@ -446,9 +448,13 @@ export class JoanaService {
         return;
       }
 
-      const proposalWithName = withInferredName({
+      const proposalWithInferences = withInferredName({
         profile,
-        proposal,
+        proposal: withInferredConfirmation({
+          pending,
+          proposal,
+          message: combined,
+        }),
         message: combined,
       });
 
@@ -457,7 +463,7 @@ export class JoanaService {
         excluded: lead.kind === 'excluded',
         profile,
         pending,
-        proposal: proposalWithName,
+        proposal: proposalWithInferences,
       });
 
       let farGuidanceSent = row.farGuidanceSent;

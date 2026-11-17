@@ -173,6 +173,23 @@ const NON_PERSON_NAME = new Set([
   'boa noite',
 ]);
 
+function isPlausiblePersonName(candidate: string): boolean {
+  if (candidate.length < 2 || candidate.length > 40) return false;
+  if (isPlaceholderLeadName(candidate)) return false;
+  if (NON_PERSON_NAME.has(candidate.toLowerCase())) return false;
+  if (candidate.split(/\s+/).length > 4) return false;
+  if (!/^[\p{L}][\p{L}\s'-]*$/u.test(candidate)) return false;
+  if (parseJoanaTypology(candidate)) return false;
+
+  const asImmigration = canonicalImmigration(candidate);
+  if (asImmigration !== null && asImmigration !== '') return false;
+
+  const asRent = parseDesiredRent(candidate);
+  if (typeof asRent === 'number') return false;
+
+  return true;
+}
+
 /**
  * Lê um nome pessoal numa resposta curta (ex.: «Bruna»), sem depender da OpenAI.
  * Só aceita uma linha simples; rejeita sim/não, datas, tipologias e valores.
@@ -185,31 +202,50 @@ export function inferPersonNameFromMessage(raw: string): string | null {
   if (lines.length !== 1) return null;
 
   const candidate = normalizePersonName(lines[0]!);
-  if (candidate.length < 2 || candidate.length > 40) return null;
-  if (isPlaceholderLeadName(candidate)) return null;
-  if (NON_PERSON_NAME.has(candidate.toLowerCase())) return null;
-  if (candidate.split(/\s+/).length > 4) return null;
-  if (!/^[\p{L}][\p{L}\s'-]*$/u.test(candidate)) return null;
-  if (parseJoanaTypology(candidate)) return null;
-
-  const asImmigration = canonicalImmigration(candidate);
-  if (asImmigration !== null && asImmigration !== '') return null;
-
-  const asRent = parseDesiredRent(candidate);
-  if (typeof asRent === 'number') return null;
-
+  if (!isPlausiblePersonName(candidate)) return null;
   return candidate;
 }
 
 /**
- * Se o próximo dado em falta é o nome e a mensagem é um nome plausível,
- * preenche `proposal.name` mesmo quando o modelo omitiu a chave.
+ * Correção explícita de nome («me chamo Paulo», «meu nome é Ana Clara»),
+ * mesmo quando a ficha já tem outro nome.
+ */
+export function inferNameCorrectionFromMessage(raw: string): string | null {
+  const text = raw.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+
+  const patterns = [
+    /(?:eu\s+)?me\s+chamo\s+([^\n,.!?]+)/iu,
+    /(?:o\s+)?meu\s+nome\s+[eé]\s+([^\n,.!?]+)/iu,
+    /pode\s+me\s+chamar(?:\s+de)?\s+([^\n,.!?]+)/iu,
+    /(?:na\s+verdade|agora)\s+(?:[eé]\s+|me\s+chamo\s+)([^\n,.!?]+)/iu,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const candidate = normalizePersonName(match[1]!);
+    if (isPlausiblePersonName(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Preenche `proposal.name` quando:
+ * - o próximo dado em falta é o nome e a mensagem é um nome curto; ou
+ * - a pessoa corrige o nome de forma explícita («me chamo Paulo»),
+ *   mesmo que a ficha já tenha outro valor (a última informação manda).
  */
 export function withInferredName(input: {
   profile: JoanaProfile;
   proposal: JoanaProposal;
   message: string;
 }): JoanaProposal {
+  const correction = inferNameCorrectionFromMessage(input.message);
+  if (correction) {
+    return { ...input.proposal, name: correction };
+  }
+
   if (nextMissingField(input.profile) !== 'name') return input.proposal;
   const inferred = inferPersonNameFromMessage(input.message);
   if (!inferred) return input.proposal;
@@ -321,10 +357,24 @@ function proposedRaw(proposal: JoanaProposal, field: JoanaField): string | undef
   }
 }
 
+/** Confirmação só da data de imigração (único campo que pede sim/não). */
+export function immigrationConfirmationQuestion(
+  value: string,
+  hadPrevious: boolean,
+): string {
+  if (!value) return 'Quer deixar a data prevista de imigração em branco?';
+  const label = formatImmigrationLabel(value);
+  if (hadPrevious) {
+    return `Quer atualizar sua data prevista de imigração para ${label}?`;
+  }
+  return `Confirma a data prevista de imigração em ${label}?`;
+}
+
+/** @deprecated Mantido para testes antigos de confirmação; só a data usa confirmação. */
 export function confirmationQuestion(field: JoanaField, value: string): string {
   switch (field) {
     case 'immigration':
-      return `Quer atualizar sua data prevista de imigração para ${formatImmigrationLabel(value)}?`;
+      return immigrationConfirmationQuestion(value, true);
     case 'visa':
       return `Quer atualizar a informação de visto para ${value === 'true' ? 'sim' : 'não'}?`;
     case 'cities':
@@ -348,6 +398,31 @@ export function confirmationQuestion(field: JoanaField, value: string): string {
         ? `Quer atualizar seu nome para ${value}?`
         : 'Quer deixar o nome em branco?';
   }
+}
+
+/**
+ * Se há confirmação de data pendente e a mensagem é um sim/não curto,
+ * preenche `confirmation` sem depender da OpenAI.
+ */
+export function withInferredConfirmation(input: {
+  pending: PendingConfirmation | null;
+  proposal: JoanaProposal;
+  message: string;
+}): JoanaProposal {
+  if (!input.pending || input.pending.field !== 'immigration') {
+    return input.proposal;
+  }
+  if (input.proposal.confirmation) return input.proposal;
+
+  const text = input.message.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!text || text.includes('\n')) return input.proposal;
+  if (/^(sim|isso|confirmo|certo|pode|ok|okay|yes)$/u.test(text)) {
+    return { ...input.proposal, confirmation: 'yes' };
+  }
+  if (/^(não|nao|nop|errado|no)$/u.test(text)) {
+    return { ...input.proposal, confirmation: 'no' };
+  }
+  return input.proposal;
 }
 
 /** Apresentação usada quando ainda não há ficha e a Joana ainda não se apresentou. */
@@ -539,8 +614,9 @@ function applyValue(profile: JoanaProfile, patch: JoanaCrmPatch, field: JoanaFie
 }
 
 /**
- * Decide o que gravar, o que pedir para confirmar e o que acrescentar à resposta.
- * O modelo não grava: só propõe.
+ * Decide o que gravar e o que acrescentar à resposta.
+ * O modelo não grava: só propõe. Nome, visto, cidades, tipologia, aluguel e pet
+ * sobrescrevem na hora. A data de imigração só grava depois de um sim.
  */
 export function applyJoanaProposal(input: {
   hasLead: boolean;
@@ -553,7 +629,8 @@ export function applyJoanaProposal(input: {
   const patch: JoanaCrmPatch = {};
   const append: string[] = [];
   let nameToSave: string | null = null;
-  let pending = input.pending;
+  let pending =
+    input.pending?.field === 'immigration' ? input.pending : null;
 
   const remember = (field: JoanaField, value: string) => {
     if (field === 'name') {
@@ -587,11 +664,19 @@ export function applyJoanaProposal(input: {
       const empty = current === null || current === '';
       const clearing = proposed === '';
       if (empty && clearing) continue;
+
+      if (field === 'immigration') {
+        pending = {
+          field: 'immigration',
+          value: proposed,
+          question: immigrationConfirmationQuestion(proposed, !empty),
+        };
+        continue;
+      }
+
       remember(field, proposed);
     }
   }
-
-  if (!input.proposal.confirmation) pending = null;
 
   const createLead =
     !input.hasLead && !input.excluded && input.proposal.interested === true;
@@ -602,7 +687,9 @@ export function applyJoanaProposal(input: {
   const declinedService =
     !input.hasLead && !input.excluded && input.proposal.interested === false;
 
-  if (!informedNoVisa && !declinedService && (input.hasLead || createLead)) {
+  if (pending?.field === 'immigration') {
+    append.push(pending.question);
+  } else if (!informedNoVisa && !declinedService && (input.hasLead || createLead)) {
     const question = missingFieldQuestion(profile);
     if (question) append.push(question);
   } else if (

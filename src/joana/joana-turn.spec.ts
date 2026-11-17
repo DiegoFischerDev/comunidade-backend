@@ -10,10 +10,13 @@ import {
   confirmationQuestion,
   emptyJoanaProfile,
   ensureJoanaIntro,
+  immigrationConfirmationQuestion,
+  inferNameCorrectionFromMessage,
   inferPersonNameFromMessage,
   isPlaceholderLeadName,
   parseDesiredRent,
   shouldOfferSchedulingLink,
+  withInferredConfirmation,
   withInferredName,
   type JoanaProfile,
 } from './joana-turn';
@@ -112,6 +115,73 @@ describe('withInferredName', () => {
     });
     expect(proposal.name).toBe('Bruna');
   });
+
+  it('corrige o nome já gravado com «me chamo Paulo»', () => {
+    expect(inferNameCorrectionFromMessage('Me chamo Paulo')).toBe('Paulo');
+    expect(inferNameCorrectionFromMessage('Na verdade meu nome é Ana Clara')).toBe(
+      'Ana Clara',
+    );
+
+    const proposal = withInferredName({
+      profile: { ...filled, name: 'Diego' },
+      proposal: { interested: null, confirmation: null },
+      message: 'Me chamo Paulo',
+    });
+    expect(proposal.name).toBe('Paulo');
+
+    const saved = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, name: 'Diego' },
+      pending: null,
+      proposal,
+    });
+    expect(saved.nameToSave).toBe('Paulo');
+  });
+
+  it('um nome solto não sobrescreve se o próximo campo não é o nome', () => {
+    const proposal = withInferredName({
+      profile: { ...filled, name: 'Diego' },
+      proposal: { interested: null, confirmation: null },
+      message: 'Paulo',
+    });
+    expect(proposal.name).toBeUndefined();
+  });
+});
+
+describe('withInferredConfirmation', () => {
+  const pendingDate = {
+    field: 'immigration' as const,
+    value: '2026-05-18',
+    question: immigrationConfirmationQuestion('2026-05-18', true),
+  };
+
+  it('lê sim/não curtos na confirmação de data', () => {
+    expect(
+      withInferredConfirmation({
+        pending: pendingDate,
+        proposal: { interested: null, confirmation: null },
+        message: 'Sim',
+      }).confirmation,
+    ).toBe('yes');
+    expect(
+      withInferredConfirmation({
+        pending: pendingDate,
+        proposal: { interested: null, confirmation: null },
+        message: 'não',
+      }).confirmation,
+    ).toBe('no');
+  });
+
+  it('não inventa confirmação sem pendência de data', () => {
+    expect(
+      withInferredConfirmation({
+        pending: null,
+        proposal: { interested: null, confirmation: null },
+        message: 'Sim',
+      }).confirmation,
+    ).toBeNull();
+  });
 });
 
 describe('interesse só pergunta a data', () => {
@@ -194,7 +264,7 @@ describe('applyJoanaProposal', () => {
     expect(result.append.some((line) => line.includes('Para quando'))).toBe(true);
   });
 
-  it('campo já preenchido grava o valor novo sem pedir confirmação', () => {
+  it('campo já preenchido (não-data) grava o valor novo sem pedir confirmação', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -203,64 +273,123 @@ describe('applyJoanaProposal', () => {
       proposal: {
         interested: null,
         confirmation: null,
-        immigration: '2027-03-01',
+        cities: 'Braga',
       },
     });
-    expect(result.crmPatch?.immigration).toBe('2027-03-01');
+    expect(result.crmPatch?.cities).toBe('Braga');
     expect(result.pending).toBeNull();
     expect(result.append).toEqual([]);
   });
 
-  it('sim grava a confirmação pendente', () => {
+  it('data nova fica pendente de confirmação e não grava ainda', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, immigration: null, hasVisa: null },
+      pending: null,
+      proposal: {
+        interested: null,
+        confirmation: null,
+        immigration: '2026-05-18',
+      },
+    });
+    expect(result.crmPatch).toBeNull();
+    expect(result.pending?.field).toBe('immigration');
+    expect(result.pending?.value).toBe('2026-05-18');
+    expect(result.append[0]).toBe(
+      immigrationConfirmationQuestion('2026-05-18', false),
+    );
+  });
+
+  it('última informação manda no nome; data nova pede confirmação', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: {
+        ...filled,
+        name: 'Diego',
+        immigration: '2026-09-14',
+      },
+      pending: null,
+      proposal: {
+        interested: null,
+        confirmation: null,
+        name: 'Paulo',
+        immigration: '2026-05-18',
+      },
+    });
+    expect(result.nameToSave).toBe('Paulo');
+    expect(result.crmPatch).toBeNull();
+    expect(result.pending?.value).toBe('2026-05-18');
+    expect(result.append[0]).toBe(
+      immigrationConfirmationQuestion('2026-05-18', true),
+    );
+  });
+
+  it('sim na confirmação de data grava a data pendente', () => {
     const pending = {
-      field: 'typology' as const,
-      value: 'T2',
-      question: confirmationQuestion('typology', 'T2'),
+      field: 'immigration' as const,
+      value: '2026-05-18',
+      question: immigrationConfirmationQuestion('2026-05-18', true),
     };
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
-      profile: filled,
+      profile: { ...filled, name: 'Diego', immigration: '2026-09-14' },
       pending,
       proposal: { interested: null, confirmation: 'yes' },
     });
-    expect(result.crmPatch?.typology).toBe('T2');
+    expect(result.crmPatch?.immigration).toBe('2026-05-18');
     expect(result.pending).toBeNull();
-    expect(result.append).toEqual([]);
   });
 
-  it('não mantém o valor anterior', () => {
+  it('não na confirmação de data mantém o valor anterior', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
-      profile: filled,
+      profile: { ...filled, immigration: '2026-09-14' },
       pending: {
-        field: 'cities',
-        value: 'Braga',
-        question: confirmationQuestion('cities', 'Braga'),
+        field: 'immigration',
+        value: '2026-05-18',
+        question: immigrationConfirmationQuestion('2026-05-18', true),
       },
       proposal: { interested: null, confirmation: 'no' },
     });
     expect(result.crmPatch).toBeNull();
     expect(result.pending).toBeNull();
-    expect(result.append).toEqual([]);
   });
 
-  it('um dado novo grava e descarta a confirmação antiga', () => {
+  it('confirmação pendente que não é de data é ignorada', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
       profile: filled,
       pending: {
-        field: 'cities',
-        value: 'Braga',
-        question: confirmationQuestion('cities', 'Braga'),
+        field: 'typology',
+        value: 'T2',
+        question: confirmationQuestion('typology', 'T2'),
       },
-      proposal: { interested: null, confirmation: null, hasPet: true },
+      proposal: { interested: null, confirmation: 'yes' },
     });
+    expect(result.crmPatch).toBeNull();
     expect(result.pending).toBeNull();
-    expect(result.crmPatch?.hasPet).toBe(true);
-    expect(result.append).toEqual([]);
+  });
+
+  it('outro dado pode gravar enquanto a confirmação de data fica pendente', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, immigration: '2026-09-14' },
+      pending: {
+        field: 'immigration',
+        value: '2026-05-18',
+        question: immigrationConfirmationQuestion('2026-05-18', true),
+      },
+      proposal: { interested: null, confirmation: null, cities: 'Braga' },
+    });
+    expect(result.crmPatch?.cities).toBe('Braga');
+    expect(result.pending?.value).toBe('2026-05-18');
+    expect(result.append[0]).toContain('data prevista de imigração');
   });
 
   it('grava que não tem visto, indica a Clara e não segue a qualificação', () => {
