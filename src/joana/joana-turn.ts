@@ -221,15 +221,39 @@ export function missingFieldQuestion(profile: JoanaProfile): string | null {
   return null;
 }
 
-/** Tira frases que perguntam, para a resposta ficar com uma única pergunta do sistema. */
+/** Aviso do que foi anotado e, a seguir, uma pergunta para o que ainda falta. */
 export function composeJoanaReply(reply: string, append: string[], fallback: string): string {
   const extra = append.map((line) => line.trim()).filter(Boolean);
+  const noted = extra.some((line) => isAckLine(line));
+  if (noted) {
+    const acks = extra.filter((line) => isAckLine(line));
+    const rest = extra.filter((line) => !isAckLine(line));
+    const question = firstQuestion(withoutHelpPitch(withoutSaveClaims(reply)));
+    const restLines = question ? rest.filter((line) => !line.includes('?')) : keepFirstQuestionLine(rest);
+    return [...acks, ...restLines, question].filter(Boolean).join('\n\n').slice(0, 4000);
+  }
+
   const systemAsks = extra.some((line) => line.includes('?'));
   const cleaned = withoutSaveClaims(reply);
   const narrative = systemAsks ? dropQuestions(cleaned) : keepFirstQuestion(cleaned);
   const lines = systemAsks ? keepFirstQuestionLine(extra) : extra;
   const intro = narrative || (lines.length ? '' : fallback.trim());
   return [intro, ...lines].filter(Boolean).join('\n\n').slice(0, 4000);
+}
+
+function isAckLine(line: string): boolean {
+  return /^(anotei|tirei|deixei como estava)/i.test(line);
+}
+
+function withoutHelpPitch(text: string): string {
+  return splitSentences(text)
+    .filter((sentence) => !/pode ajudar|vamos considerar|vou atualizar/i.test(sentence))
+    .join(' ')
+    .trim();
+}
+
+function firstQuestion(text: string): string {
+  return splitSentences(text).find((sentence) => sentence.endsWith('?')) ?? '';
 }
 
 function withoutSaveClaims(text: string): string {
@@ -349,8 +373,6 @@ export function applyJoanaProposal(input: {
     pending = null;
   }
 
-  const conflicts: PendingConfirmation[] = [];
-
   if (!input.excluded) {
     for (const field of FIELD_ORDER) {
       const proposed = proposedRaw(input.proposal, field);
@@ -361,30 +383,18 @@ export function applyJoanaProposal(input: {
       const empty = current === null || current === '';
       const clearing = proposed === '';
       if (empty && clearing) continue;
-      if (empty || !input.hasLead) {
-        remember(field, proposed);
-        continue;
-      }
-      conflicts.push({
-        field,
-        value: proposed,
-        question: confirmationQuestion(field, proposed),
-      });
+      remember(field, proposed);
     }
   }
 
-  if (conflicts.length > 0) {
-    pending = conflicts[0]!;
-  }
+  if (!input.proposal.confirmation) pending = null;
 
   const createLead =
     !input.hasLead &&
     !input.excluded &&
     (input.proposal.interested === true || isConcrete(input.proposal));
 
-  if (pending) {
-    append.push(pending.question);
-  } else if (input.hasLead || createLead) {
+  if (input.hasLead || createLead) {
     const question = missingFieldQuestion(profile);
     if (question) append.push(question);
   }

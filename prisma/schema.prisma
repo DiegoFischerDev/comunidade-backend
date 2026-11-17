@@ -408,6 +408,10 @@ model RafaCallBooking {
    */
   crmHasPet              Boolean?              @map("crm_has_pet")
   /**
+   * Valor mensal de aluguel pretendido, em euros inteiros. null = por definir.
+   */
+  crmDesiredRent         Int?                  @map("crm_desired_rent")
+  /**
    * Quando preenchido, o cliente deixa de aparecer no kanban CRM (por WhatsApp).
    */
   crmExcludedAt            DateTime?             @map("crm_excluded_at")

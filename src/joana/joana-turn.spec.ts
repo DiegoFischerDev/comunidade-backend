@@ -56,7 +56,7 @@ describe('applyJoanaProposal', () => {
     expect(result.append.some((line) => line.includes('Para quando'))).toBe(true);
   });
 
-  it('campo já preenchido pede confirmação e não grava', () => {
+  it('campo já preenchido grava o valor novo sem pedir confirmação', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -68,11 +68,9 @@ describe('applyJoanaProposal', () => {
         immigration: '2027-03-01',
       },
     });
-    expect(result.crmPatch).toBeNull();
-    expect(result.pending?.field).toBe('immigration');
-    expect(result.pending?.question).toBe(
-      'Quer atualizar sua data prevista de imigração para 01/03/2027?',
-    );
+    expect(result.crmPatch?.immigration).toBe('2027-03-01');
+    expect(result.pending).toBeNull();
+    expect(result.append).toEqual(['Anotei a data para 01/03/2027.']);
   });
 
   it('sim grava a confirmação pendente', () => {
@@ -110,7 +108,7 @@ describe('applyJoanaProposal', () => {
     expect(result.append).toContain('Deixei como estava.');
   });
 
-  it('uma proposta nova substitui a confirmação anterior', () => {
+  it('um dado novo grava e descarta a confirmação antiga', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -122,8 +120,9 @@ describe('applyJoanaProposal', () => {
       },
       proposal: { interested: null, confirmation: null, hasPet: true },
     });
-    expect(result.pending?.field).toBe('pet');
-    expect(result.crmPatch).toBeNull();
+    expect(result.pending).toBeNull();
+    expect(result.crmPatch?.hasPet).toBe(true);
+    expect(result.append[0]).toBe('Anotei que você tem pet.');
   });
 
   it('não grava quem foi excluído do kanban', () => {
@@ -155,6 +154,30 @@ describe('composeJoanaReply', () => {
   it('deixa só a primeira pergunta quando o sistema não pergunta', () => {
     const text = composeJoanaReply('Oi. Qual a cidade? Você tem pet?', [], 'fallback');
     expect(text).toBe('Oi. Qual a cidade?');
+  });
+
+  it('quando anotou um dado, avisa e fica com a pergunta da OpenAI', () => {
+    const text = composeJoanaReply(
+      'Oi! O Rafa pode ajudar na busca por um T2 em Viseu. Para quando você pretende vir?',
+      [
+        'Anotei que você tem pet.',
+        'Anotei seu nome, Bruno.',
+        'Para quando você pretende vir para Portugal? Pode ser uma data, por exemplo 18/12/2026, ou dizer que é imediato.',
+      ],
+      'fallback',
+    );
+    expect(text).toBe(
+      'Anotei que você tem pet.\n\nAnotei seu nome, Bruno.\n\nPara quando você pretende vir?',
+    );
+  });
+
+  it('se a OpenAI não perguntar, usa a pergunta do sistema depois do aviso', () => {
+    const text = composeJoanaReply(
+      'Oi! O Rafa pode ajudar na busca por um T2 em Viseu.',
+      ['Anotei que você tem pet.', 'Como posso te chamar?'],
+      'fallback',
+    );
+    expect(text).toBe('Anotei que você tem pet.\n\nComo posso te chamar?');
   });
 
   it('tira um Anotei inventado pelo modelo e mantém a pergunta do sistema', () => {

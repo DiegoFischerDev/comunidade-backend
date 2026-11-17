@@ -26,6 +26,14 @@ function waDigits(value: string): string {
   return value.replace(/\D/g, '');
 }
 
+function normalizeDesiredRent(value: number | null): number | null {
+  if (value == null) return null;
+  if (!Number.isInteger(value) || value < 0 || value > 100_000) {
+    throw new BadRequestException('Valor do aluguel pretendido inválido.');
+  }
+  return value;
+}
+
 const BOOKING_CRM_SELECT = {
   id: true,
   status: true,
@@ -36,6 +44,7 @@ const BOOKING_CRM_SELECT = {
   crmPropertyTypology: true,
   crmPreferredCity: true,
   crmHasPet: true,
+  crmDesiredRent: true,
   startsAt: true,
   endsAt: true,
   timezone: true,
@@ -62,6 +71,7 @@ type BookingCrmRow = {
   crmPropertyTypology: RafaCallCrmPropertyTypology | null;
   crmPreferredCity: string | null;
   crmHasPet: boolean | null;
+  crmDesiredRent: number | null;
   startsAt: Date;
   endsAt: Date;
   timezone: string;
@@ -232,6 +242,7 @@ export class RafacallCrmService {
           crmPropertyTypology: propertyTypology,
           crmPreferredCity: preferredCity,
           crmHasPet: null,
+          crmDesiredRent: null,
         },
         select: BOOKING_CRM_SELECT,
       });
@@ -259,6 +270,7 @@ export class RafacallCrmService {
         crmPropertyTypology: propertyTypology,
         crmPreferredCity: preferredCity,
         crmHasPet: null,
+        crmDesiredRent: null,
         crmExcludedAt: null,
       },
       select: BOOKING_CRM_SELECT,
@@ -331,6 +343,7 @@ export class RafacallCrmService {
     crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
     crmPreferredCity?: string | null;
     crmHasPet?: boolean | null;
+    crmDesiredRent?: number | null;
   }) {
     const booking = await this.prisma.rafaCallBooking.findFirst({
       where: {
@@ -361,7 +374,8 @@ export class RafacallCrmService {
     const hasPreferencesUpdate =
       params.crmPropertyTypology !== undefined ||
       params.crmPreferredCity !== undefined ||
-      params.crmHasPet !== undefined;
+      params.crmHasPet !== undefined ||
+      params.crmDesiredRent !== undefined;
 
     const normalizedComments = hasCommentsUpdate
       ? params.crmComments?.trim() || null
@@ -405,6 +419,7 @@ export class RafacallCrmService {
     let nextPropertyTypology = crmSource.crmPropertyTypology;
     let nextPreferredCity = crmSource.crmPreferredCity?.trim() || null;
     let nextHasPet = crmSource.crmHasPet;
+    let nextDesiredRent = crmSource.crmDesiredRent;
     if (params.crmPropertyTypology !== undefined) {
       nextPropertyTypology = params.crmPropertyTypology;
     }
@@ -414,11 +429,15 @@ export class RafacallCrmService {
     if (params.crmHasPet !== undefined) {
       nextHasPet = params.crmHasPet;
     }
+    if (params.crmDesiredRent !== undefined) {
+      nextDesiredRent = normalizeDesiredRent(params.crmDesiredRent);
+    }
     const preferencesChanged =
       hasPreferencesUpdate &&
       (nextPropertyTypology !== crmSource.crmPropertyTypology ||
         nextPreferredCity !== (crmSource.crmPreferredCity?.trim() || null) ||
-        nextHasPet !== crmSource.crmHasPet);
+        nextHasPet !== crmSource.crmHasPet ||
+        nextDesiredRent !== crmSource.crmDesiredRent);
 
     const hasAnyFieldUpdate =
       hasStatusChange ||
@@ -486,6 +505,7 @@ export class RafacallCrmService {
       crmPropertyTypology: nextPropertyTypology,
       crmPreferredCity: nextPreferredCity,
       crmHasPet: nextHasPet,
+      crmDesiredRent: nextDesiredRent,
     });
 
     const merged = this.mergeDisplayAndCrm(nextDisplayBooking, {
@@ -497,6 +517,7 @@ export class RafacallCrmService {
       crmPropertyTypology: nextPropertyTypology,
       crmPreferredCity: nextPreferredCity,
       crmHasPet: nextHasPet,
+      crmDesiredRent: nextDesiredRent,
     });
 
     return this.serializeCrmItemWithPayments(merged);
@@ -697,6 +718,7 @@ export class RafacallCrmService {
       crmPropertyTypology: crmSource.crmPropertyTypology,
       crmPreferredCity: crmSource.crmPreferredCity,
       crmHasPet: crmSource.crmHasPet,
+      crmDesiredRent: crmSource.crmDesiredRent,
     });
   }
 
@@ -709,6 +731,7 @@ export class RafacallCrmService {
     crmPropertyTypology: RafaCallCrmPropertyTypology | null;
     crmPreferredCity: string | null;
     crmHasPet: boolean | null;
+    crmDesiredRent: number | null;
   }> {
     const digits = waDigits(whatsappDigits);
     if (!digits) {
@@ -720,6 +743,7 @@ export class RafacallCrmService {
         crmPropertyTypology: null,
         crmPreferredCity: null,
         crmHasPet: null,
+        crmDesiredRent: null,
       };
     }
 
@@ -733,6 +757,7 @@ export class RafacallCrmService {
         crmPropertyTypology: null,
         crmPreferredCity: null,
         crmHasPet: null,
+        crmDesiredRent: null,
       };
     }
 
@@ -745,6 +770,7 @@ export class RafacallCrmService {
       crmPropertyTypology: crmSource.crmPropertyTypology,
       crmPreferredCity: crmSource.crmPreferredCity,
       crmHasPet: crmSource.crmHasPet,
+      crmDesiredRent: crmSource.crmDesiredRent,
     };
   }
 
@@ -820,6 +846,7 @@ export class RafacallCrmService {
         crmPropertyTypology: booking.crmPropertyTypology,
         crmPreferredCity: booking.crmPreferredCity,
         crmHasPet: booking.crmHasPet,
+        crmDesiredRent: booking.crmDesiredRent,
         crmExcludedAt: null,
       },
     });
@@ -1094,6 +1121,7 @@ export class RafacallCrmService {
     crmPropertyTypology: RafaCallCrmPropertyTypology | null;
     crmPreferredCity: string | null;
     crmHasPet: boolean | null;
+    crmDesiredRent: number | null;
   }) {
     return {
       crmStatus: booking.crmStatus,
@@ -1103,6 +1131,7 @@ export class RafacallCrmService {
       crmPropertyTypology: booking.crmPropertyTypology,
       crmPreferredCity: booking.crmPreferredCity,
       crmHasPet: booking.crmHasPet,
+      crmDesiredRent: booking.crmDesiredRent,
     };
   }
 
@@ -1163,6 +1192,7 @@ export class RafacallCrmService {
       crmPropertyTypology: RafaCallCrmPropertyTypology | null;
       crmPreferredCity: string | null;
       crmHasPet: boolean | null;
+      crmDesiredRent: number | null;
     },
   ) {
     await this.prisma.rafaCallBooking.updateMany({
@@ -1181,6 +1211,7 @@ export class RafacallCrmService {
         crmPropertyTypology: data.crmPropertyTypology,
         crmPreferredCity: data.crmPreferredCity,
         crmHasPet: data.crmHasPet,
+        crmDesiredRent: data.crmDesiredRent,
       },
     });
   }
@@ -1226,6 +1257,7 @@ export class RafacallCrmService {
       | 'crmPropertyTypology'
       | 'crmPreferredCity'
       | 'crmHasPet'
+      | 'crmDesiredRent'
     >,
   ): BookingCrmRow {
     return {
@@ -1237,6 +1269,7 @@ export class RafacallCrmService {
       crmPropertyTypology: crmSource.crmPropertyTypology,
       crmPreferredCity: crmSource.crmPreferredCity,
       crmHasPet: crmSource.crmHasPet,
+      crmDesiredRent: crmSource.crmDesiredRent,
     };
   }
 
@@ -1359,6 +1392,7 @@ export class RafacallCrmService {
       crmPropertyTypology: RafaCallCrmPropertyTypology | null;
       crmPreferredCity: string | null;
       crmHasPet: boolean | null;
+      crmDesiredRent: number | null;
       startsAt: Date;
       endsAt: Date;
       timezone: string;
@@ -1387,6 +1421,7 @@ export class RafacallCrmService {
       crmPropertyTypology: item.crmPropertyTypology,
       crmPreferredCity: item.crmPreferredCity,
       crmHasPet: item.crmHasPet,
+      crmDesiredRent: item.crmDesiredRent,
       payments,
       paymentsTotal,
       startsAt: item.startsAt.toISOString(),

@@ -1,5 +1,5 @@
 import { RafaCallCrmPropertyTypology, RafaCallCrmStatus } from '@prisma/client';
-import { IsBoolean, IsEnum, IsOptional, IsString, Matches, MaxLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 
 export class UpdateRafacallCrmDto {
   @IsOptional()
@@ -44,4 +44,11 @@ export class UpdateRafacallCrmDto {
   @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsBoolean()
   crmHasPet?: boolean | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsInt()
+  @Min(0)
+  @Max(100_000)
+  crmDesiredRent?: number | null;
 }

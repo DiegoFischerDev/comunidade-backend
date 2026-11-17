@@ -137,6 +137,7 @@ export class AdminRafacallController {
       crmPropertyTypology: dto.crmPropertyTypology,
       crmPreferredCity: dto.crmPreferredCity,
       crmHasPet: dto.crmHasPet,
+      crmDesiredRent: dto.crmDesiredRent,
     });
   }
 
