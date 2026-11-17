@@ -225,10 +225,18 @@ export function missingFieldQuestion(profile: JoanaProfile): string | null {
 export function composeJoanaReply(reply: string, append: string[], fallback: string): string {
   const extra = append.map((line) => line.trim()).filter(Boolean);
   const systemAsks = extra.some((line) => line.includes('?'));
-  const narrative = systemAsks ? dropQuestions(reply) : keepFirstQuestion(reply);
-  const intro = narrative || fallback.trim();
+  const cleaned = withoutSaveClaims(reply);
+  const narrative = systemAsks ? dropQuestions(cleaned) : keepFirstQuestion(cleaned);
   const lines = systemAsks ? keepFirstQuestionLine(extra) : extra;
+  const intro = narrative || (lines.length ? '' : fallback.trim());
   return [intro, ...lines].filter(Boolean).join('\n\n').slice(0, 4000);
+}
+
+function withoutSaveClaims(text: string): string {
+  return splitSentences(text)
+    .filter((sentence) => !/^(anotei|tirei)\b/i.test(sentence))
+    .join(' ')
+    .trim();
 }
 
 function splitSentences(text: string): string[] {

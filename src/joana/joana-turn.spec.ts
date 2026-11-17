@@ -156,4 +156,16 @@ describe('composeJoanaReply', () => {
     const text = composeJoanaReply('Oi. Qual a cidade? Você tem pet?', [], 'fallback');
     expect(text).toBe('Oi. Qual a cidade?');
   });
+
+  it('tira um Anotei inventado pelo modelo e mantém a pergunta do sistema', () => {
+    const text = composeJoanaReply(
+      'O Rafa pode ajudar na busca. Anotei a data para 31/03/2024.',
+      ['Para quando você pretende vir para Portugal?'],
+      'fallback',
+    );
+    expect(text).toBe(
+      'O Rafa pode ajudar na busca.\n\nPara quando você pretende vir para Portugal?',
+    );
+    expect(text).not.toContain('Anotei');
+  });
 });

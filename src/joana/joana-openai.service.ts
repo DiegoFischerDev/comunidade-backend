@@ -39,7 +39,7 @@ export class JoanaOpenAiService {
       '',
       'Você responde no WhatsApp. A resposta em "reply" responde só ao que a pessoa perguntou ou, se for o primeiro contacto, apresenta-se como Joana e explica o serviço do Rafa em poucas frases.',
       'A resposta em "reply" não faz nenhuma pergunta e não usa ponto de interrogação. O sistema acrescenta a única pergunta depois.',
-      'Não diga que gravou um dado. Não invente preço nem horário.',
+      'Não diga que gravou um dado e não escrevas "Anotei". Não invente preço nem horário.',
       'Devolva só JSON com as chaves: reply, interested, confirmation, name, immigration, cities, typology, hasPet.',
       'interested: true se a pessoa quer o relocation ou está a pedir informação para avançar; false se recusou; null se ainda não deu para saber.',
       'confirmation: "yes" se a pessoa aceitou a confirmação pendente, "no" se recusou, null se não havia confirmação ou a resposta não foi sim nem não.',
@@ -87,7 +87,13 @@ export class JoanaOpenAiService {
         choices?: Array<{ message?: { content?: string } }>;
       };
       const content = data.choices?.[0]?.message?.content ?? '';
-      return parseJoanaModelJson(content);
+      const parsed = parseJoanaModelJson(content);
+      const immigration = immigrationFromLead(
+        input.combinedText,
+        parsed.proposal.immigration,
+      );
+      if (immigration !== undefined) parsed.proposal.immigration = immigration;
+      return parsed;
     } finally {
       clearTimeout(timeout);
     }
@@ -136,6 +142,153 @@ export function joanaDateInstruction(now = new Date()): string {
     '"Final de" é o último dia do mês. "Início de" ou "começo de" é o dia 1. Só o nome do mês, sem dia, é o dia 15.',
     'Se a pessoa disser o ano, usa esse ano. Nunca escolhas um ano anterior ao de hoje.',
   ].join(' ');
+}
+
+const MONTH_NAMES = [
+  'janeiro',
+  'fevereiro',
+  'marco',
+  'abril',
+  'maio',
+  'junho',
+  'julho',
+  'agosto',
+  'setembro',
+  'outubro',
+  'novembro',
+  'dezembro',
+] as const;
+
+const MONTH_PATTERN = 'janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro';
+
+function monthNumber(name: string): number {
+  const key = name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+  return MONTH_NAMES.indexOf(key as (typeof MONTH_NAMES)[number]) + 1;
+}
+
+function lastDayOfMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function isoDate(year: number, month: number, day: number): string | null {
+  const clamped = Math.min(Math.max(day, 1), lastDayOfMonth(year, month));
+  const date = new Date(Date.UTC(year, month - 1, clamped));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(clamped).padStart(2, '0')}`;
+}
+
+function isBeforeToday(
+  year: number,
+  month: number,
+  day: number,
+  today: { year: number; month: number; day: number },
+): boolean {
+  if (year !== today.year) return year < today.year;
+  if (month !== today.month) return month < today.month;
+  return day < today.day;
+}
+
+function dateInFutureOrYear(
+  month: number,
+  day: number,
+  explicitYear: number | null,
+  today: { year: number; month: number; day: number },
+): string | null {
+  if (!month) return null;
+  let year = explicitYear ?? today.year;
+  let resolved = isoDate(year, month, day);
+  if (!resolved) return null;
+  if (explicitYear === null && isBeforeToday(year, month, Number(resolved.slice(8)), today)) {
+    year += 1;
+    resolved = isoDate(year, month, day);
+  }
+  return resolved;
+}
+
+/**
+ * A data dita pela pessoa ganha à da OpenAI.
+ * Mês sem ano vai para a próxima ocorrência que ainda não passou.
+ */
+export function inferImmigrationFromMessage(text: string, now = new Date()): string | null {
+  const raw = text.trim();
+  if (!raw) return null;
+  if (/\bimediat[oa]\b/i.test(raw)) return 'IMEDIATO';
+
+  const numeric = raw.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/);
+  if (numeric) return isoDate(Number(numeric[3]), Number(numeric[2]), Number(numeric[1]));
+
+  const iso = raw.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso) return isoDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  const today = lisbonCivilDate(now);
+  const dayAndMonth = raw.match(
+    new RegExp(`\\b(\\d{1,2})\\s+de\\s+(${MONTH_PATTERN})(?:\\s+de\\s+(\\d{4}))?\\b`, 'iu'),
+  );
+  if (dayAndMonth) {
+    return dateInFutureOrYear(
+      monthNumber(dayAndMonth[2]!),
+      Number(dayAndMonth[1]),
+      dayAndMonth[3] ? Number(dayAndMonth[3]) : null,
+      today,
+    );
+  }
+
+  const qualified = raw.match(
+    new RegExp(
+      `\\b(final|fim|finais|in[ií]cio|come[cç]o|meados)\\s+de\\s+(${MONTH_PATTERN})(?:\\s+de\\s+(\\d{4}))?\\b`,
+      'iu',
+    ),
+  );
+  if (qualified) {
+    const kind = qualified[1]!.toLowerCase();
+    const day = /final|fim/.test(kind) ? 31 : kind.startsWith('mead') ? 15 : 1;
+    return dateInFutureOrYear(
+      monthNumber(qualified[2]!),
+      day,
+      qualified[3] ? Number(qualified[3]) : null,
+      today,
+    );
+  }
+
+  const bare = raw.match(
+    new RegExp(
+      `\\b(?:em|no|para|pra)\\s+(?:o\\s+)?(?:m[eê]s\\s+de\\s+)?(${MONTH_PATTERN})(?:\\s+de\\s+(\\d{4}))?\\b`,
+      'iu',
+    ),
+  );
+  if (bare) {
+    return dateInFutureOrYear(
+      monthNumber(bare[1]!),
+      15,
+      bare[2] ? Number(bare[2]) : null,
+      today,
+    );
+  }
+
+  return null;
+}
+
+/** Usa a data da mensagem. Se a OpenAI escolher um ano já passado, avança esse dia. */
+export function immigrationFromLead(
+  text: string,
+  modelValue: string | undefined,
+  now = new Date(),
+): string | undefined {
+  const inferred = inferImmigrationFromMessage(text, now);
+  if (inferred) return inferred;
+  if (!modelValue || modelValue === 'IMEDIATO' || modelValue === '') return modelValue;
+  const match = modelValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return modelValue;
+  const year = Number(match[1]);
+  if (text.includes(match[1]!)) return modelValue;
+  const today = lisbonCivilDate(now);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!isBeforeToday(year, month, day, today)) return modelValue;
+  return dateInFutureOrYear(month, day, null, today) ?? modelValue;
 }
 
 export function parseJoanaModelJson(content: string): {
