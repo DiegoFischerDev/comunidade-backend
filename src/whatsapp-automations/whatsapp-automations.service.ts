@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { joanaWhatsappInstance } from '../joana/joana-context';
 import { JoanaService } from '../joana/joana.service';
+import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
 import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import {
@@ -41,6 +42,7 @@ export class WhatsappAutomationsService {
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
     private readonly joana: JoanaService,
+    private readonly crm: RafacallCrmService,
   ) {}
 
   async list() {
@@ -153,6 +155,10 @@ export class WhatsappAutomationsService {
       return { ok: true, status: voice.status };
     }
 
+    if (dto.kind === 'image' || dto.kind === 'document') {
+      return this.handleInboundCrmFile(dto, whatsapp);
+    }
+
     const text = (dto.text || '').trim();
     if (!text) return { ok: true, status: 'ignored_empty' };
 
@@ -208,6 +214,86 @@ export class WhatsappAutomationsService {
     const matched = this.pickBestMatch(active, haystack);
     if (!matched) return { ok: true, status: 'ignored_no_match' };
     return { ok: true, status: await this.dispatchAutomation(matched, dto, whatsapp) };
+  }
+
+  /**
+   * Imagem/documento na DM da Joana → download Evolution → anexo CRM.
+   * Legenda (se houver) continua no debounce da Joana como texto.
+   */
+  private async handleInboundCrmFile(
+    dto: WhatsappClientAutomationInboundDto,
+    whatsapp: string,
+  ): Promise<{ ok: true; status: string }> {
+    const kind = dto.kind === 'document' ? 'document' : 'image';
+    const instance = (dto.instance || '').trim();
+    if (instance !== joanaWhatsappInstance()) {
+      return { ok: true, status: 'ignored_media' };
+    }
+    if (!this.claimWebhookDelivery(dto, whatsapp, kind)) {
+      return { ok: true, status: 'ignored_duplicate_webhook' };
+    }
+
+    const messageId = (dto.externalMessageId || '').trim();
+    if (!messageId) {
+      return { ok: true, status: 'ignored_media_no_id' };
+    }
+
+    let attachStatus = 'ignored_media_download';
+    try {
+      const media = await this.wa.getMediaBase64(instance, messageId, {
+        convertToMp4: false,
+        ...(dto.mediaMessage ? { message: dto.mediaMessage } : {}),
+      });
+      if (media?.base64) {
+        const buffer = Buffer.from(media.base64, 'base64');
+        const attached = await this.crm.attachWhatsappInboundFile({
+          whatsappDigits: whatsapp,
+          buffer,
+          mimeType: media.mimetype || dto.mediaMimeType,
+          fileName: media.fileName || dto.mediaFileName,
+        });
+        attachStatus = attached.status;
+        if (attached.status === 'attached') {
+          this.logger.log(
+            `CRM anexo WhatsApp ${kind} para ${whatsapp}: ${attached.document?.fileName ?? 'ok'}`,
+          );
+        } else {
+          this.logger.warn(
+            `CRM anexo WhatsApp ${kind} para ${whatsapp}: ${attached.status}`,
+          );
+        }
+      } else {
+        this.logger.warn(
+          `CRM anexo WhatsApp ${kind} para ${whatsapp}: Evolution sem bytes`,
+        );
+      }
+    } catch (err: unknown) {
+      this.logger.warn(
+        `CRM anexo WhatsApp ${kind} para ${whatsapp}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      attachStatus = 'ignored_media_error';
+    }
+
+    const caption = (dto.text || '').trim();
+    if (!caption) {
+      return { ok: true, status: attachStatus };
+    }
+
+    const joana = await this.joana.bufferInbound({
+      whatsapp,
+      text: caption,
+      instance,
+      pushName: dto.pushName,
+      externalMessageId: dto.externalMessageId,
+    });
+    return {
+      ok: true,
+      status: joana.handled
+        ? `${attachStatus}+${joana.status}`
+        : attachStatus,
+    };
   }
 
   private async dispatchAutomation(

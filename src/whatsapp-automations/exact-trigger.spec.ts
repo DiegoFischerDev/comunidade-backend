@@ -33,6 +33,12 @@ describe('handleInbound nota de voz', () => {
     noteScriptedExchange: jest.fn(),
     acceptVoiceNote: jest.fn(),
   };
+  const crm = {
+    attachWhatsappInboundFile: jest.fn(),
+  };
+  const wa = {
+    getMediaBase64: jest.fn(),
+  };
   const prisma = {
     whatsappClientAutomation: { findMany: jest.fn() },
   };
@@ -49,7 +55,12 @@ describe('handleInbound nota de voz', () => {
   });
 
   function service() {
-    return new WhatsappAutomationsService(prisma as never, {} as never, joana as never);
+    return new WhatsappAutomationsService(
+      prisma as never,
+      wa as never,
+      joana as never,
+      crm as never,
+    );
   }
 
   it('ignora áudio fora da instância da Joana', async () => {
@@ -82,6 +93,113 @@ describe('handleInbound nota de voz', () => {
       externalMessageId: 'MSG2',
     });
     expect(prisma.whatsappClientAutomation.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleInbound imagem/documento CRM', () => {
+  const joana = {
+    bufferInbound: jest.fn(),
+    noteScriptedExchange: jest.fn(),
+    acceptVoiceNote: jest.fn(),
+  };
+  const crm = {
+    attachWhatsappInboundFile: jest.fn(),
+  };
+  const wa = {
+    getMediaBase64: jest.fn(),
+  };
+  const prisma = {
+    whatsappClientAutomation: { findMany: jest.fn() },
+  };
+  const previous = process.env.JOANA_WHATSAPP_INSTANCE;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.JOANA_WHATSAPP_INSTANCE = 'comunidade MEO';
+  });
+
+  afterAll(() => {
+    if (previous === undefined) delete process.env.JOANA_WHATSAPP_INSTANCE;
+    else process.env.JOANA_WHATSAPP_INSTANCE = previous;
+  });
+
+  function service() {
+    return new WhatsappAutomationsService(
+      prisma as never,
+      wa as never,
+      joana as never,
+      crm as never,
+    );
+  }
+
+  it('ignora imagem fora da instância da Joana', async () => {
+    const result = await service().handleInbound({
+      senderNumber: '351912345678',
+      kind: 'image',
+      instance: 'outra',
+      externalMessageId: 'IMG1',
+    });
+    expect(result.status).toBe('ignored_media');
+    expect(wa.getMediaBase64).not.toHaveBeenCalled();
+  });
+
+  it('descarrega e anexa imagem ao CRM', async () => {
+    wa.getMediaBase64.mockResolvedValue({
+      base64: Buffer.from([0xff, 0xd8, 0xff]).toString('base64'),
+      mimetype: 'image/jpeg',
+      fileName: 'foto.jpg',
+    });
+    crm.attachWhatsappInboundFile.mockResolvedValue({
+      ok: true,
+      status: 'attached',
+      document: { fileName: 'foto.jpg' },
+    });
+
+    const result = await service().handleInbound({
+      senderNumber: '351912345678',
+      kind: 'image',
+      instance: 'comunidade MEO',
+      externalMessageId: 'IMG2',
+      mediaMessage: { key: { id: 'IMG2' } },
+    });
+
+    expect(result.status).toBe('attached');
+    expect(wa.getMediaBase64).toHaveBeenCalledWith('comunidade MEO', 'IMG2', {
+      convertToMp4: false,
+      message: { key: { id: 'IMG2' } },
+    });
+    expect(crm.attachWhatsappInboundFile).toHaveBeenCalled();
+    expect(joana.bufferInbound).not.toHaveBeenCalled();
+  });
+
+  it('anexa documento e bufferiza a legenda na Joana', async () => {
+    wa.getMediaBase64.mockResolvedValue({
+      base64: Buffer.from('%PDF-1.4').toString('base64'),
+      mimetype: 'application/pdf',
+      fileName: 'doc.pdf',
+    });
+    crm.attachWhatsappInboundFile.mockResolvedValue({
+      ok: true,
+      status: 'attached',
+    });
+    joana.bufferInbound.mockResolvedValue({ handled: true, status: 'buffered' });
+
+    const result = await service().handleInbound({
+      senderNumber: '351912345678',
+      text: 'segue o meu passaporte',
+      kind: 'document',
+      instance: 'comunidade MEO',
+      externalMessageId: 'DOC1',
+    });
+
+    expect(result.status).toBe('attached+buffered');
+    expect(joana.bufferInbound).toHaveBeenCalledWith({
+      whatsapp: '351912345678',
+      text: 'segue o meu passaporte',
+      instance: 'comunidade MEO',
+      pushName: undefined,
+      externalMessageId: 'DOC1',
+    });
   });
 });
 

@@ -27,10 +27,10 @@ export const CRM_IMMIGRATION_NEAR_THRESHOLD_DAYS = 60;
 /** Título automático de receitas criadas via pagamentos do CRM. */
 export const CRM_PAYMENT_DEFAULT_TITLE = 'Pagamento Relocation';
 
-/** Cada PDF anexado a um cliente do CRM. */
+/** Cada ficheiro anexado a um cliente do CRM (PDF admin ou mídia WhatsApp). */
 export const CRM_CLIENT_DOCUMENT_MAX_BYTES = 15 * 1024 * 1024;
 
-/** Máximo de PDFs por cliente (WhatsApp). */
+/** Máximo de ficheiros por cliente (WhatsApp). */
 export const CRM_CLIENT_DOCUMENT_MAX_COUNT = 20;
 
 const CRM_POST_CALL_STATUSES: RafaCallCrmStatus[] = [

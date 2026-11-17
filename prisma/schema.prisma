@@ -487,7 +487,8 @@ model RafaCallCrmDocument {
    */
   whatsappDigits String   @map("whatsapp_digits")
   /**
-   * Nome original mostrado no CRM (já sem caminho e com extensão .pdf).
+   * Nome mostrado no CRM (sanitizado; extensão .pdf/.jpg/.png/…).
+   * Origem: upload admin (PDF) ou inbound WhatsApp (imagem/documento).
    */
   fileName       String   @map("file_name")
   /**

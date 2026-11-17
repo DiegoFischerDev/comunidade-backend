@@ -77,18 +77,31 @@ export class WhatsappClientAutomationInboundDto {
   @MaxLength(8000)
   text?: string;
 
-  /** `audio` é nota de voz. O texto chega vazio e o backend transcreve. */
+  /**
+   * `audio` — nota de voz (Joana transcreve).
+   * `image` / `document` — anexo CRM (download Evolution → R2).
+   */
   @IsOptional()
-  @IsIn(['audio'])
-  kind?: 'audio';
+  @IsIn(['audio', 'image', 'document'])
+  kind?: 'audio' | 'image' | 'document';
 
   /**
-   * Nota completa do webhook (key + audioMessage).
-   * A Evolution não guarda a mensagem, por isso o id sozinho não descarrega o áudio.
+   * Nota completa do webhook (key + audioMessage/imageMessage/documentMessage).
+   * A Evolution não guarda a mensagem, por isso o id sozinho não descarrega a mídia.
    */
   @IsOptional()
   @IsObject()
   mediaMessage?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  mediaMimeType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  mediaFileName?: string;
 
   @IsOptional()
   @IsBoolean()

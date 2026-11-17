@@ -29,6 +29,7 @@ import {
   resolveStatusAfterImmigrationUpdate,
   sortCrmItemsByImmigrationDate,
 } from './rafacall-crm.constants';
+import { sanitizeCrmDocumentFileName } from '../common/crm-document-file';
 
 function waDigits(value: string): string {
   return value.replace(/\D/g, '');
@@ -103,14 +104,7 @@ type SerializedCrmDocument = {
 };
 
 function sanitizeCrmPdfFileName(originalName: string): string {
-  const base = (originalName || 'documento.pdf').split(/[/\\]/).pop() ?? 'documento.pdf';
-  const cleaned = base
-    .replace(/[^\p{L}\p{N}._\- ()]/gu, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 160);
-  const stem = cleaned.replace(/\.pdf$/i, '').trim() || 'documento';
-  return `${stem}.pdf`;
+  return sanitizeCrmDocumentFileName(originalName, '.pdf');
 }
 
 @Injectable()
@@ -842,6 +836,69 @@ export class RafacallCrmService {
     await this.prisma.rafaCallCrmDocument.delete({ where: { id: existing.id } });
     await this.storage.deleteStoredUrl(existing.fileUrl);
     return { ok: true as const };
+  }
+
+  /**
+   * Anexa ficheiro recebido por WhatsApp (imagem/documento) ao cliente CRM.
+   * Chave = WhatsApp; não exige booking — aparece quando a ficha existir no kanban.
+   */
+  async attachWhatsappInboundFile(params: {
+    whatsappDigits: string;
+    buffer: Buffer;
+    mimeType?: string;
+    fileName?: string;
+  }): Promise<{ ok: true; status: string; document?: SerializedCrmDocument }> {
+    const whatsapp = waDigits(params.whatsappDigits);
+    if (whatsapp.length < 8) {
+      return { ok: true, status: 'ignored_invalid_phone' };
+    }
+    if (!params.buffer?.length) {
+      return { ok: true, status: 'ignored_empty_file' };
+    }
+    if (params.buffer.length > CRM_CLIENT_DOCUMENT_MAX_BYTES) {
+      return { ok: true, status: 'ignored_too_large' };
+    }
+
+    const existingCount = await this.prisma.rafaCallCrmDocument.count({
+      where: { whatsappDigits: whatsapp },
+    });
+    if (existingCount >= CRM_CLIENT_DOCUMENT_MAX_COUNT) {
+      return { ok: true, status: 'ignored_limit' };
+    }
+
+    let stored: { publicUrl: string; fileName: string; sizeBytes: number };
+    try {
+      stored = await this.storage.storeCrmClientFile({
+        buffer: params.buffer,
+        mimeType: params.mimeType,
+        fileName: params.fileName,
+      });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'empty_crm_file' || code === 'invalid_crm_file') {
+        return { ok: true, status: 'ignored_invalid_file' };
+      }
+      throw error;
+    }
+
+    try {
+      const created = await this.prisma.rafaCallCrmDocument.create({
+        data: {
+          whatsappDigits: whatsapp,
+          fileName: stored.fileName,
+          fileUrl: stored.publicUrl,
+          sizeBytes: stored.sizeBytes,
+        },
+      });
+      return {
+        ok: true,
+        status: 'attached',
+        document: this.serializeDocument(created),
+      };
+    } catch (error) {
+      await this.storage.deleteStoredUrl(stored.publicUrl);
+      throw error;
+    }
   }
 
   async recordStatusChange(params: {

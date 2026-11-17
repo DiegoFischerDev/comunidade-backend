@@ -8,6 +8,10 @@ import { randomBytes } from 'crypto';
 import { readFile, writeFile, mkdir, unlink } from 'fs/promises';
 import { join } from 'path';
 import sharp from 'sharp';
+import {
+  resolveCrmInboundFile,
+  resolveCrmPdfUpload,
+} from '../common/crm-document-file';
 
 const HOUSE_VIDEO_MIMES = new Set([
   'video/mp4',
@@ -442,7 +446,7 @@ export class HouseImageStorageService {
   }
 
   /**
-   * PDF anexado a um cliente do CRM.
+   * PDF anexado a um cliente do CRM (upload admin).
    * Aceita apenas PDF (MIME, extensão e cabeçalho `%PDF`).
    * Grava em R2 (`crm/documents/…`) ou `uploads/crm/documents/…` em disco.
    */
@@ -453,26 +457,55 @@ export class HouseImageStorageService {
     if (!buf?.length) {
       throw new Error('empty_crm_pdf');
     }
-    const mime = (file.mimetype || '').toLowerCase();
-    const name = (file.originalname || '').toLowerCase();
-    const isPdf =
-      mime === 'application/pdf' ||
-      mime === 'application/x-pdf' ||
-      name.endsWith('.pdf');
-    if (!isPdf) {
-      throw new Error('invalid_crm_pdf');
-    }
-    const header = buf.subarray(0, 5).toString('ascii');
-    if (!header.startsWith('%PDF')) {
+    const resolved = resolveCrmPdfUpload({
+      buffer: buf,
+      mimeType: file.mimetype,
+      fileName: file.originalname,
+    });
+    if (!resolved) {
       throw new Error('invalid_crm_pdf');
     }
     const publicUrl = await this.uploadUnderPrefix(
       buf,
-      'application/pdf',
+      resolved.contentType,
       'crm/documents',
-      '.pdf',
+      resolved.extension,
     );
     return { publicUrl };
+  }
+
+  /**
+   * Ficheiro CRM genérico (PDF, imagem ou documento de escritório).
+   * Usado no inbound WhatsApp → anexo ao cliente por WhatsApp.
+   */
+  async storeCrmClientFile(params: {
+    buffer: Buffer;
+    mimeType?: string;
+    fileName?: string;
+  }): Promise<{ publicUrl: string; fileName: string; sizeBytes: number }> {
+    const buf = params.buffer;
+    if (!buf?.length) {
+      throw new Error('empty_crm_file');
+    }
+    const resolved = resolveCrmInboundFile({
+      buffer: buf,
+      mimeType: params.mimeType,
+      fileName: params.fileName,
+    });
+    if (!resolved) {
+      throw new Error('invalid_crm_file');
+    }
+    const publicUrl = await this.uploadUnderPrefix(
+      buf,
+      resolved.contentType,
+      'crm/documents',
+      resolved.extension,
+    );
+    return {
+      publicUrl,
+      fileName: resolved.fileName,
+      sizeBytes: buf.length,
+    };
   }
 
   /** Upload genérico sob um prefixo (R2 key ou `uploads/<prefix>/…`). */
