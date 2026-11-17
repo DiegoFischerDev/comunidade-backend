@@ -13,6 +13,7 @@ import { JoanaOpenAiService } from './joana-openai.service';
 import {
   JOANA_TYPOLOGY_SPEECH,
   applyJoanaProposal,
+  composeJoanaReply,
   emptyJoanaProfile,
   formatImmigrationLabel,
   type JoanaCrmPatch,
@@ -627,11 +628,11 @@ function describeProfile(
 }
 
 function composeReply(reply: string, append: string[]): string {
-  const intro =
-    reply.trim() ||
-    'Oi, eu sou a Joana, atendente virtual do Rafa. O Rafa ajuda na busca do imóvel em Portugal, nas visitas por videochamada e na negociação com os proprietários.';
-  const extra = append.map((line) => line.trim()).filter(Boolean);
-  return [intro, ...extra].join('\n\n').slice(0, 4000);
+  return composeJoanaReply(
+    reply,
+    append,
+    'Oi, eu sou a Joana, atendente virtual do Rafa. O Rafa ajuda na busca do imóvel em Portugal, nas visitas por videochamada e na negociação com os proprietários.',
+  );
 }
 
 function cleanName(raw: string | null | undefined): string | null {

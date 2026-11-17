@@ -221,6 +221,58 @@ export function missingFieldQuestion(profile: JoanaProfile): string | null {
   return null;
 }
 
+/** Tira frases que perguntam, para a resposta ficar com uma única pergunta do sistema. */
+export function composeJoanaReply(reply: string, append: string[], fallback: string): string {
+  const extra = append.map((line) => line.trim()).filter(Boolean);
+  const systemAsks = extra.some((line) => line.includes('?'));
+  const narrative = systemAsks ? dropQuestions(reply) : keepFirstQuestion(reply);
+  const intro = narrative || fallback.trim();
+  const lines = systemAsks ? keepFirstQuestionLine(extra) : extra;
+  return [intro, ...lines].filter(Boolean).join('\n\n').slice(0, 4000);
+}
+
+function splitSentences(text: string): string[] {
+  return text
+    .trim()
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+function dropQuestions(text: string): string {
+  return splitSentences(text)
+    .filter((sentence) => !sentence.endsWith('?'))
+    .join(' ')
+    .trim();
+}
+
+function keepFirstQuestion(text: string): string {
+  let keptQuestion = false;
+  return splitSentences(text)
+    .filter((sentence) => {
+      if (!sentence.endsWith('?')) return true;
+      if (keptQuestion) return false;
+      keptQuestion = true;
+      return true;
+    })
+    .join(' ')
+    .trim();
+}
+
+function keepFirstQuestionLine(lines: string[]): string[] {
+  let keptQuestion = false;
+  return lines.flatMap((line) => {
+    const sentences = splitSentences(line).filter((sentence) => {
+      if (!sentence.endsWith('?')) return true;
+      if (keptQuestion) return false;
+      keptQuestion = true;
+      return true;
+    });
+    const next = sentences.join(' ').trim();
+    return next ? [next] : [];
+  });
+}
+
 function isConcrete(proposal: JoanaProposal): boolean {
   return FIELD_ORDER.some((field) => {
     const value = proposedRaw(proposal, field);

@@ -1,6 +1,7 @@
 import {
   applyJoanaProposal,
   canonicalImmigration,
+  composeJoanaReply,
   confirmationQuestion,
   emptyJoanaProfile,
   type JoanaProfile,
@@ -135,5 +136,24 @@ describe('applyJoanaProposal', () => {
     });
     expect(result.createLead).toBe(false);
     expect(result.crmPatch).toBeNull();
+  });
+});
+
+describe('composeJoanaReply', () => {
+  it('tira a pergunta do modelo quando o sistema já pergunta', () => {
+    const text = composeJoanaReply(
+      'O Rafa pode ajudar na busca por um T3 em São Pedro do Sul e Aveiro. Você tem animal de estimação?',
+      ['Quer atualizar as cidades pretendidas para São Pedro do Sul e Aveiro?'],
+      'fallback',
+    );
+    expect(text).toBe(
+      'O Rafa pode ajudar na busca por um T3 em São Pedro do Sul e Aveiro.\n\nQuer atualizar as cidades pretendidas para São Pedro do Sul e Aveiro?',
+    );
+    expect(text.match(/\?/g)).toHaveLength(1);
+  });
+
+  it('deixa só a primeira pergunta quando o sistema não pergunta', () => {
+    const text = composeJoanaReply('Oi. Qual a cidade? Você tem pet?', [], 'fallback');
+    expect(text).toBe('Oi. Qual a cidade?');
   });
 });

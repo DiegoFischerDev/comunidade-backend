@@ -38,7 +38,7 @@ export class JoanaOpenAiService {
       input.context.trim() || JOANA_DEFAULT_CONTEXT,
       '',
       'Você responde no WhatsApp. A resposta em "reply" responde só ao que a pessoa perguntou ou, se for o primeiro contacto, apresenta-se como Joana e explica o serviço do Rafa em poucas frases.',
-      'Não peça dados do CRM e não peça confirmação de atualização. O sistema acrescenta essa pergunta depois.',
+      'A resposta em "reply" não faz nenhuma pergunta e não usa ponto de interrogação. O sistema acrescenta a única pergunta depois.',
       'Não diga que gravou um dado. Não invente preço nem horário.',
       'Devolva só JSON com as chaves: reply, interested, confirmation, name, immigration, cities, typology, hasPet.',
       'interested: true se a pessoa quer o relocation ou está a pedir informação para avançar; false se recusou; null se ainda não deu para saber.',
