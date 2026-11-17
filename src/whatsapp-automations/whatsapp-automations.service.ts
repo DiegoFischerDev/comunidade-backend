@@ -10,7 +10,8 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
-import { RelocationChatbotService } from './relocation-chatbot.service';
+import { joanaWhatsappInstance } from '../joana/joana-context';
+import { JoanaService } from '../joana/joana.service';
 import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import {
@@ -39,7 +40,7 @@ export class WhatsappAutomationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
-    private readonly relocation: RelocationChatbotService,
+    private readonly joana: JoanaService,
   ) {}
 
   async list() {
@@ -141,14 +142,43 @@ export class WhatsappAutomationsService {
       return { ok: true, status: 'ignored_duplicate_webhook' };
     }
 
-    const daily = await this.relocation.handleDailyContact({
+    const instance = (dto.instance || '').trim();
+    if (instance === joanaWhatsappInstance()) {
+      const active = await this.getActiveAutomationsCached();
+      const scripted = findExactTrigger(active, text);
+      if (scripted) {
+        const status = await this.dispatchAutomation(scripted, dto, whatsapp);
+        if (status === 'sent') {
+          const assistantText = scriptedStepText(scripted.steps);
+          try {
+            await this.joana.noteScriptedExchange({
+              whatsapp,
+              instance,
+              pushName: dto.pushName,
+              userText: text,
+              assistantText,
+            });
+          } catch (err: unknown) {
+            this.logger.warn(
+              `Joana histórico do fluxo ${scripted.id}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
+        }
+        return { ok: true, status };
+      }
+    }
+
+    const joana = await this.joana.bufferInbound({
       whatsapp,
       text,
       instance: dto.instance,
       pushName: dto.pushName,
+      externalMessageId: dto.externalMessageId,
     });
-    if (daily.handled) {
-      return { ok: true, status: daily.status };
+    if (joana.handled) {
+      return { ok: true, status: joana.status };
     }
 
     const active = await this.getActiveAutomationsCached();
@@ -157,7 +187,14 @@ export class WhatsappAutomationsService {
     const haystack = this.normalizeForMatch(text);
     const matched = this.pickBestMatch(active, haystack);
     if (!matched) return { ok: true, status: 'ignored_no_match' };
+    return { ok: true, status: await this.dispatchAutomation(matched, dto, whatsapp) };
+  }
 
+  private async dispatchAutomation(
+    matched: AutomationWithSteps,
+    dto: WhatsappClientAutomationInboundDto,
+    whatsapp: string,
+  ): Promise<string> {
     const since = new Date(Date.now() - COOLDOWN_MS);
     const recent = await this.prisma.whatsappClientAutomationFiring.findFirst({
       where: {
@@ -167,7 +204,7 @@ export class WhatsappAutomationsService {
       },
       select: { id: true },
     });
-    if (recent) return { ok: true, status: 'ignored_cooldown' };
+    if (recent) return 'ignored_cooldown';
 
     const externalMessageId = dto.externalMessageId?.trim() || null;
     try {
@@ -183,7 +220,7 @@ export class WhatsappAutomationsService {
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === 'P2002'
       ) {
-        return { ok: true, status: 'ignored_duplicate_firing' };
+        return 'ignored_duplicate_firing';
       }
       throw e;
     }
@@ -197,13 +234,13 @@ export class WhatsappAutomationsService {
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      return { ok: true, status: 'sent_partial_or_failed' };
+      return 'sent_partial_or_failed';
     }
 
     this.logger.log(
       `Automação cliente «${matched.name}» enviada para ${whatsapp}`,
     );
-    return { ok: true, status: 'sent' };
+    return 'sent';
   }
 
   private async sendSteps(
@@ -343,7 +380,7 @@ export class WhatsappAutomationsService {
   }
 
   private normalizeForMatch(raw: string): string {
-    return raw.trim().toLowerCase().replace(/\s+/g, ' ');
+    return normalizePhrase(raw);
   }
 
   private normalizeWhatsapp(raw: string): string {
@@ -429,4 +466,29 @@ export class WhatsappAutomationsService {
       })),
     };
   }
+}
+
+/** Mensagem igual ao gatilho guardado, ignorando maiúsculas e espaços repetidos. */
+export function findExactTrigger<T extends { triggerPhrase: string }>(
+  items: T[],
+  text: string,
+): T | null {
+  const haystack = normalizePhrase(text);
+  if (!haystack) return null;
+  return items.find((item) => normalizePhrase(item.triggerPhrase) === haystack) ?? null;
+}
+
+export function scriptedStepText(
+  steps: Array<{ sortOrder: number; textContent?: string | null }>,
+): string {
+  return [...steps]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((step) => (step.textContent || '').trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, 4000);
+}
+
+function normalizePhrase(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, ' ');
 }

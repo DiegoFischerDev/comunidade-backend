@@ -10,7 +10,7 @@ export class RafacallCrmImmigrationSyncTask {
 
   constructor(private readonly crm: RafacallCrmService) {}
 
-  /** ~06:00 em Lisboa — promove leads «longe» → «perto» quando faltam menos de 90 dias. */
+  /** ~06:00 em Lisboa — promove leads «longe» → «perto» quando faltam menos de 60 dias. */
   @Cron('0 6 * * *', { timeZone: LISBON_TZ })
   async syncImmigrationColumns(): Promise<void> {
     if (process.env.RAFA_CALL_CRM_IMMIGRATION_SYNC_ENABLED === '0') return;

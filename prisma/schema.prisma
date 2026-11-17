@@ -53,6 +53,7 @@ enum RafaCallCrmPropertyTypology {
   QUARTO
   T0
   T1
+  T2
   T3
   T4
   T5
@@ -1209,4 +1210,39 @@ model WhatsappDailyContact {
   @@unique([dayKey, whatsappDigits])
   @@index([dayKey, firstMessageAt])
   @@map("whatsapp_daily_contacts")
+}
+
+/// Texto de negócio que a Joana usa nas respostas. Uma linha, id fixo `default`.
+model JoanaSettings {
+  id          String   @id
+  contextText String   @map("context_text") @db.Text
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("joana_settings")
+}
+
+/// Conversa da Joana com um WhatsApp: buffer de 30s, confirmação pendente e histórico.
+model JoanaConversation {
+  id                  String    @id @default(cuid())
+  whatsappDigits      String    @unique @map("whatsapp_digits")
+  instance            String?
+  displayName         String?   @map("display_name") @db.VarChar(80)
+  /// Mensagens ainda não processadas: `{ id, text, at }[]`.
+  buffer              Json      @default("[]")
+  lastInboundAt       DateTime? @map("last_inbound_at")
+  /// `{ field, value, question }` ou null.
+  pendingConfirmation Json?     @map("pending_confirmation")
+  /// Últimos turnos `{ role, text }[]`.
+  history             Json      @default("[]")
+  /// Resposta já decidida que ainda não saiu no WhatsApp.
+  pendingOutbound     String?   @map("pending_outbound") @db.Text
+  farGuidanceSent     Boolean   @default(false) @map("far_guidance_sent")
+  schedulingLinkSent  Boolean   @default(false) @map("scheduling_link_sent")
+  processing          Boolean   @default(false)
+  processingStartedAt DateTime? @map("processing_started_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@index([processing, lastInboundAt])
+  @@map("joana_conversations")
 }

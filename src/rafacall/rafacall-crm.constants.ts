@@ -22,7 +22,7 @@ export const RAFA_CALL_CRM_STATUS_LABELS: Record<RafaCallCrmStatus, string> = {
 
 const CRM_IMMIGRATION_TZ = 'Europe/Lisbon';
 export const CRM_IMMIGRATION_IMMEDIATE_VALUE = 'IMEDIATO';
-export const CRM_IMMIGRATION_NEAR_THRESHOLD_DAYS = 90;
+export const CRM_IMMIGRATION_NEAR_THRESHOLD_DAYS = 60;
 
 /** Título automático de receitas criadas via pagamentos do CRM. */
 export const CRM_PAYMENT_DEFAULT_TITLE = 'Pagamento Relocation';

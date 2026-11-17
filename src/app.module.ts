@@ -23,6 +23,7 @@ import { WhatsappScanModule } from './whatsapp-scan/whatsapp-scan.module';
 import { JobOffersModule } from './job-offers/job-offers.module';
 import { FinanceModule } from './finance/finance.module';
 import { WhatsappAutomationsModule } from './whatsapp-automations/whatsapp-automations.module';
+import { JoanaModule } from './joana/joana.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { WhatsappAutomationsModule } from './whatsapp-automations/whatsapp-autom
     JobOffersModule,
     FinanceModule,
     WhatsappAutomationsModule,
+    JoanaModule,
   ],
   controllers: [AppController],
   providers: [

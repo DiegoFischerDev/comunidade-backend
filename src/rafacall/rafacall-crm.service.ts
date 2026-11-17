@@ -129,7 +129,7 @@ export class RafacallCrmService {
     return { inCrm: true, name };
   }
 
-  /** Alinha colunas de imigração com a data prevista (90 dias, imediato, sem data). */
+  /** Alinha colunas de imigração com a data prevista (60 dias, imediato, sem data). */
   async syncImmigrationProximityStatuses(): Promise<{ promoted: number }> {
     const items = await this.prisma.rafaCallBooking.findMany({
       where: this.visibleCrmBookingWhere(),
@@ -265,6 +265,60 @@ export class RafacallCrmService {
     });
 
     return this.serializeCrmItemWithPayments(created);
+  }
+
+  /** Ficha visível da Joana, lead excluído do kanban, ou número ainda sem ficha. */
+  async lookupLeadForJoana(whatsappRaw: string) {
+    const whatsapp = waDigits(whatsappRaw);
+    const visible = await this.findActiveBookingsByWhatsapp(whatsapp);
+    if (visible.length > 0) {
+      const source = this.pickCrmSource(visible);
+      return {
+        kind: 'visible' as const,
+        bookingId: source.id,
+        name: source.user?.name?.trim() || source.guestName?.trim() || null,
+        crmStatus: source.crmStatus,
+        immigration: formatCrmImmigrationForApi(
+          source.crmExpectedImmigrationAt,
+          source.crmImmigrationImmediate,
+        ),
+        cities: source.crmPreferredCity?.trim() || null,
+        typology: source.crmPropertyTypology,
+        hasPet: source.crmHasPet,
+      };
+    }
+
+    const excluded = await this.prisma.rafaCallBooking.findFirst({
+      where: {
+        crmExcludedAt: { not: null },
+        status: {
+          in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.COMPLETED],
+        },
+        OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
+      },
+      select: { id: true },
+    });
+    if (excluded) return { kind: 'excluded' as const };
+    return { kind: 'none' as const };
+  }
+
+  async renameLeadForJoana(whatsappRaw: string, name: string) {
+    const whatsapp = waDigits(whatsappRaw);
+    const siblings = await this.findActiveBookingsByWhatsapp(whatsapp);
+    const userId = siblings.find((item) => item.user?.id)?.user?.id;
+    if (userId) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { name },
+      });
+    }
+    const guestIds = siblings.filter((item) => !item.user).map((item) => item.id);
+    if (guestIds.length > 0) {
+      await this.prisma.rafaCallBooking.updateMany({
+        where: { id: { in: guestIds } },
+        data: { guestName: name },
+      });
+    }
   }
 
   async updateCrm(params: {
