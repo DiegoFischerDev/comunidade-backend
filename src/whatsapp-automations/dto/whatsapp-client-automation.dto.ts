@@ -4,6 +4,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -80,6 +81,14 @@ export class WhatsappClientAutomationInboundDto {
   @IsOptional()
   @IsIn(['audio'])
   kind?: 'audio';
+
+  /**
+   * Nota completa do webhook (key + audioMessage).
+   * A Evolution não guarda a mensagem, por isso o id sozinho não descarrega o áudio.
+   */
+  @IsOptional()
+  @IsObject()
+  mediaMessage?: Record<string, unknown>;
 
   @IsOptional()
   @IsBoolean()

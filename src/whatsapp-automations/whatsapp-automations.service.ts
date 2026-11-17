@@ -148,6 +148,7 @@ export class WhatsappAutomationsService {
         instance,
         pushName: dto.pushName,
         externalMessageId: dto.externalMessageId,
+        ...(dto.mediaMessage ? { mediaMessage: dto.mediaMessage } : {}),
       });
       return { ok: true, status: voice.status };
     }

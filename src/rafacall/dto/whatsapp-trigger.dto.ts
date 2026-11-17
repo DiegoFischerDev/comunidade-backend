@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 /** Payload do receiver (wa-verify): admin envia gatilho na DM → link para o destinatário. */
 export class RafacallWhatsappTriggerDto {
@@ -7,9 +7,15 @@ export class RafacallWhatsappTriggerDto {
   @MaxLength(120)
   recipientNumber!: string;
 
+  @IsOptional()
   @IsString()
   @MaxLength(8000)
-  text!: string;
+  text?: string;
+
+  /** Nota de voz, imagem, vídeo ou documento enviados pelo admin, sem texto. */
+  @IsOptional()
+  @IsIn(['audio', 'image', 'video', 'document', 'sticker'])
+  kind?: 'audio' | 'image' | 'video' | 'document' | 'sticker';
 
   /** Deve ser true — só processamos mensagens enviadas pelo admin (fromMe). */
   @IsOptional()

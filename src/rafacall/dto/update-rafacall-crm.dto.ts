@@ -56,4 +56,9 @@ export class UpdateRafacallCrmDto {
   @Min(0)
   @Max(100_000)
   crmDesiredRent?: number | null;
+
+  /** Chatbot Joana: true = On, false = Off. Vale em qualquer coluna. */
+  @IsOptional()
+  @IsBoolean()
+  crmJoanaEnabled?: boolean;
 }

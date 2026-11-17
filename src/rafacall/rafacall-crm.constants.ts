@@ -39,6 +39,11 @@ const CRM_POST_CALL_STATUSES: RafaCallCrmStatus[] = [
   RafaCallCrmStatus.CONTRATO_ASSINADO,
 ];
 
+/** Nestas colunas a Joana passa a Off ao entrar. O admin pode voltar a ligar. */
+export function isJoanaOffCrmStatus(status: RafaCallCrmStatus): boolean {
+  return CRM_POST_CALL_STATUSES.includes(status);
+}
+
 /**
  * Slot sentinela para leads só no CRM (sem vídeo chamada definida).
  * Não aparece na agenda e `hasVideoCall` fica falso até o admin definir data/hora.

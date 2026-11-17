@@ -416,6 +416,12 @@ model RafaCallBooking {
    */
   crmHasVisa             Boolean?              @map("crm_has_visa")
   /**
+   * Chatbot Joana neste WhatsApp. Off ao entrar em vídeo chamada realizada,
+   * contrato enviado ou contrato assinado, ou quando o admin escreve no WhatsApp.
+   * O admin pode voltar a ligar em qualquer coluna.
+   */
+  crmJoanaEnabled        Boolean               @default(true) @map("crm_joana_enabled")
+  /**
    * Quando preenchido, o cliente deixa de aparecer no kanban CRM (por WhatsApp).
    */
   crmExcludedAt            DateTime?             @map("crm_excluded_at")
@@ -1271,6 +1277,8 @@ model JoanaConversation {
   pendingOutbound     String?   @map("pending_outbound") @db.Text
   farGuidanceSent     Boolean   @default(false) @map("far_guidance_sent")
   schedulingLinkSent  Boolean   @default(false) @map("scheduling_link_sent")
+  /// A Joana não responde. O admin desligou o chatbot ou assumiu o WhatsApp.
+  paused              Boolean   @default(false)
   processing          Boolean   @default(false)
   processingStartedAt DateTime? @map("processing_started_at")
   createdAt           DateTime  @default(now()) @map("created_at")

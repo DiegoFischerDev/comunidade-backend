@@ -1118,7 +1118,8 @@ export class RafacallBookingService {
    */
   async handleWhatsappBookingLinkTrigger(dto: {
     recipientNumber: string;
-    text: string;
+    text?: string;
+    kind?: 'audio' | 'image' | 'video' | 'document' | 'sticker';
     fromMe?: boolean;
     instance?: string;
     externalMessageId?: string;
@@ -1141,18 +1142,36 @@ export class RafacallBookingService {
       return { ok: true, status: 'ignored_instance' };
     }
 
-    const incoming = dto.text.trim();
-    if (!incoming || incoming.toLowerCase() !== triggerPhrase.toLowerCase()) {
-      return { ok: true, status: 'ignored_phrase' };
-    }
-
     const whatsapp = this.normalizeWhatsapp(dto.recipientNumber);
     if (whatsapp.length < 8) {
       return { ok: true, status: 'ignored_invalid_phone' };
     }
 
-    if (!this.claimWhatsappTriggerDelivery(dto, whatsapp)) {
+    const incoming = (dto.text || '').trim();
+    const hasMedia = Boolean(dto.kind);
+    if (!incoming && !hasMedia) {
+      return { ok: true, status: 'ignored_empty' };
+    }
+
+    if (
+      this.wa.isAutomatedOutboundEcho({
+        digits: whatsapp,
+        messageId: dto.externalMessageId,
+        text: incoming,
+        hasMedia,
+      })
+    ) {
+      return { ok: true, status: 'ignored_automated' };
+    }
+
+    if (!this.claimWhatsappTriggerDelivery({ ...dto, text: incoming }, whatsapp)) {
       return { ok: true, status: 'ignored_duplicate' };
+    }
+
+    if (!incoming || incoming.toLowerCase() !== triggerPhrase.toLowerCase()) {
+      await this.crm.setJoanaEnabledForWhatsapp(whatsapp, false);
+      this.logger.log(`Joana desligada: mensagem manual do admin para ${whatsapp}`);
+      return { ok: true, status: 'joana_paused' };
     }
 
     const name =

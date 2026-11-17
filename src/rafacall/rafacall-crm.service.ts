@@ -23,6 +23,7 @@ import {
   formatCrmImmigrationDateKey,
   formatCrmImmigrationForApi,
   isCrmLeadPlaceholderBooking,
+  isJoanaOffCrmStatus,
   parseCrmImmigrationDateInput,
   parseCrmImmigrationInput,
   resolveStatusAfterImmigrationUpdate,
@@ -53,6 +54,7 @@ const BOOKING_CRM_SELECT = {
   crmHasPet: true,
   crmHasVisa: true,
   crmDesiredRent: true,
+  crmJoanaEnabled: true,
   startsAt: true,
   endsAt: true,
   timezone: true,
@@ -81,6 +83,7 @@ type BookingCrmRow = {
   crmHasPet: boolean | null;
   crmHasVisa: boolean | null;
   crmDesiredRent: number | null;
+  crmJoanaEnabled: boolean;
   startsAt: Date;
   endsAt: Date;
   timezone: string;
@@ -243,6 +246,7 @@ export class RafacallCrmService {
       params.crmDesiredRent === undefined
         ? null
         : normalizeDesiredRent(params.crmDesiredRent);
+    const crmJoanaEnabled = !(await this.isJoanaConversationPaused(whatsapp));
 
     const visibleSiblings = await this.findActiveBookingsByWhatsapp(whatsapp);
     if (visibleSiblings.length > 0) {
@@ -284,6 +288,7 @@ export class RafacallCrmService {
           crmHasPet: null,
           crmHasVisa: null,
           crmDesiredRent: desiredRent,
+          crmJoanaEnabled,
         },
         select: BOOKING_CRM_SELECT,
       });
@@ -313,6 +318,7 @@ export class RafacallCrmService {
         crmHasPet: null,
         crmHasVisa: null,
         crmDesiredRent: desiredRent,
+        crmJoanaEnabled,
         crmExcludedAt: null,
       },
       select: BOOKING_CRM_SELECT,
@@ -389,6 +395,7 @@ export class RafacallCrmService {
     crmHasPet?: boolean | null;
     crmHasVisa?: boolean | null;
     crmDesiredRent?: number | null;
+    crmJoanaEnabled?: boolean;
   }) {
     const booking = await this.prisma.rafaCallBooking.findFirst({
       where: {
@@ -422,6 +429,7 @@ export class RafacallCrmService {
       params.crmHasPet !== undefined ||
       params.crmHasVisa !== undefined ||
       params.crmDesiredRent !== undefined;
+    const hasJoanaUpdate = params.crmJoanaEnabled !== undefined;
 
     const normalizedComments = hasCommentsUpdate
       ? params.crmComments?.trim() || null
@@ -489,13 +497,16 @@ export class RafacallCrmService {
         nextHasPet !== crmSource.crmHasPet ||
         nextHasVisa !== crmSource.crmHasVisa ||
         nextDesiredRent !== crmSource.crmDesiredRent);
+    const joanaRequestedChange =
+      hasJoanaUpdate && params.crmJoanaEnabled !== crmSource.crmJoanaEnabled;
 
     const hasAnyFieldUpdate =
       hasStatusChange ||
       hasCommentsUpdate ||
       hasImmigrationDateUpdate ||
       hasVideoCallUpdate ||
-      hasPreferencesUpdate;
+      hasPreferencesUpdate ||
+      hasJoanaUpdate;
 
     if (!hasAnyFieldUpdate) {
       throw new BadRequestException('Indique um novo estado, comentários ou data.');
@@ -506,7 +517,8 @@ export class RafacallCrmService {
       (hasCommentsUpdate && normalizedComments !== currentComments) ||
       immigrationChanged ||
       videoCallChanged ||
-      preferencesChanged;
+      preferencesChanged ||
+      joanaRequestedChange;
 
     if (!hasEffectiveChange) {
       throw new BadRequestException('Nenhuma alteração para guardar.');
@@ -548,6 +560,23 @@ export class RafacallCrmService {
       }
     }
 
+    let nextJoanaEnabled = crmSource.crmJoanaEnabled;
+    if (
+      params.crmJoanaEnabled === undefined &&
+      nextStatus !== crmSource.crmStatus &&
+      isJoanaOffCrmStatus(nextStatus)
+    ) {
+      nextJoanaEnabled = false;
+    }
+    if (params.crmJoanaEnabled !== undefined) {
+      nextJoanaEnabled = params.crmJoanaEnabled;
+    }
+    const joanaChanged = nextJoanaEnabled !== crmSource.crmJoanaEnabled;
+    const enteredJoanaOffColumn =
+      nextJoanaEnabled === false &&
+      nextStatus !== crmSource.crmStatus &&
+      isJoanaOffCrmStatus(nextStatus);
+
     await this.syncCrmToWhatsappGroup(whatsapp, {
       crmStatus: nextStatus,
       crmComments: nextComments,
@@ -558,7 +587,11 @@ export class RafacallCrmService {
       crmHasPet: nextHasPet,
       crmHasVisa: nextHasVisa,
       crmDesiredRent: nextDesiredRent,
+      crmJoanaEnabled: nextJoanaEnabled,
     });
+    if (joanaChanged || enteredJoanaOffColumn) {
+      await this.applyJoanaEnabled(whatsapp, nextJoanaEnabled);
+    }
 
     const merged = this.mergeDisplayAndCrm(nextDisplayBooking, {
       ...crmSource,
@@ -571,6 +604,7 @@ export class RafacallCrmService {
       crmHasPet: nextHasPet,
       crmHasVisa: nextHasVisa,
       crmDesiredRent: nextDesiredRent,
+      crmJoanaEnabled: nextJoanaEnabled,
     });
 
     return this.serializeCrmItemWithPayments(merged);
@@ -827,6 +861,7 @@ export class RafacallCrmService {
     const crmSource = this.pickCrmSource(siblings);
     if (crmSource.crmStatus === params.crmStatus) return;
 
+    const disableJoana = isJoanaOffCrmStatus(params.crmStatus);
     await this.syncCrmToWhatsappGroup(whatsapp, {
       crmStatus: params.crmStatus,
       crmComments: crmSource.crmComments,
@@ -837,7 +872,11 @@ export class RafacallCrmService {
       crmHasPet: crmSource.crmHasPet,
       crmHasVisa: crmSource.crmHasVisa,
       crmDesiredRent: crmSource.crmDesiredRent,
+      ...(disableJoana ? { crmJoanaEnabled: false } : {}),
     });
+    if (disableJoana) {
+      await this.applyJoanaEnabled(whatsapp, false);
+    }
   }
 
   /** Herda CRM de agendamentos anteriores do mesmo WhatsApp (cliente recorrente). */
@@ -851,8 +890,10 @@ export class RafacallCrmService {
     crmHasPet: boolean | null;
     crmHasVisa: boolean | null;
     crmDesiredRent: number | null;
+    crmJoanaEnabled: boolean;
   }> {
     const digits = waDigits(whatsappDigits);
+    const paused = digits ? await this.isJoanaConversationPaused(digits) : false;
     if (!digits) {
       return {
         crmStatus: RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
@@ -864,6 +905,7 @@ export class RafacallCrmService {
         crmHasPet: null,
         crmHasVisa: null,
         crmDesiredRent: null,
+        crmJoanaEnabled: true,
       };
     }
 
@@ -879,6 +921,7 @@ export class RafacallCrmService {
         crmHasPet: null,
         crmHasVisa: null,
         crmDesiredRent: null,
+        crmJoanaEnabled: !paused,
       };
     }
 
@@ -893,6 +936,7 @@ export class RafacallCrmService {
       crmHasPet: crmSource.crmHasPet,
       crmHasVisa: crmSource.crmHasVisa,
       crmDesiredRent: crmSource.crmDesiredRent,
+      crmJoanaEnabled: crmSource.crmJoanaEnabled && !paused,
     };
   }
 
@@ -970,6 +1014,7 @@ export class RafacallCrmService {
         crmHasPet: booking.crmHasPet,
         crmHasVisa: booking.crmHasVisa,
         crmDesiredRent: booking.crmDesiredRent,
+        crmJoanaEnabled: booking.crmJoanaEnabled,
         crmExcludedAt: null,
       },
     });
@@ -1246,6 +1291,7 @@ export class RafacallCrmService {
     crmHasPet: boolean | null;
     crmHasVisa: boolean | null;
     crmDesiredRent: number | null;
+    crmJoanaEnabled: boolean;
   }) {
     return {
       crmStatus: booking.crmStatus,
@@ -1257,6 +1303,7 @@ export class RafacallCrmService {
       crmHasPet: booking.crmHasPet,
       crmHasVisa: booking.crmHasVisa,
       crmDesiredRent: booking.crmDesiredRent,
+      crmJoanaEnabled: booking.crmJoanaEnabled,
     };
   }
 
@@ -1319,6 +1366,7 @@ export class RafacallCrmService {
       crmHasPet: boolean | null;
       crmHasVisa: boolean | null;
       crmDesiredRent: number | null;
+      crmJoanaEnabled?: boolean;
     },
   ) {
     await this.prisma.rafaCallBooking.updateMany({
@@ -1339,6 +1387,87 @@ export class RafacallCrmService {
         crmHasPet: data.crmHasPet,
         crmHasVisa: data.crmHasVisa,
         crmDesiredRent: data.crmDesiredRent,
+        ...(data.crmJoanaEnabled !== undefined
+          ? { crmJoanaEnabled: data.crmJoanaEnabled }
+          : {}),
+      },
+    });
+  }
+
+  /** A Joana responde se a ficha visível está On e a conversa não está em pausa. */
+  async isJoanaActive(whatsappRaw: string): Promise<boolean> {
+    const whatsapp = waDigits(whatsappRaw);
+    if (!whatsapp) return false;
+
+    const visible = await this.findActiveBookingsByWhatsapp(whatsapp);
+    if (visible.length > 0 && !this.pickCrmSource(visible).crmJoanaEnabled) {
+      return false;
+    }
+    return !(await this.isJoanaConversationPaused(whatsapp));
+  }
+
+  /** Off ou On para este WhatsApp, mesmo sem ficha no kanban. */
+  async setJoanaEnabledForWhatsapp(whatsappRaw: string, enabled: boolean): Promise<void> {
+    const whatsapp = waDigits(whatsappRaw);
+    if (!whatsapp) return;
+    await this.applyJoanaEnabled(whatsapp, enabled);
+  }
+
+  private async isJoanaConversationPaused(whatsapp: string): Promise<boolean> {
+    const row = await this.prisma.joanaConversation.findUnique({
+      where: { whatsappDigits: whatsapp },
+      select: { paused: true },
+    });
+    return row?.paused === true;
+  }
+
+  private async applyJoanaEnabled(whatsapp: string, enabled: boolean): Promise<void> {
+    await this.prisma.rafaCallBooking.updateMany({
+      where: {
+        OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
+      },
+      data: { crmJoanaEnabled: enabled },
+    });
+
+    if (enabled) {
+      await this.prisma.joanaConversation.updateMany({
+        where: { whatsappDigits: whatsapp },
+        data: { paused: false },
+      });
+      return;
+    }
+
+    const existing = await this.prisma.joanaConversation.findUnique({
+      where: { whatsappDigits: whatsapp },
+      select: { id: true },
+    });
+    if (!existing) {
+      try {
+        await this.prisma.joanaConversation.create({
+          data: {
+            whatsappDigits: whatsapp,
+            paused: true,
+            buffer: [] as Prisma.InputJsonValue,
+          },
+        });
+        return;
+      } catch (err: unknown) {
+        if (
+          !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+          err.code !== 'P2002'
+        ) {
+          throw err;
+        }
+      }
+    }
+
+    await this.prisma.joanaConversation.update({
+      where: { whatsappDigits: whatsapp },
+      data: {
+        paused: true,
+        buffer: [] as Prisma.InputJsonValue,
+        pendingOutbound: null,
+        processing: false,
       },
     });
   }
@@ -1386,6 +1515,7 @@ export class RafacallCrmService {
       | 'crmHasPet'
       | 'crmHasVisa'
       | 'crmDesiredRent'
+      | 'crmJoanaEnabled'
     >,
   ): BookingCrmRow {
     return {
@@ -1399,6 +1529,7 @@ export class RafacallCrmService {
       crmHasPet: crmSource.crmHasPet,
       crmHasVisa: crmSource.crmHasVisa,
       crmDesiredRent: crmSource.crmDesiredRent,
+      crmJoanaEnabled: crmSource.crmJoanaEnabled,
     };
   }
 
@@ -1566,6 +1697,7 @@ export class RafacallCrmService {
       crmHasPet: boolean | null;
       crmHasVisa: boolean | null;
       crmDesiredRent: number | null;
+      crmJoanaEnabled: boolean;
       startsAt: Date;
       endsAt: Date;
       timezone: string;
@@ -1597,6 +1729,7 @@ export class RafacallCrmService {
       crmHasPet: item.crmHasPet,
       crmHasVisa: item.crmHasVisa,
       crmDesiredRent: item.crmDesiredRent,
+      crmJoanaEnabled: item.crmJoanaEnabled,
       payments,
       paymentsTotal,
       documents,

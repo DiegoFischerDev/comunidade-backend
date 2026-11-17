@@ -43,7 +43,7 @@ describe('JoanaService.acceptVoiceNote', () => {
     const service = new JoanaService(
       {} as never,
       wa as never,
-      {} as never,
+      { isJoanaActive: jest.fn().mockResolvedValue(true) } as never,
       openai as never,
     );
 
@@ -82,7 +82,7 @@ describe('JoanaService.acceptVoiceNote', () => {
     const service = new JoanaService(
       prisma as never,
       wa as never,
-      {} as never,
+      { isJoanaActive: jest.fn().mockResolvedValue(true) } as never,
       openai as never,
     );
 
@@ -108,5 +108,28 @@ describe('JoanaService.acceptVoiceNote', () => {
         }),
       }),
     );
+  });
+
+  it('não responde quando a Joana está desligada para o número', async () => {
+    const wa = {
+      getMediaBase64: jest.fn(),
+      sendText: jest.fn(),
+    };
+    const service = new JoanaService(
+      {} as never,
+      wa as never,
+      { isJoanaActive: jest.fn().mockResolvedValue(false) } as never,
+      { transcribeAudio: jest.fn() } as never,
+    );
+
+    const result = await service.acceptVoiceNote({
+      whatsapp: '351912345678',
+      instance: 'comunidade MEO',
+      externalMessageId: 'MSG1',
+    });
+
+    expect(result).toEqual({ handled: true, status: 'paused' });
+    expect(wa.getMediaBase64).not.toHaveBeenCalled();
+    expect(wa.sendText).not.toHaveBeenCalled();
   });
 });

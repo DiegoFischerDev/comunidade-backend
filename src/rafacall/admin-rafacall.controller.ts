@@ -153,6 +153,7 @@ export class AdminRafacallController {
       crmHasPet: dto.crmHasPet,
       crmHasVisa: dto.crmHasVisa,
       crmDesiredRent: dto.crmDesiredRent,
+      crmJoanaEnabled: dto.crmJoanaEnabled,
     });
   }
 

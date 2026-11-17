@@ -1,9 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { isBase64, isURL } from 'class-validator';
+import {
+  AutomatedOutboundRegistry,
+  readEvolutionMessageId,
+} from './automated-outbound';
 
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
+  private readonly automatedOutbound = new AutomatedOutboundRegistry();
 
   private get base(): string {
     return (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
@@ -165,7 +170,7 @@ export class WhatsAppService {
   async getMediaBase64(
     instance: string | undefined,
     messageId: string,
-    opts?: { convertToMp4?: boolean },
+    opts?: { convertToMp4?: boolean; message?: Record<string, unknown> },
   ): Promise<{ base64: string; mimetype: string; fileName: string } | null> {
     const base = this.base;
     const key = this.key;
@@ -181,21 +186,30 @@ export class WhatsAppService {
           : all;
 
     const signal = this.evolutionRequestSignal('default');
+    const lookupMessage =
+      opts?.message && typeof opts.message === 'object'
+        ? opts.message
+        : { key: { id: messageId } };
+    let lastError = '';
     for (const inst of attempts) {
       try {
         const res = await fetch(
-          `${base}/chat/getBase64FromMediaMessage/${inst}`,
+          `${base}/chat/getBase64FromMediaMessage/${encodeURIComponent(inst)}`,
           {
             method: 'POST',
             headers: { apikey: key, 'content-type': 'application/json' },
             body: JSON.stringify({
-              message: { key: { id: messageId } },
+              message: lookupMessage,
               convertToMp4: opts?.convertToMp4 === true,
             }),
             ...(signal ? { signal } : {}),
           },
         );
-        if (!res.ok) continue;
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          lastError = `${inst} ${res.status} ${body.slice(0, 180)}`.trim();
+          continue;
+        }
         const data: unknown = await res.json().catch(() => null);
         const b64 =
           data && typeof data === 'object'
@@ -213,10 +227,14 @@ export class WhatsAppService {
             fileName: typeof obj.fileName === 'string' ? obj.fileName : '',
           };
         }
-      } catch {
-        // tenta a próxima instância
+        lastError = `${inst} resposta sem base64`;
+      } catch (err: unknown) {
+        lastError = `${inst} ${err instanceof Error ? err.message : 'erro de rede'}`;
       }
     }
+    this.logger.warn(
+      `getBase64FromMediaMessage ${messageId}: ${lastError || 'sem resposta'}`,
+    );
     return null;
   }
 
@@ -486,6 +504,37 @@ export class WhatsAppService {
     return null;
   }
 
+  /**
+   * Eco de uma mensagem que este processo acabou de enviar.
+   * Não conta como o admin a assumir a conversa.
+   */
+  isAutomatedOutboundEcho(input: {
+    digits: string;
+    messageId?: string | null;
+    text?: string | null;
+    hasMedia?: boolean;
+  }): boolean {
+    return this.automatedOutbound.isAutomatedEcho(input);
+  }
+
+  private rememberAutomatedSend(number: string, text: string, media = false): void {
+    if (!number || number.includes('@')) return;
+    if (text.trim()) this.automatedOutbound.rememberText(number, text);
+    if (media) this.automatedOutbound.rememberMedia(number);
+  }
+
+  private forgetAutomatedSend(number: string, text: string, media = false): void {
+    if (!number || number.includes('@')) return;
+    if (text.trim()) this.automatedOutbound.forgetText(number, text);
+    if (media) this.automatedOutbound.forgetMedia(number);
+  }
+
+  private async rememberAutomatedResponse(res: Response): Promise<void> {
+    const raw = await res.text().catch(() => '');
+    const id = readEvolutionMessageId(raw);
+    if (id) this.automatedOutbound.rememberMessageId(id);
+  }
+
   async sendText(
     toDigits: string,
     text: string,
@@ -509,34 +558,42 @@ export class WhatsAppService {
 
     const attempts = this.resolveSendInstances(opts?.preferredInstance);
     let lastError = '';
+    this.rememberAutomatedSend(number, text);
+    let delivered = false;
 
     const reqSignal = this.evolutionRequestSignal();
-    for (let i = 0; i < attempts.length; i++) {
-      const instance = attempts[i];
-      try {
-        const res = await fetch(`${base}/message/sendText/${instance}`, {
-          method: 'POST',
-          headers: { apikey: key, 'content-type': 'application/json' },
-          body: JSON.stringify({ number, text }),
-          ...(reqSignal ? { signal: reqSignal } : {}),
-        });
-        if (res.ok) {
-          if (i > 0) {
-            this.logger.warn(
-              `sendText entregue via instância de reserva: ${instance}`,
-            );
+    try {
+      for (let i = 0; i < attempts.length; i++) {
+        const instance = attempts[i];
+        try {
+          const res = await fetch(`${base}/message/sendText/${instance}`, {
+            method: 'POST',
+            headers: { apikey: key, 'content-type': 'application/json' },
+            body: JSON.stringify({ number, text }),
+            ...(reqSignal ? { signal: reqSignal } : {}),
+          });
+          if (res.ok) {
+            delivered = true;
+            await this.rememberAutomatedResponse(res);
+            if (i > 0) {
+              this.logger.warn(
+                `sendText entregue via instância de reserva: ${instance}`,
+              );
+            }
+            return;
           }
-          return;
+          const body = await res.text().catch(() => '');
+          lastError = `${res.status} ${body}`.trim();
+        } catch (err: any) {
+          lastError = err?.message ? String(err.message) : 'erro de rede';
         }
-        const body = await res.text().catch(() => '');
-        lastError = `${res.status} ${body}`.trim();
-      } catch (err: any) {
-        lastError = err?.message ? String(err.message) : 'erro de rede';
       }
-    }
-    this.logger.warn(`Evolution sendText falhou em todas as instâncias: ${lastError}`);
-    if (requireDelivery) {
-      throw new Error(lastError || 'Evolution sendText falhou.');
+      this.logger.warn(`Evolution sendText falhou em todas as instâncias: ${lastError}`);
+      if (requireDelivery) {
+        throw new Error(lastError || 'Evolution sendText falhou.');
+      }
+    } finally {
+      if (!delivered) this.forgetAutomatedSend(number, text);
     }
   }
 
@@ -592,36 +649,44 @@ export class WhatsAppService {
     const attempts = this.resolveSendInstances(params.preferredInstance);
     let lastError = '';
     const reqSignal = this.evolutionRequestSignal();
+    this.rememberAutomatedSend(number, '', true);
+    let delivered = false;
 
-    for (let i = 0; i < attempts.length; i++) {
-      const instance = attempts[i];
-      try {
-        const res = await fetch(`${base}/message/sendWhatsAppAudio/${instance}`, {
-          method: 'POST',
-          headers: { apikey: key, 'content-type': 'application/json' },
-          body: JSON.stringify({ number, audio: audioPayload }),
-          ...(reqSignal ? { signal: reqSignal } : {}),
-        });
-        if (res.ok) {
-          if (i > 0) {
-            this.logger.warn(
-              `sendWhatsAppAudio entregue via instância de reserva: ${instance}`,
-            );
+    try {
+      for (let i = 0; i < attempts.length; i++) {
+        const instance = attempts[i];
+        try {
+          const res = await fetch(`${base}/message/sendWhatsAppAudio/${instance}`, {
+            method: 'POST',
+            headers: { apikey: key, 'content-type': 'application/json' },
+            body: JSON.stringify({ number, audio: audioPayload }),
+            ...(reqSignal ? { signal: reqSignal } : {}),
+          });
+          if (res.ok) {
+            delivered = true;
+            await this.rememberAutomatedResponse(res);
+            if (i > 0) {
+              this.logger.warn(
+                `sendWhatsAppAudio entregue via instância de reserva: ${instance}`,
+              );
+            }
+            return;
           }
-          return;
+          const body = await res.text().catch(() => '');
+          lastError = `${res.status} ${body}`.trim();
+        } catch (err: unknown) {
+          lastError =
+            err instanceof Error && err.message ? err.message : 'erro de rede';
         }
-        const body = await res.text().catch(() => '');
-        lastError = `${res.status} ${body}`.trim();
-      } catch (err: unknown) {
-        lastError =
-          err instanceof Error && err.message ? err.message : 'erro de rede';
       }
-    }
-    this.logger.warn(
-      `Evolution sendWhatsAppAudio falhou em todas as instâncias: ${lastError}`,
-    );
-    if (requireDelivery) {
-      throw new Error(lastError || 'Evolution sendWhatsAppAudio falhou.');
+      this.logger.warn(
+        `Evolution sendWhatsAppAudio falhou em todas as instâncias: ${lastError}`,
+      );
+      if (requireDelivery) {
+        throw new Error(lastError || 'Evolution sendWhatsAppAudio falhou.');
+      }
+    } finally {
+      if (!delivered) this.forgetAutomatedSend(number, '', true);
     }
   }
 
@@ -692,40 +757,49 @@ export class WhatsAppService {
           : params.mediaType === 'audio'
             ? 'audio'
             : 'image';
-    for (let i = 0; i < attempts.length; i++) {
-      const instance = attempts[i];
-      try {
-        const res = await fetch(`${base}/message/sendMedia/${instance}`, {
-          method: 'POST',
-          headers: { apikey: key, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            number,
-            // Evolution v2.x valida enum em minúsculas: image | document | video | audio
-            mediatype,
-            mimetype: params.mimeType,
-            caption: params.caption ?? '',
-            media: mediaPayload,
-            fileName: params.fileName,
-          }),
-          ...(mediaSignal ? { signal: mediaSignal } : {}),
-        });
-        if (res.ok) {
-          if (i > 0) {
-            this.logger.warn(
-              `sendMedia entregue via instância de reserva: ${instance}`,
-            );
+    const caption = params.caption ?? '';
+    this.rememberAutomatedSend(number, caption, true);
+    let delivered = false;
+    try {
+      for (let i = 0; i < attempts.length; i++) {
+        const instance = attempts[i];
+        try {
+          const res = await fetch(`${base}/message/sendMedia/${instance}`, {
+            method: 'POST',
+            headers: { apikey: key, 'content-type': 'application/json' },
+            body: JSON.stringify({
+              number,
+              // Evolution v2.x valida enum em minúsculas: image | document | video | audio
+              mediatype,
+              mimetype: params.mimeType,
+              caption,
+              media: mediaPayload,
+              fileName: params.fileName,
+            }),
+            ...(mediaSignal ? { signal: mediaSignal } : {}),
+          });
+          if (res.ok) {
+            delivered = true;
+            await this.rememberAutomatedResponse(res);
+            if (i > 0) {
+              this.logger.warn(
+                `sendMedia entregue via instância de reserva: ${instance}`,
+              );
+            }
+            return;
           }
-          return;
+          const body = await res.text().catch(() => '');
+          lastError = `${res.status} ${body}`.trim();
+        } catch (err: any) {
+          lastError = err?.message ? String(err.message) : 'erro de rede';
         }
-        const body = await res.text().catch(() => '');
-        lastError = `${res.status} ${body}`.trim();
-      } catch (err: any) {
-        lastError = err?.message ? String(err.message) : 'erro de rede';
       }
-    }
-    this.logger.warn(`Evolution sendMedia falhou em todas as instâncias: ${lastError}`);
-    if (requireDelivery) {
-      throw new Error(lastError || 'Evolution sendMedia falhou.');
+      this.logger.warn(`Evolution sendMedia falhou em todas as instâncias: ${lastError}`);
+      if (requireDelivery) {
+        throw new Error(lastError || 'Evolution sendMedia falhou.');
+      }
+    } finally {
+      if (!delivered) this.forgetAutomatedSend(number, caption, true);
     }
   }
 }

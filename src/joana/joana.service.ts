@@ -69,7 +69,12 @@ export class JoanaService {
     instance: string;
     pushName?: string;
     externalMessageId?: string;
+    mediaMessage?: Record<string, unknown>;
   }): Promise<{ handled: true; status: string }> {
+    if (!(await this.crm.isJoanaActive(input.whatsapp))) {
+      return { handled: true, status: 'paused' };
+    }
+
     const messageId = (input.externalMessageId || '').trim();
     if (!messageId) {
       await this.replyUnheard(input.whatsapp, input.instance, 'mensagem sem id');
@@ -79,6 +84,7 @@ export class JoanaService {
     try {
       const media = await this.wa.getMediaBase64(input.instance, messageId, {
         convertToMp4: false,
+        message: input.mediaMessage,
       });
       if (!media?.base64) {
         await this.replyUnheard(input.whatsapp, input.instance, 'Evolution sem bytes');
@@ -129,6 +135,10 @@ export class JoanaService {
     };
     if (!item.text) return { handled: true, status: 'ignored_empty' };
 
+    if (!(await this.crm.isJoanaActive(input.whatsapp))) {
+      return { handled: true, status: 'paused' };
+    }
+
     await this.appendBuffer({
       whatsapp: input.whatsapp,
       instance: instance || allowed || null,
@@ -136,6 +146,18 @@ export class JoanaService {
       item,
     });
     return { handled: true, status: 'buffered' };
+  }
+
+  private async dropBecausePaused(id: string): Promise<void> {
+    await this.prisma.joanaConversation.update({
+      where: { id },
+      data: {
+        buffer: [] as unknown as Prisma.InputJsonValue,
+        pendingOutbound: null,
+        processing: false,
+        paused: true,
+      },
+    });
   }
 
   private async replyUnheard(whatsapp: string, instance: string, reason: string) {
@@ -265,6 +287,11 @@ export class JoanaService {
       const row = await this.prisma.joanaConversation.findUnique({ where: { id } });
       if (!row) return;
 
+      if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
+        await this.dropBecausePaused(id);
+        return;
+      }
+
       if (row.pendingOutbound) {
         await this.wa.sendText(row.whatsappDigits, row.pendingOutbound, {
           preferredInstance: row.instance || undefined,
@@ -323,6 +350,11 @@ export class JoanaService {
           whatsapp: row.whatsappDigits,
           instance: row.instance,
         });
+        return;
+      }
+
+      if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
+        await this.dropBecausePaused(id);
         return;
       }
 
@@ -502,6 +534,11 @@ export class JoanaService {
     whatsapp: string;
     instance: string | null;
   }) {
+    if (!(await this.crm.isJoanaActive(input.whatsapp))) {
+      await this.dropBecausePaused(input.id);
+      return;
+    }
+
     let outboundSaved: string | null = null;
     try {
       await this.wa.sendText(input.whatsapp, input.outbound, {
