@@ -22,6 +22,13 @@ describe('whatsappAudioFileName', () => {
     });
   });
 
+  it('troca .oga por ogg, porque a OpenAI não aceita oga', () => {
+    expect(whatsappAudioFileName('audio/ogg; codecs=opus', '3EB0.oga')).toEqual({
+      name: 'nota.ogg',
+      mime: 'audio/ogg',
+    });
+  });
+
   it('mantém um nome que já tem extensão', () => {
     expect(whatsappAudioFileName('audio/mpeg', 'fala.mp3')).toEqual({
       name: 'fala.mp3',
