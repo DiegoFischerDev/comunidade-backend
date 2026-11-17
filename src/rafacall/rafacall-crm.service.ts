@@ -605,6 +605,7 @@ export class RafacallCrmService {
       crmHasVisa: nextHasVisa,
       crmDesiredRent: nextDesiredRent,
       crmJoanaEnabled: nextJoanaEnabled,
+      updatedAt: new Date(),
     });
 
     return this.serializeCrmItemWithPayments(merged);
@@ -1516,6 +1517,7 @@ export class RafacallCrmService {
       | 'crmHasVisa'
       | 'crmDesiredRent'
       | 'crmJoanaEnabled'
+      | 'updatedAt'
     >,
   ): BookingCrmRow {
     return {
@@ -1530,6 +1532,7 @@ export class RafacallCrmService {
       crmHasVisa: crmSource.crmHasVisa,
       crmDesiredRent: crmSource.crmDesiredRent,
       crmJoanaEnabled: crmSource.crmJoanaEnabled,
+      updatedAt: crmSource.updatedAt,
     };
   }
 
@@ -1704,6 +1707,7 @@ export class RafacallCrmService {
       origin: string;
       guestName: string | null;
       guestWhatsapp: string | null;
+      updatedAt: Date;
       user: { id: string; name: string | null; whatsapp: string | null } | null;
     },
     payments: ReturnType<RafacallCrmService['serializePayment']>[] = [],
@@ -1740,6 +1744,7 @@ export class RafacallCrmService {
       userId: item.user?.id ?? null,
       userName: item.user?.name ?? item.guestName ?? null,
       whatsappDigits,
+      updatedAt: item.updatedAt.toISOString(),
     };
   }
 }

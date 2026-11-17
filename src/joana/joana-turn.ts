@@ -241,33 +241,17 @@ export function confirmationQuestion(field: JoanaField, value: string): string {
   }
 }
 
-function ackLine(field: JoanaField, value: string): string {
-  switch (field) {
-    case 'immigration':
-      return value
-        ? `Anotei a data para ${formatImmigrationLabel(value)}.`
-        : 'Tirei a data prevista de imigração.';
-    case 'visa':
-      return value === 'true'
-        ? 'Anotei que você tem visto.'
-        : 'Anotei que você ainda não tem visto.';
-    case 'cities':
-      return value ? `Anotei as cidades: ${value}.` : 'Tirei as cidades pretendidas.';
-    case 'typology': {
-      const speech = JOANA_TYPOLOGY_SPEECH[value as JoanaTypology];
-      return speech
-        ? `Anotei a tipologia ${value}, ${speech}.`
-        : 'Tirei a tipologia.';
-    }
-    case 'rent':
-      return value
-        ? `Anotei o valor do aluguel pretendido: €${value}.`
-        : 'Tirei o valor do aluguel pretendido.';
-    case 'pet':
-      return value === 'true' ? 'Anotei que você tem pet.' : 'Anotei que você não tem pet.';
-    case 'name':
-      return value ? `Anotei seu nome, ${value}.` : 'Tirei o nome.';
-  }
+/** Apresentação usada quando ainda não há ficha e a Joana ainda não se apresentou. */
+export const JOANA_INTRO =
+  'Oi, eu sou a Joana, atendente virtual da Rafa. O relocation é uma assessoria para alugar ou comprar imóvel em Portugal. A Rafa ajuda na busca do imóvel, nas visitas por videochamada, na análise dos documentos e na negociação com os proprietários.';
+
+export const JOANA_INTEREST_QUESTION = 'Você tem interesse nesse serviço?';
+
+/** Garante a apresentação quando o modelo não se apresentou. */
+export function ensureJoanaIntro(reply: string, needsIntro: boolean): string {
+  const text = reply.trim();
+  if (!needsIntro || /joana/i.test(text)) return text;
+  return text ? `${JOANA_INTRO}\n\n${text}` : JOANA_INTRO;
 }
 
 export function missingFieldQuestion(profile: JoanaProfile): string | null {
@@ -295,24 +279,32 @@ export function missingFieldQuestion(profile: JoanaProfile): string | null {
   return null;
 }
 
-/** Aviso do que foi anotado e, a seguir, uma pergunta para o que ainda falta. */
-export function composeJoanaReply(reply: string, append: string[], fallback: string): string {
-  const extra = append.map((line) => line.trim()).filter(Boolean);
-  const noted = extra.some((line) => isAckLine(line));
-  if (noted) {
-    const acks = extra.filter((line) => isAckLine(line));
-    const rest = extra.filter((line) => !isAckLine(line));
-    const question = firstQuestion(withoutHelpPitch(withoutSaveClaims(reply)));
-    const restLines = question ? rest.filter((line) => !line.includes('?')) : keepFirstQuestionLine(rest);
-    return [...acks, ...restLines, question].filter(Boolean).join('\n\n').slice(0, 4000);
+/**
+ * A fala da Joana fica como ela escreveu. Uma frase que comente a gravação sai.
+ * A pergunta do sistema só entra se ela própria não tiver perguntado nada.
+ */
+export function composeJoanaReply(
+  reply: string,
+  append: string[],
+  fallback: string,
+  saved = false,
+): string {
+  const cleaned = saved
+    ? withoutHelpPitch(withoutSaveClaims(reply))
+    : withoutSaveClaims(reply);
+  const extras = append
+    .map((line) => line.trim())
+    .filter((line) => line && !isAckLine(line));
+  const guidance = extras.filter((line) => !line.includes('?'));
+  const systemQuestion = extras.find((line) => line.includes('?')) ?? '';
+
+  if (hasQuestion(cleaned)) {
+    return [keepFirstQuestion(cleaned), ...guidance].filter(Boolean).join('\n\n').slice(0, 4000);
   }
 
-  const systemAsks = extra.some((line) => line.includes('?'));
-  const cleaned = withoutSaveClaims(reply);
-  const narrative = systemAsks ? dropQuestions(cleaned) : keepFirstQuestion(cleaned);
-  const lines = systemAsks ? keepFirstQuestionLine(extra) : extra;
-  const intro = narrative || (lines.length ? '' : fallback.trim());
-  return [intro, ...lines].filter(Boolean).join('\n\n').slice(0, 4000);
+  const narrative = dropQuestions(cleaned);
+  const intro = narrative || (systemQuestion || guidance.length ? '' : fallback.trim());
+  return [intro, ...guidance, systemQuestion].filter(Boolean).join('\n\n').slice(0, 4000);
 }
 
 function isAckLine(line: string): boolean {
@@ -326,15 +318,20 @@ function withoutHelpPitch(text: string): string {
     .trim();
 }
 
-function firstQuestion(text: string): string {
-  return splitSentences(text).find((sentence) => sentence.endsWith('?')) ?? '';
-}
-
 function withoutSaveClaims(text: string): string {
   return splitSentences(text)
-    .filter((sentence) => !/^(anotei|tirei)\b/i.test(sentence))
+    .filter((sentence) => !isSaveClaim(sentence))
     .join(' ')
     .trim();
+}
+
+function isSaveClaim(sentence: string): boolean {
+  return /\b(anotei|tirei|registrei|salvei|guardei)\b/i.test(sentence)
+    || /\bdeixei como estava\b/i.test(sentence);
+}
+
+function hasQuestion(text: string): boolean {
+  return splitSentences(text).some((sentence) => sentence.endsWith('?'));
 }
 
 function splitSentences(text: string): string[] {
@@ -363,27 +360,6 @@ function keepFirstQuestion(text: string): string {
     })
     .join(' ')
     .trim();
-}
-
-function keepFirstQuestionLine(lines: string[]): string[] {
-  let keptQuestion = false;
-  return lines.flatMap((line) => {
-    const sentences = splitSentences(line).filter((sentence) => {
-      if (!sentence.endsWith('?')) return true;
-      if (keptQuestion) return false;
-      keptQuestion = true;
-      return true;
-    });
-    const next = sentences.join(' ').trim();
-    return next ? [next] : [];
-  });
-}
-
-function isConcrete(proposal: JoanaProposal): boolean {
-  return FIELD_ORDER.some((field) => {
-    const value = proposedRaw(proposal, field);
-    return value !== undefined && value !== '';
-  });
 }
 
 function applyValue(profile: JoanaProfile, patch: JoanaCrmPatch, field: JoanaField, value: string) {
@@ -443,21 +419,22 @@ export function applyJoanaProposal(input: {
     } else {
       applyValue(profile, patch, field, value);
     }
-    append.push(ackLine(field, value));
   };
 
-  if (!input.excluded && pending && input.proposal.confirmation === 'yes') {
+  const canCollect =
+    !input.excluded && (input.hasLead || input.proposal.interested === true);
+
+  if (canCollect && pending && input.proposal.confirmation === 'yes') {
     const current = currentRaw(profile, pending.field);
     if (!sameText(current, pending.value)) {
       remember(pending.field, pending.value);
     }
     pending = null;
   } else if (pending && input.proposal.confirmation === 'no') {
-    append.push('Deixei como estava.');
     pending = null;
   }
 
-  if (!input.excluded) {
+  if (canCollect) {
     for (const field of FIELD_ORDER) {
       const proposed = proposedRaw(input.proposal, field);
       if (proposed === undefined) continue;
@@ -474,13 +451,13 @@ export function applyJoanaProposal(input: {
   if (!input.proposal.confirmation) pending = null;
 
   const createLead =
-    !input.hasLead &&
-    !input.excluded &&
-    (input.proposal.interested === true || isConcrete(input.proposal));
+    !input.hasLead && !input.excluded && input.proposal.interested === true;
 
   if (input.hasLead || createLead) {
     const question = missingFieldQuestion(profile);
     if (question) append.push(question);
+  } else if (!input.hasLead && !input.excluded && input.proposal.interested !== false) {
+    append.push(JOANA_INTEREST_QUESTION);
   }
 
   const hasPatch = Object.keys(patch).length > 0;

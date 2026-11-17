@@ -1,9 +1,12 @@
 import {
+  JOANA_INTEREST_QUESTION,
+  JOANA_INTRO,
   applyJoanaProposal,
   canonicalImmigration,
   composeJoanaReply,
   confirmationQuestion,
   emptyJoanaProfile,
+  ensureJoanaIntro,
   parseDesiredRent,
   type JoanaProfile,
 } from './joana-turn';
@@ -51,9 +54,42 @@ describe('applyJoanaProposal', () => {
     expect(result.createLead).toBe(false);
     expect(result.crmPatch).toBeNull();
     expect(result.pending).toBeNull();
+    expect(result.append).toEqual([JOANA_INTEREST_QUESTION]);
   });
 
-  it('interesse ou um dado concreto cria ficha e grava o campo vazio', () => {
+  it('um dado concreto sem interesse não cria ficha nem grava', () => {
+    const result = applyJoanaProposal({
+      hasLead: false,
+      excluded: false,
+      profile: emptyJoanaProfile(),
+      pending: null,
+      proposal: {
+        interested: null,
+        confirmation: null,
+        cities: 'Viseu',
+        immigration: '2027-03-01',
+      },
+    });
+    expect(result.createLead).toBe(false);
+    expect(result.crmPatch).toBeNull();
+    expect(result.nameToSave).toBeNull();
+    expect(result.append).toEqual([JOANA_INTEREST_QUESTION]);
+  });
+
+  it('recusa não cria ficha nem volta a perguntar o interesse', () => {
+    const result = applyJoanaProposal({
+      hasLead: false,
+      excluded: false,
+      profile: emptyJoanaProfile(),
+      pending: null,
+      proposal: { interested: false, confirmation: null, cities: 'Porto' },
+    });
+    expect(result.createLead).toBe(false);
+    expect(result.crmPatch).toBeNull();
+    expect(result.append).toEqual([]);
+  });
+
+  it('interesse cria ficha, grava o que veio junto e pergunta a data', () => {
     const result = applyJoanaProposal({
       hasLead: false,
       excluded: false,
@@ -67,7 +103,6 @@ describe('applyJoanaProposal', () => {
     });
     expect(result.createLead).toBe(true);
     expect(result.crmPatch?.cities).toBe('Viseu, Aveiro e São Pedro do Sul');
-    expect(result.append.some((line) => line.startsWith('Anotei as cidades'))).toBe(true);
     expect(result.append.some((line) => line.includes('Para quando'))).toBe(true);
   });
 
@@ -85,7 +120,7 @@ describe('applyJoanaProposal', () => {
     });
     expect(result.crmPatch?.immigration).toBe('2027-03-01');
     expect(result.pending).toBeNull();
-    expect(result.append).toEqual(['Anotei a data para 01/03/2027.']);
+    expect(result.append).toEqual([]);
   });
 
   it('sim grava a confirmação pendente', () => {
@@ -103,7 +138,7 @@ describe('applyJoanaProposal', () => {
     });
     expect(result.crmPatch?.typology).toBe('T2');
     expect(result.pending).toBeNull();
-    expect(result.append[0]).toContain('dois quartos');
+    expect(result.append).toEqual([]);
   });
 
   it('não mantém o valor anterior', () => {
@@ -120,7 +155,7 @@ describe('applyJoanaProposal', () => {
     });
     expect(result.crmPatch).toBeNull();
     expect(result.pending).toBeNull();
-    expect(result.append).toContain('Deixei como estava.');
+    expect(result.append).toEqual([]);
   });
 
   it('um dado novo grava e descarta a confirmação antiga', () => {
@@ -137,10 +172,10 @@ describe('applyJoanaProposal', () => {
     });
     expect(result.pending).toBeNull();
     expect(result.crmPatch?.hasPet).toBe(true);
-    expect(result.append[0]).toBe('Anotei que você tem pet.');
+    expect(result.append).toEqual([]);
   });
 
-  it('anota o visto e segue para as cidades', () => {
+  it('grava o visto e segue para as cidades', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -149,7 +184,6 @@ describe('applyJoanaProposal', () => {
       proposal: { interested: null, confirmation: null, hasVisa: false },
     });
     expect(result.crmPatch?.hasVisa).toBe(false);
-    expect(result.append[0]).toBe('Anotei que você ainda não tem visto.');
     expect(result.append.some((line) => line.includes('cidades'))).toBe(true);
   });
 
@@ -165,7 +199,7 @@ describe('applyJoanaProposal', () => {
     expect(result.append[0]).toBe('Você já tem visto para Portugal?');
   });
 
-  it('anota o aluguel pretendido e segue para o pet', () => {
+  it('grava o aluguel pretendido e segue para o pet', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -174,7 +208,6 @@ describe('applyJoanaProposal', () => {
       proposal: { interested: null, confirmation: null, desiredRent: 900 },
     });
     expect(result.crmPatch?.desiredRent).toBe(900);
-    expect(result.append[0]).toBe('Anotei o valor do aluguel pretendido: €900.');
     expect(result.append.some((line) => line.includes('animal de estimação'))).toBe(true);
   });
 
@@ -204,16 +237,14 @@ describe('applyJoanaProposal', () => {
 });
 
 describe('composeJoanaReply', () => {
-  it('tira a pergunta do modelo quando o sistema já pergunta', () => {
+  it('mantém a pergunta da Joana quando ela já continuou a conversa', () => {
     const text = composeJoanaReply(
-      'O Rafa pode ajudar na busca por um T3 em São Pedro do Sul e Aveiro. Você tem animal de estimação?',
-      ['Quer atualizar as cidades pretendidas para São Pedro do Sul e Aveiro?'],
+      'Março é um bom mês. Você já tem visto para Portugal?',
+      ['Quais cidades você está considerando?'],
       'fallback',
+      true,
     );
-    expect(text).toBe(
-      'O Rafa pode ajudar na busca por um T3 em São Pedro do Sul e Aveiro.\n\nQuer atualizar as cidades pretendidas para São Pedro do Sul e Aveiro?',
-    );
-    expect(text.match(/\?/g)).toHaveLength(1);
+    expect(text).toBe('Março é um bom mês. Você já tem visto para Portugal?');
   });
 
   it('deixa só a primeira pergunta quando o sistema não pergunta', () => {
@@ -221,39 +252,48 @@ describe('composeJoanaReply', () => {
     expect(text).toBe('Oi. Qual a cidade?');
   });
 
-  it('quando anotou um dado, avisa e fica com a pergunta da OpenAI', () => {
+  it('se ela não perguntar, entra a próxima pergunta que falta', () => {
     const text = composeJoanaReply(
-      'Oi! O Rafa pode ajudar na busca por um T2 em Viseu. Para quando você pretende vir?',
-      [
-        'Anotei que você tem pet.',
-        'Anotei seu nome, Bruno.',
-        'Para quando você pretende vir para Portugal? Pode ser uma data, por exemplo 18/12/2026, ou dizer que é imediato.',
-      ],
+      'Março, perfeito.',
+      ['Você já tem visto para Portugal?'],
       'fallback',
+      true,
     );
-    expect(text).toBe(
-      'Anotei que você tem pet.\n\nAnotei seu nome, Bruno.\n\nPara quando você pretende vir?',
-    );
+    expect(text).toBe('Março, perfeito.\n\nVocê já tem visto para Portugal?');
   });
 
-  it('se a OpenAI não perguntar, usa a pergunta do sistema depois do aviso', () => {
+  it('tira da fala a frase em que ela diz que gravou e fica com a conversa', () => {
     const text = composeJoanaReply(
-      'Oi! O Rafa pode ajudar na busca por um T2 em Viseu.',
-      ['Anotei que você tem pet.', 'Como posso te chamar?'],
-      'fallback',
-    );
-    expect(text).toBe('Anotei que você tem pet.\n\nComo posso te chamar?');
-  });
-
-  it('tira um Anotei inventado pelo modelo e mantém a pergunta do sistema', () => {
-    const text = composeJoanaReply(
-      'O Rafa pode ajudar na busca. Anotei a data para 31/03/2024.',
+      'Registrei a data para 31/03/2027. Você já tem visto?',
       ['Para quando você pretende vir para Portugal?'],
       'fallback',
     );
-    expect(text).toBe(
-      'O Rafa pode ajudar na busca.\n\nPara quando você pretende vir para Portugal?',
+    expect(text).toBe('Você já tem visto?');
+  });
+
+  it('junta uma orientação sem pergunta depois da fala dela', () => {
+    const text = composeJoanaReply(
+      'Você já tem visto?',
+      ['Prepare o passaporte e a passagem.'],
+      'fallback',
     );
-    expect(text).not.toContain('Anotei');
+    expect(text).toBe('Você já tem visto?\n\nPrepare o passaporte e a passagem.');
+  });
+});
+
+describe('ensureJoanaIntro', () => {
+  it('apresenta a Joana quando a resposta ainda não a menciona', () => {
+    expect(ensureJoanaIntro('O preço em Viseu é €650.', true)).toBe(
+      `${JOANA_INTRO}\n\nO preço em Viseu é €650.`,
+    );
+  });
+
+  it('não repete a apresentação se a resposta ou a conversa já a trouxeram', () => {
+    expect(ensureJoanaIntro('Oi, eu sou a Joana. Você tem interesse?', true)).toBe(
+      'Oi, eu sou a Joana. Você tem interesse?',
+    );
+    expect(ensureJoanaIntro('Para quando você pretende vir?', false)).toBe(
+      'Para quando você pretende vir?',
+    );
   });
 });

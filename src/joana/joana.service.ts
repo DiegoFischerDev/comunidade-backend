@@ -16,6 +16,7 @@ import {
   applyJoanaProposal,
   composeJoanaReply,
   emptyJoanaProfile,
+  ensureJoanaIntro,
   formatImmigrationLabel,
   type JoanaCrmPatch,
   type JoanaProfile,
@@ -332,6 +333,11 @@ export class JoanaService {
         });
         reply = interpreted.reply;
         proposal = interpreted.proposal;
+        const needsIntro =
+          lead.kind === 'none' &&
+          proposal.interested !== false &&
+          !history.some((item) => item.role === 'assistant' && /joana/i.test(item.text));
+        reply = ensureJoanaIntro(reply, needsIntro);
       } catch (err: unknown) {
         this.logger.warn(
           `Joana OpenAI ${row.whatsappDigits}: ${err instanceof Error ? err.message : String(err)}`,
@@ -369,15 +375,17 @@ export class JoanaService {
       let farGuidanceSent = row.farGuidanceSent;
       let schedulingLinkSent = row.schedulingLinkSent;
       const append = [...decision.append];
+      let saved =
+        decision.createLead || Boolean(decision.nameToSave || decision.crmPatch);
 
       try {
-        const saved = await this.persistDecision({
+        const persisted = await this.persistDecision({
           whatsapp: row.whatsappDigits,
           pushName: row.displayName,
           lead,
           decision,
         });
-        if (saved) {
+        if (persisted) {
           const next = await this.crm.lookupLeadForJoana(row.whatsappDigits);
           if (next.kind === 'visible') {
             const guidance = this.columnGuidance(next.crmStatus, row.whatsappDigits, next.name);
@@ -405,11 +413,12 @@ export class JoanaService {
         this.logger.warn(
           `Joana CRM ${row.whatsappDigits}: ${err instanceof Error ? err.message : String(err)}`,
         );
-        append.splice(0, append.length, 'Não consegui anotar isso agora. Pode repetir daqui a pouco?');
+        append.splice(0, append.length, 'Tive um problema agora. Pode repetir daqui a pouco?');
         decision.pending = pending;
+        saved = false;
       }
 
-      const assistantText = composeReply(reply, append);
+      const assistantText = composeReply(reply, append, saved);
       await this.finishTurn({
         id,
         bufferIds: buffer.map((item) => item.id),
@@ -728,7 +737,7 @@ function describeProfile(
     return 'Este número foi retirado do CRM. Não recolhas dados novos nem prometas repor a ficha.';
   }
   if (kind === 'none') {
-    return 'Ainda não há ficha no CRM.';
+    return 'Ainda não há ficha no CRM. Se esta mensagem não for um sim claro ao serviço, apresenta-te, explica o relocation e pergunta se tem interesse, sem recolher dados. Se for um sim, podes guardar o que ela disse agora.';
   }
   const typology = profile.typology
     ? `${profile.typology} (${JOANA_TYPOLOGY_SPEECH[profile.typology]})`
@@ -746,11 +755,12 @@ function describeProfile(
   ].join('\n');
 }
 
-function composeReply(reply: string, append: string[]): string {
+function composeReply(reply: string, append: string[], saved = false): string {
   return composeJoanaReply(
     reply,
     append,
     'Oi, eu sou a Joana, atendente virtual da Rafa. A Rafa ajuda na busca do imóvel em Portugal, nas visitas por videochamada e na negociação com os proprietários.',
+    saved,
   );
 }
 
