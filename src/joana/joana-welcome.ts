@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
-export type JoanaWelcomeStepType = 'TEXT' | 'AUDIO' | 'IMAGE';
+export type JoanaWelcomeStepType = 'TEXT' | 'AUDIO' | 'IMAGE' | 'DOCUMENT';
 
 export type JoanaWelcomeStep = {
   type: JoanaWelcomeStepType;
@@ -13,7 +13,7 @@ export type JoanaWelcomeStep = {
 
 const MAX_STEPS = 20;
 
-/** Normaliza e valida passos de boas-vindas (mesmo contrato das automações). */
+/** Normaliza e valida passos de boas-vindas (TEXT/AUDIO/IMAGE/DOCUMENT). */
 export function normalizeJoanaWelcomeSteps(raw: unknown): JoanaWelcomeStep[] {
   if (raw == null) return [];
   if (!Array.isArray(raw)) {
@@ -42,7 +42,21 @@ export function welcomeStepsHistorySummary(steps: JoanaWelcomeStep[]): string {
     .filter(Boolean);
   if (texts.length > 0) return texts.join('\n\n');
   if (steps.length === 0) return '';
-  return '[Boas-vindas da Joana enviadas com áudio/imagem]';
+  return '[Boas-vindas da Joana enviadas com áudio/imagem/documento]';
+}
+
+export function isWelcomePdfMedia(input: {
+  mediaUrl?: string | null;
+  mediaMimeType?: string | null;
+  mediaFileName?: string | null;
+}): boolean {
+  const mime = (input.mediaMimeType || '').trim().toLowerCase();
+  if (mime === 'application/pdf' || mime.includes('pdf')) return true;
+  const name = `${input.mediaFileName || ''} ${input.mediaUrl || ''}`
+    .trim()
+    .toLowerCase()
+    .split('?')[0]!;
+  return name.endsWith('.pdf');
 }
 
 function normalizeOneStep(raw: unknown, index: number): JoanaWelcomeStep {
@@ -51,9 +65,14 @@ function normalizeOneStep(raw: unknown, index: number): JoanaWelcomeStep {
   }
   const row = raw as Record<string, unknown>;
   const type = row.type;
-  if (type !== 'TEXT' && type !== 'AUDIO' && type !== 'IMAGE') {
+  if (
+    type !== 'TEXT' &&
+    type !== 'AUDIO' &&
+    type !== 'IMAGE' &&
+    type !== 'DOCUMENT'
+  ) {
     throw new BadRequestException(
-      `Passo ${index + 1}: tipo inválido (usa TEXT, AUDIO ou IMAGE).`,
+      `Passo ${index + 1}: tipo inválido (usa TEXT, AUDIO, IMAGE ou DOCUMENT).`,
     );
   }
 
@@ -82,8 +101,31 @@ function normalizeOneStep(raw: unknown, index: number): JoanaWelcomeStep {
   if (!mediaUrl) {
     throw new BadRequestException(`Passo ${index + 1}: ficheiro/URL em falta.`);
   }
+  const mediaMimeType =
+    typeof row.mediaMimeType === 'string' && row.mediaMimeType.trim()
+      ? row.mediaMimeType.trim()
+      : null;
+  const mediaFileName =
+    typeof row.mediaFileName === 'string' && row.mediaFileName.trim()
+      ? row.mediaFileName.trim()
+      : null;
+
+  if (type === 'DOCUMENT') {
+    if (
+      !isWelcomePdfMedia({
+        mediaUrl,
+        mediaMimeType,
+        mediaFileName,
+      })
+    ) {
+      throw new BadRequestException(
+        `Passo ${index + 1}: o documento tem de ser um PDF.`,
+      );
+    }
+  }
+
   const caption =
-    type === 'IMAGE'
+    type === 'IMAGE' || type === 'DOCUMENT'
       ? typeof row.caption === 'string'
         ? row.caption.trim()
         : typeof row.textContent === 'string'
@@ -96,13 +138,11 @@ function normalizeOneStep(raw: unknown, index: number): JoanaWelcomeStep {
     textContent: caption || null,
     mediaUrl,
     mediaMimeType:
-      typeof row.mediaMimeType === 'string' && row.mediaMimeType.trim()
-        ? row.mediaMimeType.trim()
-        : null,
+      type === 'DOCUMENT' ? mediaMimeType || 'application/pdf' : mediaMimeType,
     mediaFileName:
-      typeof row.mediaFileName === 'string' && row.mediaFileName.trim()
-        ? row.mediaFileName.trim()
-        : null,
+      type === 'DOCUMENT'
+        ? mediaFileName || mediaUrl.split('/').pop()?.split('?')[0] || 'documento.pdf'
+        : mediaFileName,
     delayMsAfter,
   };
 }

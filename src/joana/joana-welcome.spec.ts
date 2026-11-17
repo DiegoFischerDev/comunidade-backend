@@ -5,7 +5,7 @@ import {
 } from './joana-welcome';
 
 describe('normalizeJoanaWelcomeSteps', () => {
-  it('aceita texto, áudio e imagem como nas automações', () => {
+  it('aceita texto, áudio, imagem e PDF', () => {
     const steps = normalizeJoanaWelcomeSteps([
       { type: 'TEXT', textContent: 'Oi, eu sou a Joana.', delayMsAfter: 1000 },
       {
@@ -19,8 +19,15 @@ describe('normalizeJoanaWelcomeSteps', () => {
         mediaUrl: '/uploads/foto.jpg',
         caption: 'A Rafa',
       },
+      {
+        type: 'DOCUMENT',
+        mediaUrl: '/uploads/apresentacao.pdf',
+        mediaMimeType: 'application/pdf',
+        mediaFileName: 'apresentacao.pdf',
+        caption: 'Apresentação',
+      },
     ]);
-    expect(steps).toHaveLength(3);
+    expect(steps).toHaveLength(4);
     expect(steps[0]).toMatchObject({
       type: 'TEXT',
       textContent: 'Oi, eu sou a Joana.',
@@ -32,6 +39,12 @@ describe('normalizeJoanaWelcomeSteps', () => {
       textContent: 'A Rafa',
       mediaUrl: '/uploads/foto.jpg',
     });
+    expect(steps[3]).toMatchObject({
+      type: 'DOCUMENT',
+      textContent: 'Apresentação',
+      mediaUrl: '/uploads/apresentacao.pdf',
+      mediaMimeType: 'application/pdf',
+    });
   });
 
   it('permite lista vazia (volta à intro por omissão)', () => {
@@ -42,6 +55,19 @@ describe('normalizeJoanaWelcomeSteps', () => {
     expect(() =>
       normalizeJoanaWelcomeSteps([{ type: 'TEXT', textContent: '  ' }]),
     ).toThrow(/texto em falta/i);
+  });
+
+  it('recusa documento que não é PDF', () => {
+    expect(() =>
+      normalizeJoanaWelcomeSteps([
+        {
+          type: 'DOCUMENT',
+          mediaUrl: '/uploads/nota.docx',
+          mediaMimeType: 'application/msword',
+          mediaFileName: 'nota.docx',
+        },
+      ]),
+    ).toThrow(/pdf/i);
   });
 });
 

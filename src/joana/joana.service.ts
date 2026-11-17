@@ -671,6 +671,23 @@ export class JoanaService {
           preferredInstance: preferredInstance || undefined,
           requireDelivery: true,
         });
+      } else if (step.type === 'DOCUMENT') {
+        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
+        if (!abs) throw new Error('Passo DOCUMENT sem mediaUrl válida.');
+        const fileName =
+          step.mediaFileName?.trim() ||
+          abs.split('/').pop()?.split('?')[0] ||
+          'documento.pdf';
+        await this.wa.sendMedia({
+          to,
+          caption: (step.textContent || '').trim(),
+          mediaUrl: abs,
+          mimeType: step.mediaMimeType?.trim() || 'application/pdf',
+          fileName,
+          mediaType: 'document',
+          preferredInstance: preferredInstance || undefined,
+          requireDelivery: true,
+        });
       }
 
       const delay = Math.max(0, step.delayMsAfter ?? 650);

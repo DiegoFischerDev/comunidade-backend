@@ -1275,7 +1275,7 @@ model WhatsappDailyContact {
 model JoanaSettings {
   id           String   @id
   contextText  String   @map("context_text") @db.Text
-  /// Sequência TEXT/AUDIO/IMAGE de boas-vindas (mesmo shape das automações).
+  /// Sequência TEXT/AUDIO/IMAGE/DOCUMENT (PDF) de boas-vindas.
   welcomeSteps Json     @default("[]") @map("welcome_steps")
   updatedAt    DateTime @updatedAt @map("updated_at")
 

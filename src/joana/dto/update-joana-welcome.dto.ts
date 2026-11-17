@@ -1,9 +1,19 @@
 import { ArrayMaxSize, IsArray } from 'class-validator';
-import type { AutomationStepInputDto } from '../../whatsapp-automations/dto/whatsapp-client-automation.dto';
 
-/** Mesmo shape dos passos de «Nova automação». Validação fina em `normalizeJoanaWelcomeSteps`. */
+/** Passo de boas-vindas — validação fina em `normalizeJoanaWelcomeSteps`. */
+export type JoanaWelcomeStepInputDto = {
+  type: 'TEXT' | 'AUDIO' | 'IMAGE' | 'DOCUMENT';
+  textContent?: string;
+  mediaUrl?: string;
+  mediaMimeType?: string;
+  mediaFileName?: string;
+  caption?: string;
+  delayMsAfter?: number;
+};
+
+/** Shape das automações + DOCUMENT (PDF). Validação fina em `normalizeJoanaWelcomeSteps`. */
 export class UpdateJoanaWelcomeDto {
   @IsArray()
   @ArrayMaxSize(20)
-  steps!: AutomationStepInputDto[];
+  steps!: JoanaWelcomeStepInputDto[];
 }
