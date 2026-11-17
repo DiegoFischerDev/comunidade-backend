@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsOptional,
   IsString,
   MaxLength,
@@ -70,9 +71,15 @@ export class WhatsappClientAutomationInboundDto {
   @MaxLength(120)
   senderNumber!: string;
 
+  @IsOptional()
   @IsString()
   @MaxLength(8000)
-  text!: string;
+  text?: string;
+
+  /** `audio` é nota de voz. O texto chega vazio e o backend transcreve. */
+  @IsOptional()
+  @IsIn(['audio'])
+  kind?: 'audio';
 
   @IsOptional()
   @IsBoolean()

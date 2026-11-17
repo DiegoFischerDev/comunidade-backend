@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
+import { PartnerModule } from '../partner/partner.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { RafacallService } from './rafacall.service';
 import { RafacallController } from './rafacall.controller';
@@ -11,7 +12,7 @@ import { RafacallCrmImmigrationSyncTask } from './rafacall-crm-immigration-sync.
 import { RafacallCrmService } from './rafacall-crm.service';
 
 @Module({
-  imports: [PrismaModule, WhatsAppModule],
+  imports: [PrismaModule, PartnerModule, WhatsAppModule],
   controllers: [
     RafacallController,
     AdminRafacallController,

@@ -4,6 +4,7 @@ import {
   composeJoanaReply,
   confirmationQuestion,
   emptyJoanaProfile,
+  parseDesiredRent,
   type JoanaProfile,
 } from './joana-turn';
 
@@ -12,8 +13,22 @@ const filled: JoanaProfile = {
   immigration: '2026-12-18',
   cities: 'Porto',
   typology: 'T1',
+  desiredRent: 800,
+  hasVisa: true,
   hasPet: false,
 };
+
+describe('parseDesiredRent', () => {
+  it('lê euros inteiros e ignora o que não é aluguel válido', () => {
+    expect(parseDesiredRent(800)).toBe(800);
+    expect(parseDesiredRent('€ 1.200')).toBe(1200);
+    expect(parseDesiredRent('800 euros')).toBe(800);
+    expect(parseDesiredRent('800,50')).toBe(800);
+    expect(parseDesiredRent('')).toBe('');
+    expect(parseDesiredRent(undefined)).toBeUndefined();
+    expect(parseDesiredRent(150_000)).toBeUndefined();
+  });
+});
 
 describe('canonicalImmigration', () => {
   it('aceita data brasileira e imediato', () => {
@@ -123,6 +138,56 @@ describe('applyJoanaProposal', () => {
     expect(result.pending).toBeNull();
     expect(result.crmPatch?.hasPet).toBe(true);
     expect(result.append[0]).toBe('Anotei que você tem pet.');
+  });
+
+  it('anota o visto e segue para as cidades', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, hasVisa: null, cities: null },
+      pending: null,
+      proposal: { interested: null, confirmation: null, hasVisa: false },
+    });
+    expect(result.crmPatch?.hasVisa).toBe(false);
+    expect(result.append[0]).toBe('Anotei que você ainda não tem visto.');
+    expect(result.append.some((line) => line.includes('cidades'))).toBe(true);
+  });
+
+  it('pede o visto quando a data já está e o visto ainda não', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, hasVisa: null },
+      pending: null,
+      proposal: { interested: null, confirmation: null },
+    });
+    expect(result.crmPatch).toBeNull();
+    expect(result.append[0]).toBe('Você já tem visto para Portugal?');
+  });
+
+  it('anota o aluguel pretendido e segue para o pet', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, desiredRent: null, hasPet: null },
+      pending: null,
+      proposal: { interested: null, confirmation: null, desiredRent: 900 },
+    });
+    expect(result.crmPatch?.desiredRent).toBe(900);
+    expect(result.append[0]).toBe('Anotei o valor do aluguel pretendido: €900.');
+    expect(result.append.some((line) => line.includes('animal de estimação'))).toBe(true);
+  });
+
+  it('pede o aluguel quando a tipologia já está e o valor ainda não', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, desiredRent: null },
+      pending: null,
+      proposal: { interested: null, confirmation: null },
+    });
+    expect(result.crmPatch).toBeNull();
+    expect(result.append[0]).toContain('valor do aluguel pretendido');
   });
 
   it('não grava quem foi excluído do kanban', () => {

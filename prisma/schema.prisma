@@ -412,6 +412,10 @@ model RafaCallBooking {
    */
   crmDesiredRent         Int?                  @map("crm_desired_rent")
   /**
+   * Tem visto? null = por definir.
+   */
+  crmHasVisa             Boolean?              @map("crm_has_visa")
+  /**
    * Quando preenchido, o cliente deixa de aparecer no kanban CRM (por WhatsApp).
    */
   crmExcludedAt            DateTime?             @map("crm_excluded_at")
@@ -464,6 +468,31 @@ model RafaCallCrmPayment {
   @@index([whatsappDigits, paidAt])
   @@index([kind, paidAt])
   @@map("rafa_call_crm_payments")
+}
+
+/**
+ * PDFs anexados ao cliente do CRM. A chave é o WhatsApp (um cliente por número),
+ * como nos pagamentos. Remover o cliente do kanban não apaga os ficheiros.
+ */
+model RafaCallCrmDocument {
+  id             String   @id @default(cuid())
+  /**
+   * WhatsApp só dígitos (com indicativo) — mesma chave do kanban CRM.
+   */
+  whatsappDigits String   @map("whatsapp_digits")
+  /**
+   * Nome original mostrado no CRM (já sem caminho e com extensão .pdf).
+   */
+  fileName       String   @map("file_name")
+  /**
+   * URL pública (R2 ou `/uploads/crm/documents/…`).
+   */
+  fileUrl        String   @map("file_url")
+  sizeBytes      Int      @map("size_bytes")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([whatsappDigits, createdAt])
+  @@map("rafa_call_crm_documents")
 }
 
 /**

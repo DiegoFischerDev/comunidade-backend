@@ -1,4 +1,17 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/roles.decorator';
 import { RafacallAdminService } from './rafacall-admin.service';
@@ -13,6 +26,7 @@ import {
   UpdateRafacallCrmPaymentDto,
 } from './dto/rafacall-crm-payment.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { CRM_CLIENT_DOCUMENT_MAX_BYTES } from './rafacall-crm.constants';
 
 @Controller('admin/rafacall')
 @Roles(Role.ADMIN)
@@ -137,6 +151,7 @@ export class AdminRafacallController {
       crmPropertyTypology: dto.crmPropertyTypology,
       crmPreferredCity: dto.crmPreferredCity,
       crmHasPet: dto.crmHasPet,
+      crmHasVisa: dto.crmHasVisa,
       crmDesiredRent: dto.crmDesiredRent,
     });
   }
@@ -173,6 +188,34 @@ export class AdminRafacallController {
       amount: dto.amount,
       receiptImageUrl: dto.receiptImageUrl,
       comment: dto.comment,
+    });
+  }
+
+  @Post('crm/:bookingId/documents')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: CRM_CLIENT_DOCUMENT_MAX_BYTES },
+      storage: memoryStorage(),
+    }),
+  )
+  uploadCrmDocument(
+    @Param('bookingId') bookingId: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    return this.crm.uploadCrmDocument({
+      bookingId: bookingId.trim(),
+      file,
+    });
+  }
+
+  @Delete('crm/:bookingId/documents/:documentId')
+  deleteCrmDocument(
+    @Param('bookingId') bookingId: string,
+    @Param('documentId') documentId: string,
+  ) {
+    return this.crm.deleteCrmDocument({
+      bookingId: bookingId.trim(),
+      documentId: documentId.trim(),
     });
   }
 

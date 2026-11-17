@@ -47,6 +47,11 @@ export class UpdateRafacallCrmDto {
 
   @IsOptional()
   @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsBoolean()
+  crmHasVisa?: boolean | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsInt()
   @Min(0)
   @Max(100_000)

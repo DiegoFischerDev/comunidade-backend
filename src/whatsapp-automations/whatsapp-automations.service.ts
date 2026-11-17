@@ -130,13 +130,30 @@ export class WhatsappAutomationsService {
       return { ok: true, status: 'ignored_from_me' };
     }
 
-    const text = (dto.text || '').trim();
-    if (!text) return { ok: true, status: 'ignored_empty' };
-
     const whatsapp = this.normalizeWhatsapp(dto.senderNumber);
     if (whatsapp.length < 8) {
       return { ok: true, status: 'ignored_invalid_phone' };
     }
+
+    if (dto.kind === 'audio') {
+      const instance = (dto.instance || '').trim();
+      if (instance !== joanaWhatsappInstance()) {
+        return { ok: true, status: 'ignored_audio' };
+      }
+      if (!this.claimWebhookDelivery(dto, whatsapp, 'audio')) {
+        return { ok: true, status: 'ignored_duplicate_webhook' };
+      }
+      const voice = await this.joana.acceptVoiceNote({
+        whatsapp,
+        instance,
+        pushName: dto.pushName,
+        externalMessageId: dto.externalMessageId,
+      });
+      return { ok: true, status: voice.status };
+    }
+
+    const text = (dto.text || '').trim();
+    if (!text) return { ok: true, status: 'ignored_empty' };
 
     if (!this.claimWebhookDelivery(dto, whatsapp, text)) {
       return { ok: true, status: 'ignored_duplicate_webhook' };

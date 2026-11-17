@@ -441,6 +441,40 @@ export class HouseImageStorageService {
     return { publicUrl };
   }
 
+  /**
+   * PDF anexado a um cliente do CRM.
+   * Aceita apenas PDF (MIME, extensão e cabeçalho `%PDF`).
+   * Grava em R2 (`crm/documents/…`) ou `uploads/crm/documents/…` em disco.
+   */
+  async storeCrmClientPdf(
+    file: Express.Multer.File,
+  ): Promise<{ publicUrl: string }> {
+    const buf = await this.readBuffer(file);
+    if (!buf?.length) {
+      throw new Error('empty_crm_pdf');
+    }
+    const mime = (file.mimetype || '').toLowerCase();
+    const name = (file.originalname || '').toLowerCase();
+    const isPdf =
+      mime === 'application/pdf' ||
+      mime === 'application/x-pdf' ||
+      name.endsWith('.pdf');
+    if (!isPdf) {
+      throw new Error('invalid_crm_pdf');
+    }
+    const header = buf.subarray(0, 5).toString('ascii');
+    if (!header.startsWith('%PDF')) {
+      throw new Error('invalid_crm_pdf');
+    }
+    const publicUrl = await this.uploadUnderPrefix(
+      buf,
+      'application/pdf',
+      'crm/documents',
+      '.pdf',
+    );
+    return { publicUrl };
+  }
+
   /** Upload genérico sob um prefixo (R2 key ou `uploads/<prefix>/…`). */
   private async uploadUnderPrefix(
     body: Buffer,

@@ -10,14 +10,17 @@ export const JOANA_TYPOLOGIES = [
 
 export type JoanaTypology = (typeof JOANA_TYPOLOGIES)[number];
 
-export type JoanaField = 'name' | 'immigration' | 'cities' | 'typology' | 'pet';
+export type JoanaField = 'name' | 'immigration' | 'visa' | 'cities' | 'typology' | 'rent' | 'pet';
 
 export type JoanaProfile = {
   name: string | null;
   /** `YYYY-MM-DD`, `IMEDIATO` ou null. */
   immigration: string | null;
+  hasVisa: boolean | null;
   cities: string | null;
   typology: JoanaTypology | null;
+  /** Euros inteiros por mês, ou null se ainda não sabemos. */
+  desiredRent: number | null;
   hasPet: boolean | null;
 };
 
@@ -28,6 +31,9 @@ export type JoanaProposal = {
   immigration?: string;
   cities?: string;
   typology?: string;
+  hasVisa?: boolean;
+  /** Euros inteiros, ou `''` para apagar. */
+  desiredRent?: number | '';
   hasPet?: boolean;
 };
 
@@ -41,6 +47,8 @@ export type JoanaCrmPatch = {
   immigration?: string | null;
   cities?: string | null;
   typology?: JoanaTypology | null;
+  hasVisa?: boolean | null;
+  desiredRent?: number | null;
   hasPet?: boolean | null;
 };
 
@@ -54,8 +62,10 @@ export type JoanaTurnResult = {
 
 const FIELD_ORDER: JoanaField[] = [
   'immigration',
+  'visa',
   'cities',
   'typology',
+  'rent',
   'pet',
   'name',
 ];
@@ -74,8 +84,10 @@ export function emptyJoanaProfile(): JoanaProfile {
   return {
     name: null,
     immigration: null,
+    hasVisa: null,
     cities: null,
     typology: null,
+    desiredRent: null,
     hasPet: null,
   };
 }
@@ -108,6 +120,35 @@ export function normalizePersonName(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, 80);
 }
 
+/**
+ * Valor mensal do aluguel, em euros inteiros (0 a 100000).
+ * `''` apaga. `undefined` quer dizer que a pessoa não falou disso.
+ */
+export function parseDesiredRent(raw: unknown): number | '' | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw)) return undefined;
+    const rounded = Math.round(raw);
+    if (rounded < 0 || rounded > 100_000) return undefined;
+    return rounded;
+  }
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const withoutCurrency = trimmed
+    .toLowerCase()
+    .replace(/euros?|eur|€/g, '')
+    .replace(/\s+/g, '');
+  const withoutThousands = withoutCurrency
+    .replace(/\.(?=\d{3}(?:\D|$))/g, '')
+    .replace(/,(?=\d{3}(?:\D|$))/g, '');
+  const whole = withoutThousands.replace(/[.,].*$/, '').replace(/[^\d]/g, '');
+  if (!whole) return undefined;
+  const value = Number(whole);
+  if (!Number.isInteger(value) || value < 0 || value > 100_000) return undefined;
+  return value;
+}
+
 export function parseJoanaTypology(raw: string | null | undefined): JoanaTypology | null {
   const value = (raw ?? '').trim().toUpperCase().replace(/\s+/g, '');
   if (value === 'QUARTO' || value === 'APENASQUARTO') return 'QUARTO';
@@ -127,10 +168,15 @@ function currentRaw(profile: JoanaProfile, field: JoanaField): string | null {
       return profile.name;
     case 'immigration':
       return profile.immigration;
+    case 'visa':
+      if (profile.hasVisa === null) return null;
+      return profile.hasVisa ? 'true' : 'false';
     case 'cities':
       return profile.cities;
     case 'typology':
       return profile.typology;
+    case 'rent':
+      return profile.desiredRent == null ? null : String(profile.desiredRent);
     case 'pet':
       if (profile.hasPet === null) return null;
       return profile.hasPet ? 'true' : 'false';
@@ -145,12 +191,20 @@ function proposedRaw(proposal: JoanaProposal, field: JoanaField): string | undef
       if (proposal.immigration === undefined) return undefined;
       const canonical = canonicalImmigration(proposal.immigration);
       return canonical === null ? undefined : canonical;
+    case 'visa':
+      if (proposal.hasVisa === undefined) return undefined;
+      return proposal.hasVisa ? 'true' : 'false';
     case 'cities':
       return proposal.cities === undefined ? undefined : normalizeCities(proposal.cities);
     case 'typology': {
       if (proposal.typology === undefined) return undefined;
       if (!proposal.typology.trim()) return '';
       return parseJoanaTypology(proposal.typology) ?? undefined;
+    }
+    case 'rent': {
+      if (proposal.desiredRent === undefined) return undefined;
+      if (proposal.desiredRent === '') return '';
+      return String(proposal.desiredRent);
     }
     case 'pet':
       if (proposal.hasPet === undefined) return undefined;
@@ -162,6 +216,8 @@ export function confirmationQuestion(field: JoanaField, value: string): string {
   switch (field) {
     case 'immigration':
       return `Quer atualizar sua data prevista de imigração para ${formatImmigrationLabel(value)}?`;
+    case 'visa':
+      return `Quer atualizar a informação de visto para ${value === 'true' ? 'sim' : 'não'}?`;
     case 'cities':
       return value
         ? `Quer atualizar as cidades pretendidas para ${value}?`
@@ -172,6 +228,10 @@ export function confirmationQuestion(field: JoanaField, value: string): string {
         ? `Quer atualizar a tipologia para ${value}, ${speech}?`
         : 'Quer deixar a tipologia em branco?';
     }
+    case 'rent':
+      return value
+        ? `Quer atualizar o valor do aluguel pretendido para €${value}?`
+        : 'Quer deixar o valor do aluguel pretendido em branco?';
     case 'pet':
       return `Quer atualizar a informação de pet para ${value === 'true' ? 'sim' : 'não'}?`;
     case 'name':
@@ -187,6 +247,10 @@ function ackLine(field: JoanaField, value: string): string {
       return value
         ? `Anotei a data para ${formatImmigrationLabel(value)}.`
         : 'Tirei a data prevista de imigração.';
+    case 'visa':
+      return value === 'true'
+        ? 'Anotei que você tem visto.'
+        : 'Anotei que você ainda não tem visto.';
     case 'cities':
       return value ? `Anotei as cidades: ${value}.` : 'Tirei as cidades pretendidas.';
     case 'typology': {
@@ -195,6 +259,10 @@ function ackLine(field: JoanaField, value: string): string {
         ? `Anotei a tipologia ${value}, ${speech}.`
         : 'Tirei a tipologia.';
     }
+    case 'rent':
+      return value
+        ? `Anotei o valor do aluguel pretendido: €${value}.`
+        : 'Tirei o valor do aluguel pretendido.';
     case 'pet':
       return value === 'true' ? 'Anotei que você tem pet.' : 'Anotei que você não tem pet.';
     case 'name':
@@ -206,11 +274,17 @@ export function missingFieldQuestion(profile: JoanaProfile): string | null {
   if (!profile.immigration) {
     return 'Para quando você pretende vir para Portugal? Pode ser uma data, por exemplo 18/12/2026, ou dizer que é imediato.';
   }
+  if (profile.hasVisa === null) {
+    return 'Você já tem visto para Portugal?';
+  }
   if (!profile.cities) {
     return 'Quais cidades você está considerando? Pode ser mais de uma, por exemplo Viseu, Aveiro e São Pedro do Sul.';
   }
   if (!profile.typology) {
     return 'Que imóvel você procura? Quarto é só um quarto. T0 é estúdio. T1 é uma casa com um quarto, T2 com dois, T3 com três, T4 com quatro e T5 com cinco.';
+  }
+  if (profile.desiredRent == null) {
+    return 'Qual o valor do aluguel pretendido por mês? Pode ser um valor aproximado, em euros.';
   }
   if (profile.hasPet === null) {
     return 'Você tem animal de estimação?';
@@ -321,6 +395,10 @@ function applyValue(profile: JoanaProfile, patch: JoanaCrmPatch, field: JoanaFie
       profile.immigration = value || null;
       patch.immigration = value || null;
       return;
+    case 'visa':
+      profile.hasVisa = value === 'true';
+      patch.hasVisa = profile.hasVisa;
+      return;
     case 'cities':
       profile.cities = value || null;
       patch.cities = value || null;
@@ -329,6 +407,12 @@ function applyValue(profile: JoanaProfile, patch: JoanaCrmPatch, field: JoanaFie
       profile.typology = (value || null) as JoanaTypology | null;
       patch.typology = profile.typology;
       return;
+    case 'rent': {
+      const rent = value === '' ? null : Number(value);
+      profile.desiredRent = Number.isInteger(rent) ? rent : null;
+      patch.desiredRent = profile.desiredRent;
+      return;
+    }
     case 'pet':
       profile.hasPet = value === 'true';
       patch.hasPet = profile.hasPet;

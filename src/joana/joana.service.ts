@@ -4,6 +4,7 @@ import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { JOANA_AUDIO_UNHEARD } from './joana-audio';
 import {
   JOANA_DEFAULT_CONTEXT,
   joanaDebounceMs,
@@ -59,6 +60,54 @@ export class JoanaService {
     return { contextText: saved.contextText };
   }
 
+  /**
+   * Nota de voz: descarrega na Evolution, transcreve e entra no debounce como texto.
+   * Se não der para ouvir, responde já e não grava nada.
+   */
+  async acceptVoiceNote(input: {
+    whatsapp: string;
+    instance: string;
+    pushName?: string;
+    externalMessageId?: string;
+  }): Promise<{ handled: true; status: string }> {
+    const messageId = (input.externalMessageId || '').trim();
+    if (!messageId) {
+      await this.replyUnheard(input.whatsapp, input.instance, 'mensagem sem id');
+      return { handled: true, status: 'audio_unheard' };
+    }
+
+    try {
+      const media = await this.wa.getMediaBase64(input.instance, messageId, {
+        convertToMp4: false,
+      });
+      if (!media?.base64) {
+        await this.replyUnheard(input.whatsapp, input.instance, 'Evolution sem bytes');
+        return { handled: true, status: 'audio_unheard' };
+      }
+      const transcript = await this.openai.transcribeAudio({
+        base64: media.base64,
+        mimeType: media.mimetype,
+        fileName: media.fileName,
+      });
+      if (!transcript) {
+        await this.replyUnheard(input.whatsapp, input.instance, 'transcrição vazia');
+        return { handled: true, status: 'audio_unheard' };
+      }
+      const buffered = await this.bufferInbound({
+        whatsapp: input.whatsapp,
+        text: transcript,
+        instance: input.instance,
+        pushName: input.pushName,
+        externalMessageId: messageId,
+      });
+      return { handled: true, status: buffered.status };
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await this.replyUnheard(input.whatsapp, input.instance, reason);
+      return { handled: true, status: 'audio_unheard' };
+    }
+  }
+
   /** Guarda a mensagem e deixa o flush dos 30s responder. */
   async bufferInbound(input: {
     whatsapp: string;
@@ -87,6 +136,21 @@ export class JoanaService {
       item,
     });
     return { handled: true, status: 'buffered' };
+  }
+
+  private async replyUnheard(whatsapp: string, instance: string, reason: string) {
+    this.logger.warn(`Joana áudio ${whatsapp}: ${reason}`);
+    try {
+      await this.wa.sendText(whatsapp, JOANA_AUDIO_UNHEARD, {
+        preferredInstance: instance,
+      });
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Joana áudio resposta ${whatsapp}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   /**
@@ -387,6 +451,7 @@ export class JoanaService {
           crmExpectedImmigrationAt: decision.crmPatch?.immigration,
           crmPropertyTypology: decision.crmPatch?.typology ?? undefined,
           crmPreferredCity: decision.crmPatch?.cities ?? undefined,
+          crmDesiredRent: decision.crmPatch?.desiredRent,
         });
         bookingId = created.id;
         createdNow = true;
@@ -404,9 +469,14 @@ export class JoanaService {
     }
     if (decision.crmPatch) {
       const patch = createdNow
-        ? 'hasPet' in decision.crmPatch
-          ? { crmHasPet: decision.crmPatch.hasPet ?? null }
-          : null
+        ? {
+            ...('hasPet' in decision.crmPatch
+              ? { crmHasPet: decision.crmPatch.hasPet ?? null }
+              : {}),
+            ...('hasVisa' in decision.crmPatch
+              ? { crmHasVisa: decision.crmPatch.hasVisa ?? null }
+              : {}),
+          }
         : patchToUpdate(decision.crmPatch);
       if (patch && Object.keys(patch).length > 0) {
         try {
@@ -580,12 +650,16 @@ function patchToUpdate(patch: JoanaCrmPatch) {
     crmExpectedImmigrationAt?: string | null;
     crmPreferredCity?: string | null;
     crmPropertyTypology?: JoanaTypology | null;
+    crmDesiredRent?: number | null;
     crmHasPet?: boolean | null;
+    crmHasVisa?: boolean | null;
   } = {};
   if ('immigration' in patch) data.crmExpectedImmigrationAt = patch.immigration ?? null;
   if ('cities' in patch) data.crmPreferredCity = patch.cities ?? null;
   if ('typology' in patch) data.crmPropertyTypology = patch.typology ?? null;
+  if ('desiredRent' in patch) data.crmDesiredRent = patch.desiredRent ?? null;
   if ('hasPet' in patch) data.crmHasPet = patch.hasPet ?? null;
+  if ('hasVisa' in patch) data.crmHasVisa = patch.hasVisa ?? null;
   return data;
 }
 
@@ -594,6 +668,8 @@ function profileFromLead(lead: {
   immigration: string | null;
   cities: string | null;
   typology: JoanaTypology | null;
+  desiredRent: number | null;
+  hasVisa: boolean | null;
   hasPet: boolean | null;
 }): JoanaProfile {
   return {
@@ -601,6 +677,8 @@ function profileFromLead(lead: {
     immigration: lead.immigration,
     cities: lead.cities,
     typology: lead.typology,
+    desiredRent: lead.desiredRent,
+    hasVisa: lead.hasVisa,
     hasPet: lead.hasPet,
   };
 }
@@ -621,8 +699,12 @@ function describeProfile(
   return [
     `Nome: ${profile.name || 'ainda não temos'}`,
     `Data de imigração: ${profile.immigration ? formatImmigrationLabel(profile.immigration) : 'ainda não temos'}`,
+    `Visto: ${profile.hasVisa === null ? 'ainda não sabemos' : profile.hasVisa ? 'sim' : 'não'}`,
     `Cidades: ${profile.cities || 'ainda não temos'}`,
     `Tipologia: ${typology}`,
+    `Valor do aluguel pretendido: ${
+      profile.desiredRent == null ? 'ainda não temos' : `€${profile.desiredRent}`
+    }`,
     `Pet: ${profile.hasPet === null ? 'ainda não sabemos' : profile.hasPet ? 'sim' : 'não'}`,
   ].join('\n');
 }
@@ -693,7 +775,7 @@ function readHistory(value: unknown): HistoryItem[] {
 function readPending(value: unknown): PendingConfirmation | null {
   if (!value || typeof value !== 'object') return null;
   const row = value as { field?: unknown; value?: unknown; question?: unknown };
-  const fields = ['name', 'immigration', 'cities', 'typology', 'pet'];
+  const fields = ['name', 'immigration', 'visa', 'cities', 'typology', 'rent', 'pet'];
   if (typeof row.field !== 'string' || !fields.includes(row.field)) return null;
   if (typeof row.value !== 'string' || typeof row.question !== 'string') return null;
   return {

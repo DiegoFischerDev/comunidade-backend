@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { decodeWhatsappAudio, whatsappAudioFileName } from './joana-audio';
 import { JOANA_DEFAULT_CONTEXT } from './joana-context';
 import {
   JOANA_TYPOLOGIES,
   type JoanaProposal,
   type JoanaTypology,
   canonicalImmigration,
+  parseDesiredRent,
   parseJoanaTypology,
 } from './joana-turn';
 
@@ -18,8 +20,68 @@ export class JoanaOpenAiService {
     return (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
   }
 
+  private get transcribeModel(): string {
+    return (process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe').trim();
+  }
+
   isConfigured(): boolean {
     return this.apiKey.length > 0;
+  }
+
+  /** Transcreve uma nota de voz do WhatsApp. Devolve texto vazio se não houver fala. */
+  async transcribeAudio(input: {
+    base64: string;
+    mimeType?: string;
+    fileName?: string;
+  }): Promise<string> {
+    if (!this.isConfigured()) {
+      throw new Error('OPENAI_API_KEY não está configurada.');
+    }
+    const decoded = decodeWhatsappAudio(input.base64);
+    if (!decoded.ok) {
+      throw new Error(
+        decoded.reason === 'too_large' ? 'Áudio maior que 25 MB.' : 'Áudio vazio.',
+      );
+    }
+
+    const file = whatsappAudioFileName(input.mimeType || '', input.fileName);
+    const form = new FormData();
+    form.append('model', this.transcribeModel);
+    form.append('language', 'pt');
+    form.append('response_format', 'json');
+    form.append(
+      'file',
+      new Blob([new Uint8Array(decoded.bytes)], { type: file.mime }),
+      file.name,
+    );
+
+    const controller = new AbortController();
+    const configured = Number(process.env.OPENAI_REQUEST_TIMEOUT_MS || 45000);
+    const timeoutMs = Math.min(
+      Math.max(Number.isFinite(configured) ? configured : 45_000, 60_000),
+      120_000,
+    );
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        body: form,
+        signal: controller.signal,
+      });
+      const raw = await res.text().catch(() => '');
+      if (!res.ok) {
+        throw new Error(`OpenAI respondeu ${res.status}: ${raw.slice(0, 500)}`);
+      }
+      try {
+        const parsed = JSON.parse(raw) as { text?: unknown };
+        return typeof parsed.text === 'string' ? parsed.text.trim().slice(0, 8000) : '';
+      } catch {
+        return raw.trim().slice(0, 8000);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async interpret(input: {
@@ -39,13 +101,13 @@ export class JoanaOpenAiService {
       '',
       'Você responde no WhatsApp. A resposta em "reply" responde só ao que a pessoa perguntou ou, se for o primeiro contacto, apresenta-se como Joana e explica o serviço da Rafa em poucas frases.',
       'A Rafa é mulher. Trata sempre no feminino: a Rafa, ela, dela. Nunca escrevas "o Rafa", "ele" ou "dele" para falar da Rafa.',
-      'Quando a pessoa acabou de dar um dado, "reply" é só uma pergunta sobre o próximo dado que ainda falta, nesta ordem: data de imigração, cidades, tipologia, pet, nome. Não perguntes o que ela acabou de dizer. Não digas que a Rafa pode ajudar.',
+      'Quando a pessoa acabou de dar um dado, "reply" é só uma pergunta sobre o próximo dado que ainda falta, nesta ordem: data de imigração, visto, cidades, tipologia, valor do aluguel pretendido, pet, nome. Não perguntes o que ela acabou de dizer. Não digas que a Rafa pode ajudar.',
       'Se a pessoa fez uma pergunta, responde em uma ou duas frases e termina com essa única pergunta, se ainda faltar um dado.',
       'Não escrevas "Anotei". O sistema diz isso antes da tua pergunta. Não invente preço nem horário.',
-      'Devolva só JSON com as chaves: reply, interested, confirmation, name, immigration, cities, typology, hasPet.',
+      'Devolva só JSON com as chaves: reply, interested, confirmation, name, immigration, hasVisa, cities, typology, desiredRent, hasPet.',
       'interested: true se a pessoa quer o relocation ou está a pedir informação para avançar; false se recusou; null se ainda não deu para saber.',
       'confirmation: "yes" se a pessoa aceitou a confirmação pendente, "no" se recusou, null se não havia confirmação ou a resposta não foi sim nem não.',
-      'name, immigration, cities, typology, hasPet: omita a chave se a pessoa não falou desse dado. immigration é YYYY-MM-DD, "IMEDIATO", ou "" para apagar. typology é uma de: QUARTO, T0, T1, T2, T3, T4, T5. hasPet é true ou false.',
+      'name, immigration, hasVisa, cities, typology, desiredRent, hasPet: omita a chave se a pessoa não falou desse dado. immigration é YYYY-MM-DD, "IMEDIATO", ou "" para apagar. hasVisa é true se a pessoa já tem visto e false se ainda não tem. typology é uma de: QUARTO, T0, T1, T2, T3, T4, T5. desiredRent é o aluguel mensal do imóvel em euros inteiros, ou "" para apagar. Não uses o preço do serviço da Rafa. hasPet é true ou false.',
       'cities pode juntar várias cidades numa frase.',
       today,
     ].join('\n');
@@ -331,6 +393,9 @@ export function parseJoanaModelJson(content: string): {
       proposal.typology = '';
     }
   }
+  const desiredRent = parseDesiredRent(parsed.desiredRent);
+  if (desiredRent !== undefined) proposal.desiredRent = desiredRent;
+  if (parsed.hasVisa === true || parsed.hasVisa === false) proposal.hasVisa = parsed.hasVisa;
   if (parsed.hasPet === true || parsed.hasPet === false) proposal.hasPet = parsed.hasPet;
 
   return { reply, proposal };

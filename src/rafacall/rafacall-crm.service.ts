@@ -1,5 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  PayloadTooLargeException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import {
   FinanceEntryKind,
   Prisma,
@@ -11,6 +16,8 @@ import {
 import {
   RAFA_CALL_CRM_STATUS_LABELS,
   RAFA_CALL_CRM_STATUS_ORDER,
+  CRM_CLIENT_DOCUMENT_MAX_BYTES,
+  CRM_CLIENT_DOCUMENT_MAX_COUNT,
   CRM_PAYMENT_DEFAULT_TITLE,
   buildCrmPlaceholderSlotTimes,
   formatCrmImmigrationDateKey,
@@ -44,6 +51,7 @@ const BOOKING_CRM_SELECT = {
   crmPropertyTypology: true,
   crmPreferredCity: true,
   crmHasPet: true,
+  crmHasVisa: true,
   crmDesiredRent: true,
   startsAt: true,
   endsAt: true,
@@ -71,6 +79,7 @@ type BookingCrmRow = {
   crmPropertyTypology: RafaCallCrmPropertyTypology | null;
   crmPreferredCity: string | null;
   crmHasPet: boolean | null;
+  crmHasVisa: boolean | null;
   crmDesiredRent: number | null;
   startsAt: Date;
   endsAt: Date;
@@ -82,9 +91,31 @@ type BookingCrmRow = {
   user: { id: string; name: string | null; whatsapp: string | null } | null;
 };
 
+type SerializedCrmDocument = {
+  id: string;
+  fileName: string;
+  fileUrl: string;
+  sizeBytes: number;
+  createdAt: string;
+};
+
+function sanitizeCrmPdfFileName(originalName: string): string {
+  const base = (originalName || 'documento.pdf').split(/[/\\]/).pop() ?? 'documento.pdf';
+  const cleaned = base
+    .replace(/[^\p{L}\p{N}._\- ()]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+  const stem = cleaned.replace(/\.pdf$/i, '').trim() || 'documento';
+  return `${stem}.pdf`;
+}
+
 @Injectable()
 export class RafacallCrmService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: HouseImageStorageService,
+  ) {}
 
   async listCrmBoard() {
     await this.syncImmigrationProximityStatuses();
@@ -96,21 +127,25 @@ export class RafacallCrmService {
     });
 
     const uniqueItems = this.buildUniqueCrmItems(items);
-    const paymentsByWhatsapp = await this.loadPaymentsByWhatsapp(
-      uniqueItems.map((item) => this.extractWhatsappDigits(item)),
-    );
+    const whatsappDigits = uniqueItems.map((item) => this.extractWhatsappDigits(item));
+    const [paymentsByWhatsapp, documentsByWhatsapp] = await Promise.all([
+      this.loadPaymentsByWhatsapp(whatsappDigits),
+      this.loadDocumentsByWhatsapp(whatsappDigits),
+    ]);
 
     const columns = RAFA_CALL_CRM_STATUS_ORDER.map((status) => ({
       status,
       label: RAFA_CALL_CRM_STATUS_LABELS[status],
       items: sortCrmItemsByImmigrationDate(
         uniqueItems.filter((item) => item.crmStatus === status),
-      ).map((item) =>
-        this.serializeCrmItem(
+      ).map((item) => {
+        const digits = this.extractWhatsappDigits(item);
+        return this.serializeCrmItem(
           item,
-          paymentsByWhatsapp.get(this.extractWhatsappDigits(item)) ?? [],
-        ),
-      ),
+          paymentsByWhatsapp.get(digits) ?? [],
+          documentsByWhatsapp.get(digits) ?? [],
+        );
+      }),
     }));
 
     return { columns };
@@ -176,6 +211,7 @@ export class RafacallCrmService {
     crmExpectedImmigrationAt?: string | null;
     crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
     crmPreferredCity?: string | null;
+    crmDesiredRent?: number | null;
   }) {
     const name = params.name.trim();
     if (!name || name.length < 2) {
@@ -203,6 +239,10 @@ export class RafacallCrmService {
 
     const preferredCity = params.crmPreferredCity?.trim() || null;
     const propertyTypology = params.crmPropertyTypology ?? null;
+    const desiredRent =
+      params.crmDesiredRent === undefined
+        ? null
+        : normalizeDesiredRent(params.crmDesiredRent);
 
     const visibleSiblings = await this.findActiveBookingsByWhatsapp(whatsapp);
     if (visibleSiblings.length > 0) {
@@ -242,7 +282,8 @@ export class RafacallCrmService {
           crmPropertyTypology: propertyTypology,
           crmPreferredCity: preferredCity,
           crmHasPet: null,
-          crmDesiredRent: null,
+          crmHasVisa: null,
+          crmDesiredRent: desiredRent,
         },
         select: BOOKING_CRM_SELECT,
       });
@@ -270,7 +311,8 @@ export class RafacallCrmService {
         crmPropertyTypology: propertyTypology,
         crmPreferredCity: preferredCity,
         crmHasPet: null,
-        crmDesiredRent: null,
+        crmHasVisa: null,
+        crmDesiredRent: desiredRent,
         crmExcludedAt: null,
       },
       select: BOOKING_CRM_SELECT,
@@ -296,7 +338,9 @@ export class RafacallCrmService {
         ),
         cities: source.crmPreferredCity?.trim() || null,
         typology: source.crmPropertyTypology,
+        desiredRent: source.crmDesiredRent,
         hasPet: source.crmHasPet,
+        hasVisa: source.crmHasVisa,
       };
     }
 
@@ -343,6 +387,7 @@ export class RafacallCrmService {
     crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
     crmPreferredCity?: string | null;
     crmHasPet?: boolean | null;
+    crmHasVisa?: boolean | null;
     crmDesiredRent?: number | null;
   }) {
     const booking = await this.prisma.rafaCallBooking.findFirst({
@@ -375,6 +420,7 @@ export class RafacallCrmService {
       params.crmPropertyTypology !== undefined ||
       params.crmPreferredCity !== undefined ||
       params.crmHasPet !== undefined ||
+      params.crmHasVisa !== undefined ||
       params.crmDesiredRent !== undefined;
 
     const normalizedComments = hasCommentsUpdate
@@ -419,6 +465,7 @@ export class RafacallCrmService {
     let nextPropertyTypology = crmSource.crmPropertyTypology;
     let nextPreferredCity = crmSource.crmPreferredCity?.trim() || null;
     let nextHasPet = crmSource.crmHasPet;
+    let nextHasVisa = crmSource.crmHasVisa;
     let nextDesiredRent = crmSource.crmDesiredRent;
     if (params.crmPropertyTypology !== undefined) {
       nextPropertyTypology = params.crmPropertyTypology;
@@ -429,6 +476,9 @@ export class RafacallCrmService {
     if (params.crmHasPet !== undefined) {
       nextHasPet = params.crmHasPet;
     }
+    if (params.crmHasVisa !== undefined) {
+      nextHasVisa = params.crmHasVisa;
+    }
     if (params.crmDesiredRent !== undefined) {
       nextDesiredRent = normalizeDesiredRent(params.crmDesiredRent);
     }
@@ -437,6 +487,7 @@ export class RafacallCrmService {
       (nextPropertyTypology !== crmSource.crmPropertyTypology ||
         nextPreferredCity !== (crmSource.crmPreferredCity?.trim() || null) ||
         nextHasPet !== crmSource.crmHasPet ||
+        nextHasVisa !== crmSource.crmHasVisa ||
         nextDesiredRent !== crmSource.crmDesiredRent);
 
     const hasAnyFieldUpdate =
@@ -505,6 +556,7 @@ export class RafacallCrmService {
       crmPropertyTypology: nextPropertyTypology,
       crmPreferredCity: nextPreferredCity,
       crmHasPet: nextHasPet,
+      crmHasVisa: nextHasVisa,
       crmDesiredRent: nextDesiredRent,
     });
 
@@ -517,6 +569,7 @@ export class RafacallCrmService {
       crmPropertyTypology: nextPropertyTypology,
       crmPreferredCity: nextPreferredCity,
       crmHasPet: nextHasPet,
+      crmHasVisa: nextHasVisa,
       crmDesiredRent: nextDesiredRent,
     });
 
@@ -692,6 +745,70 @@ export class RafacallCrmService {
     return { ok: true as const };
   }
 
+  async uploadCrmDocument(params: {
+    bookingId: string;
+    file: Express.Multer.File | undefined;
+  }): Promise<SerializedCrmDocument> {
+    const whatsapp = await this.requireCrmWhatsapp(params.bookingId);
+    const file = params.file;
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Seleciona um PDF.');
+    }
+    if (file.size > CRM_CLIENT_DOCUMENT_MAX_BYTES) {
+      throw new PayloadTooLargeException('Cada PDF pode ter no máximo 15 MB.');
+    }
+
+    const existingCount = await this.prisma.rafaCallCrmDocument.count({
+      where: { whatsappDigits: whatsapp },
+    });
+    if (existingCount >= CRM_CLIENT_DOCUMENT_MAX_COUNT) {
+      throw new BadRequestException(
+        'Este cliente já tem 20 PDFs. Remove um para anexar outro.',
+      );
+    }
+
+    let publicUrl: string;
+    try {
+      ({ publicUrl } = await this.storage.storeCrmClientPdf(file));
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'empty_crm_pdf' || code === 'invalid_crm_pdf') {
+        throw new BadRequestException('Este ficheiro não é um PDF válido.');
+      }
+      throw error;
+    }
+
+    try {
+      const created = await this.prisma.rafaCallCrmDocument.create({
+        data: {
+          whatsappDigits: whatsapp,
+          fileName: sanitizeCrmPdfFileName(file.originalname || ''),
+          fileUrl: publicUrl,
+          sizeBytes: file.size,
+        },
+      });
+      return this.serializeDocument(created);
+    } catch (error) {
+      await this.storage.deleteStoredUrl(publicUrl);
+      throw error;
+    }
+  }
+
+  async deleteCrmDocument(params: { bookingId: string; documentId: string }) {
+    const whatsapp = await this.requireCrmWhatsapp(params.bookingId);
+    const existing = await this.prisma.rafaCallCrmDocument.findFirst({
+      where: { id: params.documentId, whatsappDigits: whatsapp },
+      select: { id: true, fileUrl: true },
+    });
+    if (!existing) {
+      throw new BadRequestException('Documento não encontrado.');
+    }
+
+    await this.prisma.rafaCallCrmDocument.delete({ where: { id: existing.id } });
+    await this.storage.deleteStoredUrl(existing.fileUrl);
+    return { ok: true as const };
+  }
+
   async recordStatusChange(params: {
     bookingId: string;
     crmStatus: RafaCallCrmStatus;
@@ -718,6 +835,7 @@ export class RafacallCrmService {
       crmPropertyTypology: crmSource.crmPropertyTypology,
       crmPreferredCity: crmSource.crmPreferredCity,
       crmHasPet: crmSource.crmHasPet,
+      crmHasVisa: crmSource.crmHasVisa,
       crmDesiredRent: crmSource.crmDesiredRent,
     });
   }
@@ -731,6 +849,7 @@ export class RafacallCrmService {
     crmPropertyTypology: RafaCallCrmPropertyTypology | null;
     crmPreferredCity: string | null;
     crmHasPet: boolean | null;
+    crmHasVisa: boolean | null;
     crmDesiredRent: number | null;
   }> {
     const digits = waDigits(whatsappDigits);
@@ -743,6 +862,7 @@ export class RafacallCrmService {
         crmPropertyTypology: null,
         crmPreferredCity: null,
         crmHasPet: null,
+        crmHasVisa: null,
         crmDesiredRent: null,
       };
     }
@@ -757,6 +877,7 @@ export class RafacallCrmService {
         crmPropertyTypology: null,
         crmPreferredCity: null,
         crmHasPet: null,
+        crmHasVisa: null,
         crmDesiredRent: null,
       };
     }
@@ -770,6 +891,7 @@ export class RafacallCrmService {
       crmPropertyTypology: crmSource.crmPropertyTypology,
       crmPreferredCity: crmSource.crmPreferredCity,
       crmHasPet: crmSource.crmHasPet,
+      crmHasVisa: crmSource.crmHasVisa,
       crmDesiredRent: crmSource.crmDesiredRent,
     };
   }
@@ -846,6 +968,7 @@ export class RafacallCrmService {
         crmPropertyTypology: booking.crmPropertyTypology,
         crmPreferredCity: booking.crmPreferredCity,
         crmHasPet: booking.crmHasPet,
+        crmHasVisa: booking.crmHasVisa,
         crmDesiredRent: booking.crmDesiredRent,
         crmExcludedAt: null,
       },
@@ -1121,6 +1244,7 @@ export class RafacallCrmService {
     crmPropertyTypology: RafaCallCrmPropertyTypology | null;
     crmPreferredCity: string | null;
     crmHasPet: boolean | null;
+    crmHasVisa: boolean | null;
     crmDesiredRent: number | null;
   }) {
     return {
@@ -1131,6 +1255,7 @@ export class RafacallCrmService {
       crmPropertyTypology: booking.crmPropertyTypology,
       crmPreferredCity: booking.crmPreferredCity,
       crmHasPet: booking.crmHasPet,
+      crmHasVisa: booking.crmHasVisa,
       crmDesiredRent: booking.crmDesiredRent,
     };
   }
@@ -1192,6 +1317,7 @@ export class RafacallCrmService {
       crmPropertyTypology: RafaCallCrmPropertyTypology | null;
       crmPreferredCity: string | null;
       crmHasPet: boolean | null;
+      crmHasVisa: boolean | null;
       crmDesiredRent: number | null;
     },
   ) {
@@ -1211,6 +1337,7 @@ export class RafacallCrmService {
         crmPropertyTypology: data.crmPropertyTypology,
         crmPreferredCity: data.crmPreferredCity,
         crmHasPet: data.crmHasPet,
+        crmHasVisa: data.crmHasVisa,
         crmDesiredRent: data.crmDesiredRent,
       },
     });
@@ -1257,6 +1384,7 @@ export class RafacallCrmService {
       | 'crmPropertyTypology'
       | 'crmPreferredCity'
       | 'crmHasPet'
+      | 'crmHasVisa'
       | 'crmDesiredRent'
     >,
   ): BookingCrmRow {
@@ -1269,16 +1397,22 @@ export class RafacallCrmService {
       crmPropertyTypology: crmSource.crmPropertyTypology,
       crmPreferredCity: crmSource.crmPreferredCity,
       crmHasPet: crmSource.crmHasPet,
+      crmHasVisa: crmSource.crmHasVisa,
       crmDesiredRent: crmSource.crmDesiredRent,
     };
   }
 
   private async serializeCrmItemWithPayments(item: BookingCrmRow) {
     const whatsappDigits = this.extractWhatsappDigits(item);
-    const payments =
-      (await this.loadPaymentsByWhatsapp([whatsappDigits])).get(whatsappDigits) ??
-      [];
-    return this.serializeCrmItem(item, payments);
+    const [paymentsMap, documentsMap] = await Promise.all([
+      this.loadPaymentsByWhatsapp([whatsappDigits]),
+      this.loadDocumentsByWhatsapp([whatsappDigits]),
+    ]);
+    return this.serializeCrmItem(
+      item,
+      paymentsMap.get(whatsappDigits) ?? [],
+      documentsMap.get(whatsappDigits) ?? [],
+    );
   }
 
   private async loadPaymentsByWhatsapp(
@@ -1304,6 +1438,44 @@ export class RafacallCrmService {
       map.set(key, list);
     }
     return map;
+  }
+
+  private async loadDocumentsByWhatsapp(
+    whatsappDigitsList: string[],
+  ): Promise<Map<string, SerializedCrmDocument[]>> {
+    const digits = [...new Set(whatsappDigitsList.map((d) => waDigits(d)).filter(Boolean))];
+    const map = new Map<string, SerializedCrmDocument[]>();
+    if (digits.length === 0) return map;
+
+    const rows = await this.prisma.rafaCallCrmDocument.findMany({
+      where: { whatsappDigits: { in: digits } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+
+    for (const row of rows) {
+      const key = row.whatsappDigits.trim();
+      if (!key) continue;
+      const list = map.get(key) ?? [];
+      list.push(this.serializeDocument(row));
+      map.set(key, list);
+    }
+    return map;
+  }
+
+  private serializeDocument(row: {
+    id: string;
+    fileName: string;
+    fileUrl: string;
+    sizeBytes: number;
+    createdAt: Date;
+  }): SerializedCrmDocument {
+    return {
+      id: row.id,
+      fileName: row.fileName,
+      fileUrl: row.fileUrl,
+      sizeBytes: row.sizeBytes,
+      createdAt: row.createdAt.toISOString(),
+    };
   }
 
   private async requireCrmWhatsapp(bookingId: string): Promise<string> {
@@ -1392,6 +1564,7 @@ export class RafacallCrmService {
       crmPropertyTypology: RafaCallCrmPropertyTypology | null;
       crmPreferredCity: string | null;
       crmHasPet: boolean | null;
+      crmHasVisa: boolean | null;
       crmDesiredRent: number | null;
       startsAt: Date;
       endsAt: Date;
@@ -1402,6 +1575,7 @@ export class RafacallCrmService {
       user: { id: string; name: string | null; whatsapp: string | null } | null;
     },
     payments: ReturnType<RafacallCrmService['serializePayment']>[] = [],
+    documents: SerializedCrmDocument[] = [],
   ) {
     const whatsappDigits = this.extractWhatsappDigits(item);
     const hasVideoCall = this.hasDisplayableVideoCall(item);
@@ -1421,9 +1595,11 @@ export class RafacallCrmService {
       crmPropertyTypology: item.crmPropertyTypology,
       crmPreferredCity: item.crmPreferredCity,
       crmHasPet: item.crmHasPet,
+      crmHasVisa: item.crmHasVisa,
       crmDesiredRent: item.crmDesiredRent,
       payments,
       paymentsTotal,
+      documents,
       startsAt: item.startsAt.toISOString(),
       endsAt: item.endsAt.toISOString(),
       bookingTimezone: item.timezone,
