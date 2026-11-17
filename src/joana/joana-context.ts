@@ -20,8 +20,8 @@ Preço do serviço, por cidade:
 - Braga: €950
 
 Serviços adicionais:
-- Recebimento de entregas: €80
-- Primeiras compras: €80
+- Recebimento de compras online: €80
+- Primeiras compras de supermercado: €80
 - Transfer com as malas do aeroporto até a nova casa: a consultar
 - Assessoria para a compra do primeiro carro: a consultar
 

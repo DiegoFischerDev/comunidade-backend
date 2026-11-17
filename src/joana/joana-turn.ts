@@ -12,6 +12,24 @@ export type JoanaTypology = (typeof JOANA_TYPOLOGIES)[number];
 
 export type JoanaField = 'name' | 'immigration' | 'visa' | 'cities' | 'typology' | 'rent' | 'pet';
 
+/**
+ * Link `/agendar` só em «perto» + visto, e nunca se a chamada já está marcada
+ * ou se o link já foi enviado nesta conversa.
+ */
+export function shouldOfferSchedulingLink(input: {
+  crmStatus: string;
+  hasVisa: boolean | null;
+  hasScheduledVideoCall: boolean;
+  linkAlreadyDelivered: boolean;
+  schedulingLinkSent: boolean;
+}): boolean {
+  if (input.crmStatus !== 'IMIGRACAO_PERTO') return false;
+  if (input.hasVisa !== true) return false;
+  if (input.hasScheduledVideoCall) return false;
+  if (input.linkAlreadyDelivered || input.schedulingLinkSent) return false;
+  return true;
+}
+
 export type JoanaProfile = {
   name: string | null;
   /** `YYYY-MM-DD`, `IMEDIATO` ou null. */
@@ -286,7 +304,9 @@ export function missingFieldQuestion(profile: JoanaProfile): string | null {
 
 /**
  * A fala da Joana fica como ela escreveu. Uma frase que comente a gravação sai.
- * A pergunta do sistema só entra se ela própria não tiver perguntado nada.
+ * Se o sistema já sabe a próxima pergunta em falta, essa pergunta manda —
+ * a pergunta do modelo (que pode repetir um dado já na ficha) sai.
+ * Sem pergunta do sistema, mantém-se a primeira pergunta da fala dela.
  */
 export function composeJoanaReply(
   reply: string,
@@ -307,11 +327,11 @@ export function composeJoanaReply(
     ? ''
     : (extras.find((line) => lineIsQuestion(line)) ?? '');
 
-  if (!holdsRelocation && hasQuestion(spoken)) {
+  if (!holdsRelocation && !systemQuestion && hasQuestion(spoken)) {
     return [keepFirstQuestion(spoken), ...guidance].filter(Boolean).join('\n\n').slice(0, 4000);
   }
 
-  const narrative = holdsRelocation ? spoken : dropQuestions(spoken);
+  const narrative = holdsRelocation || systemQuestion ? dropQuestions(spoken) : spoken;
   const intro = narrative || (systemQuestion || guidance.length ? '' : fallback.trim());
   return [intro, ...guidance, systemQuestion].filter(Boolean).join('\n\n').slice(0, 4000);
 }

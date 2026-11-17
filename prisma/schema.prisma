@@ -422,6 +422,11 @@ model RafaCallBooking {
    */
   crmJoanaEnabled        Boolean               @default(true) @map("crm_joana_enabled")
   /**
+   * Foto de perfil WhatsApp (Evolution → R2/`uploads/crm/avatars/`).
+   * URL estável; não guardar a URL temporária do CDN WhatsApp.
+   */
+  crmProfileImageUrl     String?               @map("crm_profile_image_url")
+  /**
    * Quando preenchido, o cliente deixa de aparecer no kanban CRM (por WhatsApp).
    */
   crmExcludedAt            DateTime?             @map("crm_excluded_at")
@@ -1266,11 +1271,13 @@ model WhatsappDailyContact {
   @@map("whatsapp_daily_contacts")
 }
 
-/// Texto de negócio que a Joana usa nas respostas. Uma linha, id fixo `default`.
+/// Texto de negócio e boas-vindas que a Joana usa. Uma linha, id fixo `default`.
 model JoanaSettings {
-  id          String   @id
-  contextText String   @map("context_text") @db.Text
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id           String   @id
+  contextText  String   @map("context_text") @db.Text
+  /// Sequência TEXT/AUDIO/IMAGE de boas-vindas (mesmo shape das automações).
+  welcomeSteps Json     @default("[]") @map("welcome_steps")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   @@map("joana_settings")
 }
@@ -1292,6 +1299,8 @@ model JoanaConversation {
   pendingOutbound     String?   @map("pending_outbound") @db.Text
   farGuidanceSent     Boolean   @default(false) @map("far_guidance_sent")
   schedulingLinkSent  Boolean   @default(false) @map("scheduling_link_sent")
+  /// Já enviámos a sequência de boas-vindas (ou a intro por omissão) a este número.
+  welcomeSent         Boolean   @default(false) @map("welcome_sent")
   /// A Joana não responde. O admin desligou o chatbot ou assumiu o WhatsApp.
   paused              Boolean   @default(false)
   processing          Boolean   @default(false)

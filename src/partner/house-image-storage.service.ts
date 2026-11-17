@@ -278,6 +278,31 @@ export class HouseImageStorageService {
     return { publicUrl: await this.uploadWebpToPrefix(webp, 'job-offers') };
   }
 
+  /** Mini avatar CRM (foto de perfil WhatsApp) → WebP 256px em `crm/avatars/`. */
+  async processCrmAvatarBuffer(buf: Buffer): Promise<{ publicUrl: string }> {
+    if (!buf?.length) {
+      throw new Error('Imagem inválida (sem conteúdo).');
+    }
+    let webp: Buffer;
+    try {
+      webp = await sharp(buf)
+        .rotate()
+        .resize(256, 256, { fit: 'cover', position: 'centre' })
+        .webp({ quality: 82 })
+        .toBuffer();
+    } catch (e) {
+      this.logger.warn(`sharp falhou (avatar CRM): ${e}`);
+      throw new Error('Não foi possível processar esta imagem.');
+    }
+    const publicUrl = await this.uploadUnderPrefix(
+      webp,
+      'image/webp',
+      'crm/avatars',
+      '.webp',
+    );
+    return { publicUrl };
+  }
+
   /** Converte um buffer de imagem para WebP e grava (R2/disco). Para mídia capturada (scan). */
   async processHouseImageBuffer(buf: Buffer): Promise<{ publicUrl: string }> {
     if (!buf?.length) {

@@ -430,6 +430,76 @@ export class WhatsAppService {
     return norm === want || norm.endsWith(want) || want.endsWith(norm);
   }
 
+  /** Extrai URL de foto de perfil de respostas Evolution (`fetchProfilePictureUrl`). */
+  private pickProfilePictureUrl(data: unknown, depth = 0): string | null {
+    if (!data || typeof data !== 'object' || depth > 4) return null;
+    const o = data as Record<string, unknown>;
+    const fields = [
+      o.profilePictureUrl,
+      o.profilePicUrl,
+      o.picture,
+      o.url,
+    ];
+    for (const v of fields) {
+      if (typeof v === 'string' && /^https?:\/\//i.test(v.trim())) {
+        return v.trim();
+      }
+    }
+    const nested = [o.response, o.data, o.result, o.profile];
+    for (const inner of nested) {
+      const url = this.pickProfilePictureUrl(inner, depth + 1);
+      if (url) return url;
+    }
+    return null;
+  }
+
+  /**
+   * Obtém a URL temporária da foto de perfil via Evolution
+   * (`POST /chat/fetchProfilePictureUrl`). Best-effort; null se indisponível.
+   * A URL do CDN WhatsApp expira — descarregar e guardar noutro sítio.
+   */
+  async getContactProfilePictureUrl(
+    phoneDigits: string,
+    instance?: string,
+  ): Promise<string | null> {
+    const base = this.base;
+    const key = this.key;
+    const number = this.normalizeRecipient(phoneDigits);
+    if (!base || !key || !number || number.includes('@')) return null;
+
+    const preferred = (instance || '').trim();
+    const all = this.instancesOrdered;
+    const attempts =
+      preferred && !all.includes(preferred)
+        ? [preferred, ...all]
+        : preferred
+          ? [preferred, ...all.filter((i) => i !== preferred)]
+          : all;
+
+    const signal = this.evolutionRequestSignal('default');
+    const jid = this.contactJidFromDigits(number);
+
+    for (const inst of attempts) {
+      for (const payload of [{ number }, ...(jid ? [{ number: jid }] : [])]) {
+        try {
+          const res = await fetch(`${base}/chat/fetchProfilePictureUrl/${inst}`, {
+            method: 'POST',
+            headers: { apikey: key, 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+            ...(signal ? { signal } : {}),
+          });
+          if (!res.ok) continue;
+          const data: unknown = await res.json().catch(() => null);
+          const url = this.pickProfilePictureUrl(data);
+          if (url) return url;
+        } catch {
+          // tenta próxima variante / instância
+        }
+      }
+    }
+    return null;
+  }
+
   /**
    * Obtém o nome visível de um contacto via Evolution (`POST /chat/fetchProfile`,
    * com fallback `POST /chat/findContacts`). Best-effort; null se indisponível.

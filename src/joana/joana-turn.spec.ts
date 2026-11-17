@@ -9,6 +9,7 @@ import {
   emptyJoanaProfile,
   ensureJoanaIntro,
   parseDesiredRent,
+  shouldOfferSchedulingLink,
   type JoanaProfile,
 } from './joana-turn';
 
@@ -249,6 +250,30 @@ describe('applyJoanaProposal', () => {
     expect(result.append[0]).toContain('valor do aluguel pretendido');
   });
 
+  it('com ficha quase completa, não volta a perguntar tipologia nem visto', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, hasPet: null },
+      pending: null,
+      proposal: { interested: null, confirmation: null },
+    });
+    expect(result.append).toHaveLength(1);
+    expect(result.append[0]).toContain('animal de estimação');
+    expect(result.append[0]).not.toMatch(/tipologia|visto|data|cidades|aluguel/i);
+  });
+
+  it('com ficha completa, não acrescenta pergunta de qualificação', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: filled,
+      pending: null,
+      proposal: { interested: null, confirmation: null },
+    });
+    expect(result.append).toEqual([]);
+  });
+
   it('não grava quem foi excluído do kanban', () => {
     const result = applyJoanaProposal({
       hasLead: false,
@@ -263,14 +288,17 @@ describe('applyJoanaProposal', () => {
 });
 
 describe('composeJoanaReply', () => {
-  it('mantém a pergunta da Joana quando ela já continuou a conversa', () => {
+  it('troca a pergunta do modelo pela próxima que falta na ficha', () => {
     const text = composeJoanaReply(
       'Março é um bom mês. Você já tem visto para Portugal?',
       ['Quais cidades você está considerando?'],
       'fallback',
       true,
     );
-    expect(text).toBe('Março é um bom mês. Você já tem visto para Portugal?');
+    expect(text).toBe(
+      'Março é um bom mês.\n\nQuais cidades você está considerando?',
+    );
+    expect(text).not.toContain('visto');
   });
 
   it('deixa só a primeira pergunta quando o sistema não pergunta', () => {
@@ -288,13 +316,26 @@ describe('composeJoanaReply', () => {
     expect(text).toBe('Março, perfeito.\n\nVocê já tem visto para Portugal?');
   });
 
-  it('tira da fala a frase em que ela diz que gravou e fica com a conversa', () => {
+  it('tira da fala a frase em que ela diz que gravou e fica com a pergunta certa', () => {
     const text = composeJoanaReply(
       'Registrei a data para 31/03/2027. Você já tem visto?',
       ['Para quando você pretende vir para Portugal?'],
       'fallback',
     );
-    expect(text).toBe('Você já tem visto?');
+    expect(text).toBe('Para quando você pretende vir para Portugal?');
+  });
+
+  it('não deixa repetir tipologia quando o sistema já pede o aluguel', () => {
+    const text = composeJoanaReply(
+      'Perfeito. Que tipologia você procura, T1 ou T2?',
+      ['Qual o valor do aluguel pretendido por mês? Pode ser um valor aproximado, em euros.'],
+      'fallback',
+      true,
+    );
+    expect(text).toBe(
+      'Perfeito.\n\nQual o valor do aluguel pretendido por mês? Pode ser um valor aproximado, em euros.',
+    );
+    expect(text).not.toContain('tipologia');
   });
 
   it('mantém o link de agendar mesmo quando a resposta já tem uma pergunta', () => {
@@ -354,5 +395,42 @@ describe('ensureJoanaIntro', () => {
     expect(ensureJoanaIntro('Para quando você pretende vir?', false)).toBe(
       'Para quando você pretende vir?',
     );
+  });
+});
+
+describe('shouldOfferSchedulingLink', () => {
+  const base = {
+    crmStatus: 'IMIGRACAO_PERTO',
+    hasVisa: true as boolean | null,
+    hasScheduledVideoCall: false,
+    linkAlreadyDelivered: false,
+    schedulingLinkSent: false,
+  };
+
+  it('oferece o link em perto com visto e sem chamada marcada', () => {
+    expect(shouldOfferSchedulingLink(base)).toBe(true);
+  });
+
+  it('não oferece se a videochamada já está agendada', () => {
+    expect(
+      shouldOfferSchedulingLink({ ...base, hasScheduledVideoCall: true }),
+    ).toBe(false);
+  });
+
+  it('não oferece se o link já foi enviado nesta conversa', () => {
+    expect(shouldOfferSchedulingLink({ ...base, schedulingLinkSent: true })).toBe(
+      false,
+    );
+    expect(
+      shouldOfferSchedulingLink({ ...base, linkAlreadyDelivered: true }),
+    ).toBe(false);
+  });
+
+  it('não oferece fora de perto ou sem visto', () => {
+    expect(
+      shouldOfferSchedulingLink({ ...base, crmStatus: 'VIDEO_CHAMADA_AGENDADA' }),
+    ).toBe(false);
+    expect(shouldOfferSchedulingLink({ ...base, hasVisa: false })).toBe(false);
+    expect(shouldOfferSchedulingLink({ ...base, hasVisa: null })).toBe(false);
   });
 });

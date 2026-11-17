@@ -2,6 +2,7 @@ import { Body, Controller, Get, Patch } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/roles.decorator';
 import { UpdateJoanaContextDto } from './dto/update-joana-context.dto';
+import { UpdateJoanaWelcomeDto } from './dto/update-joana-welcome.dto';
 import { JoanaService } from './joana.service';
 
 @Controller('joana')
@@ -18,5 +19,17 @@ export class JoanaController {
   @Roles(Role.ADMIN)
   updateContext(@Body() dto: UpdateJoanaContextDto) {
     return this.joana.updateContext(dto.contextText);
+  }
+
+  @Get('welcome')
+  @Roles(Role.ADMIN)
+  welcome() {
+    return this.joana.getWelcome();
+  }
+
+  @Patch('welcome')
+  @Roles(Role.ADMIN)
+  updateWelcome(@Body() dto: UpdateJoanaWelcomeDto) {
+    return this.joana.updateWelcome(dto.steps ?? []);
   }
 }

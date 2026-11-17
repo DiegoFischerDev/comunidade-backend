@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma, RafaCallCrmStatus } from '@prisma/client';
+import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
@@ -12,12 +13,20 @@ import {
 } from './joana-context';
 import { JoanaOpenAiService } from './joana-openai.service';
 import {
+  type JoanaWelcomeStep,
+  normalizeJoanaWelcomeSteps,
+  parseStoredWelcomeSteps,
+  welcomeStepsHistorySummary,
+} from './joana-welcome';
+import {
   JOANA_TYPOLOGY_SPEECH,
   applyJoanaProposal,
   composeJoanaReply,
   emptyJoanaProfile,
   ensureJoanaIntro,
   formatImmigrationLabel,
+  missingFieldQuestion,
+  shouldOfferSchedulingLink,
   type JoanaCrmPatch,
   type JoanaProfile,
   type JoanaTypology,
@@ -55,10 +64,38 @@ export class JoanaService {
     }
     const saved = await this.prisma.joanaSettings.upsert({
       where: { id: 'default' },
-      create: { id: 'default', contextText: text },
+      create: {
+        id: 'default',
+        contextText: text,
+        welcomeSteps: [] as unknown as Prisma.InputJsonValue,
+      },
       update: { contextText: text },
     });
     return { contextText: saved.contextText };
+  }
+
+  async getWelcome(): Promise<{ steps: JoanaWelcomeStep[] }> {
+    const row = await this.prisma.joanaSettings.findUnique({
+      where: { id: 'default' },
+    });
+    return { steps: parseStoredWelcomeSteps(row?.welcomeSteps) };
+  }
+
+  async updateWelcome(rawSteps: unknown): Promise<{ steps: JoanaWelcomeStep[] }> {
+    const steps = normalizeJoanaWelcomeSteps(rawSteps);
+    const existing = await this.prisma.joanaSettings.findUnique({
+      where: { id: 'default' },
+    });
+    const saved = await this.prisma.joanaSettings.upsert({
+      where: { id: 'default' },
+      create: {
+        id: 'default',
+        contextText: existing?.contextText?.trim() || JOANA_DEFAULT_CONTEXT,
+        welcomeSteps: steps as unknown as Prisma.InputJsonValue,
+      },
+      update: { welcomeSteps: steps as unknown as Prisma.InputJsonValue },
+    });
+    return { steps: parseStoredWelcomeSteps(saved.welcomeSteps) };
   }
 
   /**
@@ -315,8 +352,35 @@ export class JoanaService {
       const history = readHistory(row.history);
       const pending = readPending(row.pendingConfirmation);
       const { contextText } = await this.getContext();
+      const { steps: welcomeSteps } = await this.getWelcome();
       const lead = await this.crm.lookupLeadForJoana(row.whatsappDigits);
       const profile = lead.kind === 'visible' ? profileFromLead(lead) : emptyJoanaProfile();
+      const hasScheduledVideoCall =
+        lead.kind === 'visible' ? lead.hasScheduledVideoCall : false;
+
+      let welcomeSent = row.welcomeSent;
+      let welcomeSummary = '';
+      if (!welcomeSent && lead.kind === 'none' && welcomeSteps.length > 0) {
+        try {
+          await this.sendWelcomeSteps(
+            row.whatsappDigits,
+            welcomeSteps,
+            row.instance,
+          );
+          welcomeSent = true;
+          welcomeSummary = welcomeStepsHistorySummary(welcomeSteps);
+        } catch (err: unknown) {
+          this.logger.warn(
+            `Joana boas-vindas ${row.whatsappDigits}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+
+      const historyForModel: HistoryItem[] = welcomeSummary
+        ? [...history, { role: 'assistant', text: welcomeSummary }]
+        : history;
 
       let reply = '';
       let proposal = {
@@ -326,8 +390,12 @@ export class JoanaService {
       try {
         const interpreted = await this.openai.interpret({
           context: contextText,
-          transcript: history.map((item) => `${item.role}: ${item.text}`).join('\n'),
-          profileSummary: describeProfile(profile, lead.kind),
+          transcript: historyForModel
+            .map((item) => `${item.role}: ${item.text}`)
+            .join('\n'),
+          profileSummary: describeProfile(profile, lead.kind, {
+            hasScheduledVideoCall,
+          }),
           pendingQuestion: pending?.question ?? null,
           combinedText: combined,
         });
@@ -335,9 +403,13 @@ export class JoanaService {
         proposal = interpreted.proposal;
         const needsIntro =
           lead.kind === 'none' &&
+          !welcomeSent &&
           proposal.interested !== false &&
-          !history.some((item) => item.role === 'assistant' && /joana/i.test(item.text));
+          !history.some(
+            (item) => item.role === 'assistant' && /joana/i.test(item.text),
+          );
         reply = ensureJoanaIntro(reply, needsIntro);
+        if (needsIntro) welcomeSent = true;
       } catch (err: unknown) {
         this.logger.warn(
           `Joana OpenAI ${row.whatsappDigits}: ${err instanceof Error ? err.message : String(err)}`,
@@ -348,10 +420,13 @@ export class JoanaService {
           bufferIds: buffer.map((item) => item.id),
           history,
           userText: combined,
-          assistantText: reply,
+          assistantText: welcomeSummary
+            ? `${welcomeSummary}\n\n${reply}`
+            : reply,
           pending,
           farGuidanceSent: row.farGuidanceSent,
           schedulingLinkSent: row.schedulingLinkSent,
+          welcomeSent,
           outbound: reply,
           whatsapp: row.whatsappDigits,
           instance: row.instance,
@@ -392,22 +467,36 @@ export class JoanaService {
         if (persisted) {
           const next = await this.crm.lookupLeadForJoana(row.whatsappDigits);
           if (next.kind === 'visible') {
-            const guidance = this.columnGuidance(next.crmStatus, row.whatsappDigits, next.name);
-            if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO) {
+            if (next.hasScheduledVideoCall) {
+              // Já tem videochamada marcada — não voltar a mandar o link.
+              schedulingLinkSent = true;
               farGuidanceSent = false;
-              offerSchedulingLink = next.hasVisa === true && !linkAlreadyDelivered;
-              if (offerSchedulingLink && guidance) append.push(guidance);
-            } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_LONGE) {
-              schedulingLinkSent = false;
-              if (next.hasVisa !== false && !farGuidanceSent && guidance) {
-                append.push(guidance);
-                farGuidanceSent = true;
+            } else {
+              const guidance = this.columnGuidance(
+                next.crmStatus,
+                row.whatsappDigits,
+                next.name,
+              );
+              if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO) {
+                farGuidanceSent = false;
+                offerSchedulingLink = shouldOfferSchedulingLink({
+                  crmStatus: next.crmStatus,
+                  hasVisa: next.hasVisa,
+                  hasScheduledVideoCall: next.hasScheduledVideoCall,
+                  linkAlreadyDelivered,
+                  schedulingLinkSent,
+                });
+                if (offerSchedulingLink && guidance) append.push(guidance);
+              } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_LONGE) {
+                schedulingLinkSent = false;
+                if (next.hasVisa !== false && !farGuidanceSent && guidance) {
+                  append.push(guidance);
+                  farGuidanceSent = true;
+                }
+              } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_NULL) {
+                farGuidanceSent = false;
+                schedulingLinkSent = false;
               }
-            } else if (
-              next.crmStatus === RafaCallCrmStatus.IMIGRACAO_NULL
-            ) {
-              farGuidanceSent = false;
-              schedulingLinkSent = false;
             }
           }
         }
@@ -420,9 +509,12 @@ export class JoanaService {
         saved = false;
       }
 
-      const assistantText = composeReply(reply, append, saved);
-      if (assistantText.includes('/agendar?')) schedulingLinkSent = true;
+      const composed = composeReply(reply, append, saved);
+      if (composed.includes('/agendar?')) schedulingLinkSent = true;
       else if (offerSchedulingLink) schedulingLinkSent = false;
+      const assistantText = welcomeSummary
+        ? `${welcomeSummary}\n\n${composed}`
+        : composed;
       await this.finishTurn({
         id,
         bufferIds: buffer.map((item) => item.id),
@@ -432,7 +524,8 @@ export class JoanaService {
         pending: decision.pending,
         farGuidanceSent,
         schedulingLinkSent,
-        outbound: assistantText,
+        welcomeSent,
+        outbound: composed,
         whatsapp: row.whatsappDigits,
         instance: row.instance,
       });
@@ -534,6 +627,59 @@ export class JoanaService {
     return true;
   }
 
+  private async sendWelcomeSteps(
+    to: string,
+    steps: JoanaWelcomeStep[],
+    preferredInstance: string | null,
+  ): Promise<void> {
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i]!;
+      if (step.type === 'TEXT') {
+        const body = (step.textContent || '').trim();
+        if (body) {
+          await this.wa.sendText(to, body, {
+            preferredInstance: preferredInstance || undefined,
+            requireDelivery: true,
+          });
+        }
+      } else if (step.type === 'AUDIO') {
+        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
+        if (!abs) throw new Error('Passo AUDIO sem mediaUrl válida.');
+        await this.wa.sendWhatsAppAudio({
+          to,
+          mediaUrl: abs,
+          preferredInstance: preferredInstance || undefined,
+          requireDelivery: true,
+        });
+      } else if (step.type === 'IMAGE') {
+        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
+        if (!abs) throw new Error('Passo IMAGE sem mediaUrl válida.');
+        const mime =
+          step.mediaMimeType?.trim() ||
+          guessWelcomeImageMime(step.mediaFileName || abs);
+        const fileName =
+          step.mediaFileName?.trim() ||
+          abs.split('/').pop()?.split('?')[0] ||
+          'image.jpg';
+        await this.wa.sendMedia({
+          to,
+          caption: (step.textContent || '').trim(),
+          mediaUrl: abs,
+          mimeType: mime,
+          fileName,
+          mediaType: 'image',
+          preferredInstance: preferredInstance || undefined,
+          requireDelivery: true,
+        });
+      }
+
+      const delay = Math.max(0, step.delayMsAfter ?? 650);
+      if (i < steps.length - 1 && delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
   private async finishTurn(input: {
     id: string;
     bufferIds: string[];
@@ -543,6 +689,7 @@ export class JoanaService {
     pending: PendingConfirmation | null;
     farGuidanceSent: boolean;
     schedulingLinkSent: boolean;
+    welcomeSent: boolean;
     outbound: string;
     whatsapp: string;
     instance: string | null;
@@ -572,6 +719,7 @@ export class JoanaService {
       pendingOutbound: outboundSaved,
       farGuidanceSent: input.farGuidanceSent,
       schedulingLinkSent: input.schedulingLinkSent,
+      welcomeSent: input.welcomeSent,
       processing: false,
     };
     const turn: HistoryItem[] = [
@@ -695,6 +843,25 @@ function isCrmMessage(err: unknown, text: string): boolean {
   return err instanceof BadRequestException && err.message === text;
 }
 
+function resolveWelcomeMediaUrl(stored: string): string {
+  const u = stored.trim();
+  if (!u) return '';
+  if (u.startsWith('https://') || u.startsWith('http://')) return u;
+  if (u.startsWith('/brand/')) {
+    const front = getFrontendBaseUrl().replace(/\/$/, '');
+    return `${front}${u}`;
+  }
+  return toAbsoluteMediaUrl(u);
+}
+
+function guessWelcomeImageMime(nameOrUrl: string): string {
+  const lower = nameOrUrl.split('?')[0]!.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
+}
+
 function patchToUpdate(patch: JoanaCrmPatch) {
   const data: {
     crmExpectedImmigrationAt?: string | null;
@@ -736,6 +903,7 @@ function profileFromLead(lead: {
 function describeProfile(
   profile: JoanaProfile,
   kind: 'visible' | 'excluded' | 'none',
+  opts?: { hasScheduledVideoCall?: boolean },
 ): string {
   if (kind === 'excluded') {
     return 'Este número foi retirado do CRM. Não recolhas dados novos nem prometas repor a ficha.';
@@ -746,6 +914,7 @@ function describeProfile(
   const typology = profile.typology
     ? `${profile.typology} (${JOANA_TYPOLOGY_SPEECH[profile.typology]})`
     : 'ainda não temos';
+  const nextQuestion = missingFieldQuestion(profile);
   return [
     `Nome: ${profile.name || 'ainda não temos'}`,
     `Data de imigração: ${profile.immigration ? formatImmigrationLabel(profile.immigration) : 'ainda não temos'}`,
@@ -756,6 +925,14 @@ function describeProfile(
       profile.desiredRent == null ? 'ainda não temos' : `€${profile.desiredRent}`
     }`,
     `Pet: ${profile.hasPet === null ? 'ainda não sabemos' : profile.hasPet ? 'sim' : 'não'}`,
+    `Videochamada: ${
+      opts?.hasScheduledVideoCall
+        ? 'já agendada — não ofereças nem peças para agendar de novo'
+        : 'ainda não agendada'
+    }`,
+    nextQuestion
+      ? `Próximo a perguntar (só isto; não repitas dados já preenchidos): ${nextQuestion}`
+      : 'Não falta nenhum dado de qualificação. Não faças pergunta de qualificação.',
   ].join('\n');
 }
 
