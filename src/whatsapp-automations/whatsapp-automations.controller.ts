@@ -8,10 +8,12 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/roles.decorator';
 import { Public } from '../auth/public.decorator';
+import { RelocationChatbotService } from './relocation-chatbot.service';
 import { WhatsappAutomationsService } from './whatsapp-automations.service';
 import {
   CreateWhatsappClientAutomationDto,
@@ -21,12 +23,21 @@ import {
 
 @Controller('whatsapp-automations')
 export class WhatsappAutomationsController {
-  constructor(private readonly service: WhatsappAutomationsService) {}
+  constructor(
+    private readonly service: WhatsappAutomationsService,
+    private readonly relocation: RelocationChatbotService,
+  ) {}
 
   @Get()
   @Roles(Role.ADMIN)
   list() {
     return this.service.list();
+  }
+
+  @Get('daily-contacts')
+  @Roles(Role.ADMIN)
+  dailyContacts(@Query('day') day?: string) {
+    return this.relocation.listDay(day);
   }
 
   @Post()

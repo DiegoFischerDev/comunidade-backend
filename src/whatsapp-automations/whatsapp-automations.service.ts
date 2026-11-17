@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { RelocationChatbotService } from './relocation-chatbot.service';
 import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import {
@@ -38,6 +39,7 @@ export class WhatsappAutomationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
+    private readonly relocation: RelocationChatbotService,
   ) {}
 
   async list() {
@@ -137,6 +139,16 @@ export class WhatsappAutomationsService {
 
     if (!this.claimWebhookDelivery(dto, whatsapp, text)) {
       return { ok: true, status: 'ignored_duplicate_webhook' };
+    }
+
+    const daily = await this.relocation.handleDailyContact({
+      whatsapp,
+      text,
+      instance: dto.instance,
+      pushName: dto.pushName,
+    });
+    if (daily.handled) {
+      return { ok: true, status: daily.status };
     }
 
     const active = await this.getActiveAutomationsCached();

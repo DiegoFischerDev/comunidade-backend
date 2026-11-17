@@ -87,4 +87,9 @@ export class WhatsappClientAutomationInboundDto {
   @IsString()
   @MaxLength(200)
   externalMessageId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  pushName?: string;
 }

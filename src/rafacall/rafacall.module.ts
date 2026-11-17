@@ -24,6 +24,6 @@ import { RafacallCrmService } from './rafacall-crm.service';
     RafacallDayBeforeReminderTask,
     RafacallCrmImmigrationSyncTask,
   ],
-  exports: [RafacallService],
+  exports: [RafacallService, RafacallCrmService],
 })
 export class RafacallModule {}

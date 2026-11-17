@@ -1180,3 +1180,33 @@ model WhatsappClientAutomationFiring {
   @@index([automationId, whatsappDigits, firedAt])
   @@map("whatsapp_client_automation_firings")
 }
+
+/// Resposta do lead à pergunta de relocation no primeiro contacto do dia.
+enum WhatsappDailyContactReply {
+  PENDING
+  SIM
+  NAO
+}
+
+/// Números que escreveram numa DM no dia civil (Europe/Lisbon).
+/// O primeiro contacto do dia recebe a pergunta de relocation; «1» entra no CRM.
+model WhatsappDailyContact {
+  id             String                     @id @default(cuid())
+  /// Dia civil em Europe/Lisbon (`YYYY-MM-DD`).
+  dayKey         String                     @map("day_key")
+  /// WhatsApp do lead (só dígitos, com indicativo).
+  whatsappDigits String                     @map("whatsapp_digits")
+  instance       String?
+  displayName    String?                    @map("display_name") @db.VarChar(80)
+  firstMessageAt DateTime                   @default(now()) @map("first_message_at")
+  greetedAt      DateTime?                  @map("greeted_at")
+  reply          WhatsappDailyContactReply  @default(PENDING)
+  repliedAt      DateTime?                  @map("replied_at")
+  crmAddedAt     DateTime?                  @map("crm_added_at")
+  createdAt      DateTime                   @default(now()) @map("created_at")
+  updatedAt      DateTime                   @updatedAt @map("updated_at")
+
+  @@unique([dayKey, whatsappDigits])
+  @@index([dayKey, firstMessageAt])
+  @@map("whatsapp_daily_contacts")
+}
