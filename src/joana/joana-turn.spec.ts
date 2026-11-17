@@ -1,6 +1,8 @@
 import {
+  JOANA_DECLINE_HANDOFF,
   JOANA_INTEREST_QUESTION,
   JOANA_INTRO,
+  JOANA_NAME_QUESTION,
   JOANA_NO_VISA_GUIDANCE,
   applyJoanaProposal,
   canonicalImmigration,
@@ -8,8 +10,11 @@ import {
   confirmationQuestion,
   emptyJoanaProfile,
   ensureJoanaIntro,
+  inferPersonNameFromMessage,
+  isPlaceholderLeadName,
   parseDesiredRent,
   shouldOfferSchedulingLink,
+  withInferredName,
   type JoanaProfile,
 } from './joana-turn';
 
@@ -41,6 +46,86 @@ describe('canonicalImmigration', () => {
     expect(canonicalImmigration('imediato')).toBe('IMEDIATO');
     expect(canonicalImmigration('')).toBe('');
     expect(canonicalImmigration('semana que vem')).toBeNull();
+  });
+});
+
+describe('inferPersonNameFromMessage', () => {
+  it('aceita um nome curto numa única linha', () => {
+    expect(inferPersonNameFromMessage('Bruna')).toBe('Bruna');
+    expect(inferPersonNameFromMessage('  Ana Clara  ')).toBe('Ana Clara');
+    expect(inferPersonNameFromMessage('José')).toBe('José');
+  });
+
+  it('rejeita respostas que não são nome', () => {
+    expect(inferPersonNameFromMessage('Sim')).toBeNull();
+    expect(inferPersonNameFromMessage('não')).toBeNull();
+    expect(inferPersonNameFromMessage('oi')).toBeNull();
+    expect(inferPersonNameFromMessage('T2')).toBeNull();
+    expect(inferPersonNameFromMessage('800')).toBeNull();
+    expect(inferPersonNameFromMessage('18/12/2026')).toBeNull();
+    expect(inferPersonNameFromMessage('imediato')).toBeNull();
+    expect(inferPersonNameFromMessage('Lead 4821')).toBeNull();
+    expect(inferPersonNameFromMessage('Bruna\nClara')).toBeNull();
+  });
+});
+
+describe('withInferredName', () => {
+  const awaitingName: JoanaProfile = {
+    ...filled,
+    name: null,
+  };
+
+  it('preenche o nome quando é o próximo campo e o modelo omitiu', () => {
+    const proposal = withInferredName({
+      profile: awaitingName,
+      proposal: { interested: null, confirmation: null },
+      message: 'Bruna',
+    });
+    expect(proposal.name).toBe('Bruna');
+
+    const saved = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: awaitingName,
+      pending: null,
+      proposal,
+    });
+    expect(saved.nameToSave).toBe('Bruna');
+    expect(saved.append).toEqual([]);
+  });
+
+  it('não inventa nome se ainda falta outro dado', () => {
+    const proposal = withInferredName({
+      profile: { ...filled, name: null, cities: null },
+      proposal: { interested: null, confirmation: null },
+      message: 'Bruna',
+    });
+    expect(proposal.name).toBeUndefined();
+  });
+
+  it('trata Lead XXX como nome em falta', () => {
+    expect(isPlaceholderLeadName('Lead 4821')).toBe(true);
+    const proposal = withInferredName({
+      profile: { ...filled, name: 'Lead 4821' },
+      proposal: { interested: null, confirmation: null },
+      message: 'Bruna',
+    });
+    expect(proposal.name).toBe('Bruna');
+  });
+});
+
+describe('interesse só pergunta a data', () => {
+  it('um sim sem outros dados cria ficha e pergunta a data, não o nome', () => {
+    const result = applyJoanaProposal({
+      hasLead: false,
+      excluded: false,
+      profile: emptyJoanaProfile(),
+      pending: null,
+      proposal: { interested: true, confirmation: null },
+    });
+    expect(result.createLead).toBe(true);
+    expect(result.append[0]).toContain('Para quando');
+    expect(result.append[0]).not.toBe(JOANA_NAME_QUESTION);
   });
 });
 
@@ -78,7 +163,7 @@ describe('applyJoanaProposal', () => {
     expect(result.append).toEqual([JOANA_INTEREST_QUESTION]);
   });
 
-  it('recusa não cria ficha nem volta a perguntar o interesse', () => {
+  it('recusa não cria ficha, faz handoff à Rafa e pede para desligar a Joana', () => {
     const result = applyJoanaProposal({
       hasLead: false,
       excluded: false,
@@ -88,7 +173,8 @@ describe('applyJoanaProposal', () => {
     });
     expect(result.createLead).toBe(false);
     expect(result.crmPatch).toBeNull();
-    expect(result.append).toEqual([]);
+    expect(result.append).toEqual([JOANA_DECLINE_HANDOFF]);
+    expect(result.disableJoana).toBe(true);
   });
 
   it('interesse cria ficha, grava o que veio junto e pergunta a data', () => {
@@ -378,6 +464,17 @@ describe('composeJoanaReply', () => {
       'fallback',
     );
     expect(text).toBe(JOANA_NO_VISA_GUIDANCE);
+  });
+
+  it('na recusa do serviço, fica a reação curta e o handoff à Rafa', () => {
+    const text = composeJoanaReply(
+      'Tudo bem! Quer que eu te explique outra coisa?',
+      [JOANA_DECLINE_HANDOFF],
+      'fallback',
+    );
+    expect(text).toBe(`Tudo bem!\n\n${JOANA_DECLINE_HANDOFF}`);
+    expect(text).toContain('Como posso te ajudar');
+    expect(text).toContain('Rafa vai te responder');
   });
 });
 

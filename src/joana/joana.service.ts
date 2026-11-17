@@ -19,14 +19,17 @@ import {
   welcomeStepsHistorySummary,
 } from './joana-welcome';
 import {
+  JOANA_DECLINE_HANDOFF,
   JOANA_TYPOLOGY_SPEECH,
   applyJoanaProposal,
   composeJoanaReply,
   emptyJoanaProfile,
   ensureJoanaIntro,
   formatImmigrationLabel,
+  isPlaceholderLeadName,
   missingFieldQuestion,
   shouldOfferSchedulingLink,
+  withInferredName,
   type JoanaCrmPatch,
   type JoanaProfile,
   type JoanaTypology,
@@ -331,7 +334,8 @@ export class JoanaService {
       }
 
       if (row.pendingOutbound) {
-        await this.wa.sendText(row.whatsappDigits, row.pendingOutbound, {
+        const outbound = row.pendingOutbound;
+        await this.wa.sendText(row.whatsappDigits, outbound, {
           preferredInstance: row.instance || undefined,
           requireDelivery: true,
         });
@@ -339,6 +343,9 @@ export class JoanaService {
           where: { id },
           data: { pendingOutbound: null, processing: false },
         });
+        if (outbound.includes(JOANA_DECLINE_HANDOFF)) {
+          await this.crm.setJoanaEnabledForWhatsapp(row.whatsappDigits, false);
+        }
         return;
       }
 
@@ -439,12 +446,18 @@ export class JoanaService {
         return;
       }
 
+      const proposalWithName = withInferredName({
+        profile,
+        proposal,
+        message: combined,
+      });
+
       const decision = applyJoanaProposal({
         hasLead: lead.kind === 'visible',
         excluded: lead.kind === 'excluded',
         profile,
         pending,
-        proposal,
+        proposal: proposalWithName,
       });
 
       let farGuidanceSent = row.farGuidanceSent;
@@ -457,7 +470,6 @@ export class JoanaService {
       try {
         const persisted = await this.persistDecision({
           whatsapp: row.whatsappDigits,
-          pushName: row.displayName,
           lead,
           decision,
         });
@@ -515,7 +527,7 @@ export class JoanaService {
       const assistantText = welcomeSummary
         ? `${welcomeSummary}\n\n${composed}`
         : composed;
-      await this.finishTurn({
+      const sent = await this.finishTurn({
         id,
         bufferIds: buffer.map((item) => item.id),
         history,
@@ -529,6 +541,9 @@ export class JoanaService {
         whatsapp: row.whatsappDigits,
         instance: row.instance,
       });
+      if (decision.disableJoana && sent) {
+        await this.crm.setJoanaEnabledForWhatsapp(row.whatsappDigits, false);
+      }
     } catch (err: unknown) {
       this.logger.warn(
         `Joana ${id}: ${err instanceof Error ? err.message : String(err)}`,
@@ -548,7 +563,7 @@ export class JoanaService {
         const base = getFrontendBaseUrl().replace(/\/$/, '');
         const params = new URLSearchParams();
         params.set('whatsapp', whatsapp);
-        if (name && !/^lead\s+\d+$/i.test(name)) params.set('name', name);
+        if (name && !isPlaceholderLeadName(name)) params.set('name', name);
         link = `${base}/agendar?${params.toString()}`;
       } catch (err: unknown) {
         this.logger.warn(
@@ -566,7 +581,6 @@ export class JoanaService {
 
   private async persistDecision(input: {
     whatsapp: string;
-    pushName: string | null;
     lead: Awaited<ReturnType<RafacallCrmService['lookupLeadForJoana']>>;
     decision: ReturnType<typeof applyJoanaProposal>;
   }): Promise<boolean> {
@@ -578,10 +592,9 @@ export class JoanaService {
 
     let createdNow = false;
     if (decision.createLead && !bookingId) {
-      const name =
-        decision.nameToSave ||
-        input.pushName ||
-        fallbackLeadName(input.whatsapp);
+      // Nome da ficha: só o que a pessoa disse, ou «Lead XXX». O nick do WhatsApp
+      // não entra — senão a qualificação trata «Mozi» como nome já preenchido.
+      const name = decision.nameToSave || fallbackLeadName(input.whatsapp);
       try {
         const created = await this.crm.createCrmClient({
           name,
@@ -710,18 +723,20 @@ export class JoanaService {
     outbound: string;
     whatsapp: string;
     instance: string | null;
-  }) {
+  }): Promise<boolean> {
     if (!(await this.crm.isJoanaActive(input.whatsapp))) {
       await this.dropBecausePaused(input.id);
-      return;
+      return false;
     }
 
     let outboundSaved: string | null = null;
+    let sent = false;
     try {
       await this.wa.sendText(input.whatsapp, input.outbound, {
         preferredInstance: input.instance || undefined,
         requireDelivery: true,
       });
+      sent = true;
     } catch (err: unknown) {
       this.logger.warn(
         `Joana envio ${input.whatsapp}: ${err instanceof Error ? err.message : String(err)}`,
@@ -748,7 +763,7 @@ export class JoanaService {
       const current = await this.prisma.joanaConversation.findUnique({
         where: { id: input.id },
       });
-      if (!current) return;
+      if (!current) return sent;
       const remaining = readBuffer(current.buffer).filter(
         (item) => !input.bufferIds.includes(item.id),
       );
@@ -764,13 +779,13 @@ export class JoanaService {
           buffer: remaining as unknown as Prisma.InputJsonValue,
         },
       });
-      if (saved.count === 1) return;
+      if (saved.count === 1) return sent;
     }
 
     const latest = await this.prisma.joanaConversation.findUnique({
       where: { id: input.id },
     });
-    if (!latest) return;
+    if (!latest) return sent;
     const remaining = readBuffer(latest.buffer).filter(
       (item) => !input.bufferIds.includes(item.id),
     );
@@ -785,6 +800,7 @@ export class JoanaService {
         buffer: remaining as unknown as Prisma.InputJsonValue,
       },
     });
+    return sent;
   }
 
   private async release(id: string) {
@@ -926,14 +942,18 @@ function describeProfile(
     return 'Este número foi retirado do CRM. Não recolhas dados novos nem prometas repor a ficha.';
   }
   if (kind === 'none') {
-    return 'Ainda não há ficha no CRM. Se esta mensagem não for um sim claro ao serviço, apresenta-te, explica o relocation e pergunta se tem interesse, sem recolher dados. Se for um sim, podes guardar o que ela disse agora.';
+    return 'Ainda não há ficha no CRM. Se esta mensagem não for um sim claro ao serviço, apresenta-te, explica o relocation e pergunta se tem interesse, sem recolher dados. Se for um sim, podes guardar o que ela disse agora. Se for um não claro ao serviço, interested é false: reação curta sem pergunta; o sistema faz o handoff à Rafa.';
   }
   const typology = profile.typology
     ? `${profile.typology} (${JOANA_TYPOLOGY_SPEECH[profile.typology]})`
     : 'ainda não temos';
   const nextQuestion = missingFieldQuestion(profile);
+  const nameLabel =
+    profile.name && !isPlaceholderLeadName(profile.name)
+      ? profile.name
+      : 'ainda não temos';
   return [
-    `Nome: ${profile.name || 'ainda não temos'}`,
+    `Nome: ${nameLabel}`,
     `Data de imigração: ${profile.immigration ? formatImmigrationLabel(profile.immigration) : 'ainda não temos'}`,
     `Visto: ${profile.hasVisa === null ? 'ainda não sabemos' : profile.hasVisa ? 'sim' : 'não'}`,
     `Cidades: ${profile.cities || 'ainda não temos'}`,

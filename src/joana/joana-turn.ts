@@ -76,6 +76,8 @@ export type JoanaTurnResult = {
   crmPatch: JoanaCrmPatch | null;
   pending: PendingConfirmation | null;
   append: string[];
+  /** Recusou o relocation sem ficha: depois da resposta, a Joana desliga neste WhatsApp. */
+  disableJoana: boolean;
 };
 
 const FIELD_ORDER: JoanaField[] = [
@@ -136,6 +138,95 @@ export function normalizeCities(raw: string): string {
 
 export function normalizePersonName(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
+/** Nome gerado pelo sistema (`Lead 4821`), ainda não dito pela pessoa. */
+export function isPlaceholderLeadName(raw: string | null | undefined): boolean {
+  return Boolean(raw && /^lead\s+\d+$/i.test(raw.trim()));
+}
+
+const NON_PERSON_NAME = new Set([
+  'sim',
+  'não',
+  'nao',
+  'si',
+  'yes',
+  'no',
+  'oi',
+  'olá',
+  'ola',
+  'oie',
+  'ok',
+  'okay',
+  'claro',
+  'certo',
+  'isso',
+  'pode',
+  'quero',
+  'tenho',
+  'obrigado',
+  'obrigada',
+  'valeu',
+  'imediato',
+  'bom dia',
+  'boa tarde',
+  'boa noite',
+]);
+
+/**
+ * Lê um nome pessoal numa resposta curta (ex.: «Bruna»), sem depender da OpenAI.
+ * Só aceita uma linha simples; rejeita sim/não, datas, tipologias e valores.
+ */
+export function inferPersonNameFromMessage(raw: string): string | null {
+  const lines = raw
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  if (lines.length !== 1) return null;
+
+  const candidate = normalizePersonName(lines[0]!);
+  if (candidate.length < 2 || candidate.length > 40) return null;
+  if (isPlaceholderLeadName(candidate)) return null;
+  if (NON_PERSON_NAME.has(candidate.toLowerCase())) return null;
+  if (candidate.split(/\s+/).length > 4) return null;
+  if (!/^[\p{L}][\p{L}\s'-]*$/u.test(candidate)) return null;
+  if (parseJoanaTypology(candidate)) return null;
+
+  const asImmigration = canonicalImmigration(candidate);
+  if (asImmigration !== null && asImmigration !== '') return null;
+
+  const asRent = parseDesiredRent(candidate);
+  if (typeof asRent === 'number') return null;
+
+  return candidate;
+}
+
+/**
+ * Se o próximo dado em falta é o nome e a mensagem é um nome plausível,
+ * preenche `proposal.name` mesmo quando o modelo omitiu a chave.
+ */
+export function withInferredName(input: {
+  profile: JoanaProfile;
+  proposal: JoanaProposal;
+  message: string;
+}): JoanaProposal {
+  if (nextMissingField(input.profile) !== 'name') return input.proposal;
+  const inferred = inferPersonNameFromMessage(input.message);
+  if (!inferred) return input.proposal;
+  return { ...input.proposal, name: inferred };
+}
+
+/** Próximo campo de qualificação em falta, na ordem do CRM. */
+export function nextMissingField(profile: JoanaProfile): JoanaField | null {
+  if (profile.hasVisa === false) return null;
+  if (!profile.immigration) return 'immigration';
+  if (profile.hasVisa === null) return 'visa';
+  if (!profile.cities) return 'cities';
+  if (!profile.typology) return 'typology';
+  if (profile.desiredRent == null) return 'rent';
+  if (profile.hasPet === null) return 'pet';
+  if (!profile.name || isPlaceholderLeadName(profile.name)) return 'name';
+  return null;
 }
 
 /**
@@ -269,6 +360,10 @@ export const JOANA_INTEREST_QUESTION = 'Você tem interesse nesse serviço?';
 export const JOANA_NO_VISA_GUIDANCE =
   'Antes de continuar com o serviço de relocation, você precisa primeiro buscar se encaixar em algum tipo de visto válido. A Clara faz a assessoria de vistos e de passagens aéreas. Pode falar com ela por aqui: https://movecasa.pt/whatsapp?t=clara-ac-viagens';
 
+/** Última mensagem quando a pessoa recusa o relocation (sem ficha). A seguir a Joana desliga. */
+export const JOANA_DECLINE_HANDOFF =
+  'Sem problemas. Como posso te ajudar então? A Rafa vai te responder assim que puder.';
+
 /** Garante a apresentação quando o modelo não se apresentou. */
 export function ensureJoanaIntro(reply: string, needsIntro: boolean): string {
   const text = reply.trim();
@@ -276,30 +371,27 @@ export function ensureJoanaIntro(reply: string, needsIntro: boolean): string {
   return text ? `${JOANA_INTRO}\n\n${text}` : JOANA_INTRO;
 }
 
+export const JOANA_NAME_QUESTION = 'Como posso te chamar?';
+
 export function missingFieldQuestion(profile: JoanaProfile): string | null {
-  if (profile.hasVisa === false) return null;
-  if (!profile.immigration) {
-    return 'Para quando você pretende vir para Portugal? Pode ser uma data, por exemplo 18/12/2026, ou dizer que é imediato.';
+  switch (nextMissingField(profile)) {
+    case 'immigration':
+      return 'Para quando você pretende vir para Portugal? Pode ser uma data, por exemplo 18/12/2026, ou dizer que é imediato.';
+    case 'visa':
+      return 'Você já tem visto para Portugal?';
+    case 'cities':
+      return 'Quais cidades você está considerando? Pode ser mais de uma, por exemplo Viseu, Aveiro e São Pedro do Sul.';
+    case 'typology':
+      return 'Que imóvel você procura? Quarto é só um quarto. T0 é estúdio. T1 é uma casa com um quarto, T2 com dois, T3 com três, T4 com quatro e T5 com cinco.';
+    case 'rent':
+      return 'Qual o valor do aluguel pretendido por mês? Pode ser um valor aproximado, em euros.';
+    case 'pet':
+      return 'Você tem animal de estimação?';
+    case 'name':
+      return JOANA_NAME_QUESTION;
+    default:
+      return null;
   }
-  if (profile.hasVisa === null) {
-    return 'Você já tem visto para Portugal?';
-  }
-  if (!profile.cities) {
-    return 'Quais cidades você está considerando? Pode ser mais de uma, por exemplo Viseu, Aveiro e São Pedro do Sul.';
-  }
-  if (!profile.typology) {
-    return 'Que imóvel você procura? Quarto é só um quarto. T0 é estúdio. T1 é uma casa com um quarto, T2 com dois, T3 com três, T4 com quatro e T5 com cinco.';
-  }
-  if (profile.desiredRent == null) {
-    return 'Qual o valor do aluguel pretendido por mês? Pode ser um valor aproximado, em euros.';
-  }
-  if (profile.hasPet === null) {
-    return 'Você tem animal de estimação?';
-  }
-  if (!profile.name || /^lead\s+\d+$/i.test(profile.name.trim())) {
-    return 'Como posso te chamar?';
-  }
-  return null;
 }
 
 /**
@@ -321,19 +413,29 @@ export function composeJoanaReply(
     .map((line) => line.trim())
     .filter((line) => line && !isAckLine(line));
   const holdsRelocation = extras.some((line) => line.includes('clara-ac-viagens'));
-  const spoken = holdsRelocation ? dropQuestions(withoutVisaPitch(cleaned)) : cleaned;
+  const holdsDecline = extras.some((line) => line.includes(JOANA_DECLINE_HANDOFF));
+  const systemOwnsClose = holdsRelocation || holdsDecline;
+  const spoken = holdsRelocation
+    ? dropQuestions(withoutVisaPitch(cleaned))
+    : holdsDecline
+      ? dropQuestions(cleaned)
+      : cleaned;
   const guidance = extras.filter((line) => !lineIsQuestion(line));
-  const systemQuestion = holdsRelocation
+  const systemQuestion = systemOwnsClose
     ? ''
     : (extras.find((line) => lineIsQuestion(line)) ?? '');
+  const declineLine = holdsDecline ? JOANA_DECLINE_HANDOFF : '';
 
-  if (!holdsRelocation && !systemQuestion && hasQuestion(spoken)) {
+  if (!systemOwnsClose && !systemQuestion && hasQuestion(spoken)) {
     return [keepFirstQuestion(spoken), ...guidance].filter(Boolean).join('\n\n').slice(0, 4000);
   }
 
-  const narrative = holdsRelocation || systemQuestion ? dropQuestions(spoken) : spoken;
-  const intro = narrative || (systemQuestion || guidance.length ? '' : fallback.trim());
-  return [intro, ...guidance, systemQuestion].filter(Boolean).join('\n\n').slice(0, 4000);
+  const narrative = systemOwnsClose || systemQuestion ? dropQuestions(spoken) : spoken;
+  const intro = narrative || (systemQuestion || guidance.length || declineLine ? '' : fallback.trim());
+  return [intro, ...guidance, systemQuestion, declineLine]
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, 4000);
 }
 
 function isAckLine(line: string): boolean {
@@ -497,11 +599,15 @@ export function applyJoanaProposal(input: {
   const informedNoVisa =
     canCollect && input.proposal.hasVisa === false;
 
-  if (!informedNoVisa && (input.hasLead || createLead)) {
+  const declinedService =
+    !input.hasLead && !input.excluded && input.proposal.interested === false;
+
+  if (!informedNoVisa && !declinedService && (input.hasLead || createLead)) {
     const question = missingFieldQuestion(profile);
     if (question) append.push(question);
   } else if (
     !informedNoVisa &&
+    !declinedService &&
     !input.hasLead &&
     !input.excluded &&
     input.proposal.interested !== false
@@ -510,6 +616,7 @@ export function applyJoanaProposal(input: {
   }
 
   if (informedNoVisa) append.push(JOANA_NO_VISA_GUIDANCE);
+  if (declinedService) append.push(JOANA_DECLINE_HANDOFF);
 
   const hasPatch = Object.keys(patch).length > 0;
 
@@ -519,5 +626,6 @@ export function applyJoanaProposal(input: {
     crmPatch: hasPatch ? patch : null,
     pending,
     append,
+    disableJoana: declinedService,
   };
 }
