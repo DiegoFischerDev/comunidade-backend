@@ -566,6 +566,20 @@ model RafaCallBlockedSlot {
   @@map("rafa_call_blocked_slots")
 }
 
+/**
+ * Grelha semanal das videochamadas (uma linha, id `default`).
+ * `hours`: `{ mon: [{ start, end }], ... }` no fuso `timezone`.
+ * A primeira leitura copia o `.env`; a seguir a página de agendamentos é a fonte.
+ */
+model RafaCallWorkingHours {
+  id        String   @id
+  timezone  String   @default("Europe/Lisbon")
+  hours     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("rafa_call_working_hours")
+}
+
 model Subscription {
   id                   String             @id @default(cuid())
   userId               String             @unique @map("user_id")

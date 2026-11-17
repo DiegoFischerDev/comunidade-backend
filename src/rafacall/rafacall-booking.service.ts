@@ -4,6 +4,17 @@ import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { Prisma, RafaCallBookingOrigin, RafaCallBookingStatus } from '@prisma/client';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { RafacallCrmService } from './rafacall-crm.service';
+import {
+  RAFA_CALL_WORKING_HOURS_ID,
+  readStoredWorkingHours,
+  sortWorkingHoursDays,
+  validateWorkingHoursDays,
+  parseWorkingHoursDays,
+  workingHoursSeedFromEnv,
+  hmToMinutes,
+  type WeekdayKey,
+  type WorkingHoursDays,
+} from './rafacall-working-hours';
 
 type DayAvailability = {
   date: string; // YYYY-MM-DD no tz do utilizador
@@ -21,15 +32,6 @@ function parseYmd(value: string): { y: number; m: number; d: number } | null {
   if (!Number.isFinite(y) || !Number.isFinite(mm) || !Number.isFinite(d)) return null;
   if (mm < 1 || mm > 12 || d < 1 || d > 31) return null;
   return { y, m: mm, d };
-}
-
-function hmToMinutes(hm: string): number | null {
-  const m = hm.trim().match(/^(\d{2}):(\d{2})$/);
-  if (!m) return null;
-  const h = Number(m[1]);
-  const mm = Number(m[2]);
-  if (h < 0 || h > 23 || mm < 0 || mm > 59) return null;
-  return h * 60 + mm;
 }
 
 // Obtém offset (min) do timezone para um instante, usando Intl.
@@ -68,23 +70,8 @@ function tzLocalToUtc(timeZone: string, y: number, m: number, d: number, minutes
   return new Date(guess.getTime() - offset * 60000);
 }
 
-type WorkingHoursConfig = Record<
-  'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun',
-  Array<[string, string]>
->;
-
-const DEFAULT_WORKING_HOURS: WorkingHoursConfig = {
-  mon: [['10:00', '18:00']],
-  tue: [['10:00', '18:00']],
-  wed: [['10:00', '18:00']],
-  thu: [['10:00', '18:00']],
-  fri: [['10:00', '18:00']],
-  sat: [],
-  sun: [],
-};
-
 /** y/m/d = dia civil no calendário do utilizador (YYYY-MM-DD desmembrado), não UTC. */
-function weekdayKeyForDateInTz(timeZone: string, y: number, m: number, d: number): keyof WorkingHoursConfig {
+function weekdayKeyForDateInTz(timeZone: string, y: number, m: number, d: number): WeekdayKey {
   const noonLocalUtc = tzLocalToUtc(timeZone, y, m, d, 12 * 60);
   const wd = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short' }).format(noonLocalUtc).toLowerCase();
   if (wd.startsWith('mon')) return 'mon';
@@ -143,21 +130,67 @@ export class RafacallBookingService {
     return Number.isFinite(v) && v >= 0 ? v : 10;
   }
 
-  private get workingHours(): WorkingHoursConfig {
-    const raw = process.env.RAFA_CALL_WORKING_HOURS_JSON?.trim();
-    if (!raw) return DEFAULT_WORKING_HOURS;
+  private toWorkingHoursResponse(timezone: string, days: WorkingHoursDays) {
+    return {
+      timezone,
+      durationMinutes: this.durationMinutes,
+      bufferMinutes: this.bufferMinutes,
+      days,
+    };
+  }
+
+  /** Cria a linha única na primeira leitura, a partir do `.env`. */
+  private async ensureWorkingHoursRow() {
+    const existing = await this.prisma.rafaCallWorkingHours.findUnique({
+      where: { id: RAFA_CALL_WORKING_HOURS_ID },
+    });
+    if (existing) return existing;
+
+    const seed = workingHoursSeedFromEnv();
     try {
-      const parsed = JSON.parse(raw) as Partial<WorkingHoursConfig>;
-      return { ...DEFAULT_WORKING_HOURS, ...parsed } as WorkingHoursConfig;
-    } catch {
-      return DEFAULT_WORKING_HOURS;
+      return await this.prisma.rafaCallWorkingHours.create({
+        data: {
+          id: RAFA_CALL_WORKING_HOURS_ID,
+          timezone: seed.timezone,
+          hours: seed.days as Prisma.InputJsonValue,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const raced = await this.prisma.rafaCallWorkingHours.findUnique({
+          where: { id: RAFA_CALL_WORKING_HOURS_ID },
+        });
+        if (raced) return raced;
+      }
+      throw error;
     }
   }
 
-  /** Fuso onde os HH:mm de `RAFA_CALL_WORKING_HOURS_JSON` valem (ex.: Lisboa para a equipa). */
-  private get workingHoursTimezone(): string {
-    const z = process.env.RAFA_CALL_WORKING_HOURS_TIMEZONE?.trim();
-    return z || 'Europe/Lisbon';
+  async getWorkingHoursSettings() {
+    const row = await this.ensureWorkingHoursRow();
+    return this.toWorkingHoursResponse(row.timezone, readStoredWorkingHours(row.hours));
+  }
+
+  async updateWorkingHoursSettings(input: unknown) {
+    const parsed = parseWorkingHoursDays(input);
+    if ('error' in parsed) throw new BadRequestException(parsed.error);
+    const invalid = validateWorkingHoursDays(parsed.days, {
+      durationMinutes: this.durationMinutes,
+      bufferMinutes: this.bufferMinutes,
+    });
+    if (invalid) throw new BadRequestException(invalid);
+
+    const days = sortWorkingHoursDays(parsed.days);
+    const current = await this.ensureWorkingHoursRow();
+    const saved = await this.prisma.rafaCallWorkingHours.update({
+      where: { id: current.id },
+      data: { hours: days as Prisma.InputJsonValue },
+    });
+    this.logger.log('RafaCall grelha semanal atualizada.');
+    return this.toWorkingHoursResponse(saved.timezone, days);
   }
 
   async getCurrentBooking(userId: string) {
@@ -328,7 +361,7 @@ export class RafacallBookingService {
     return endsAt;
   }
 
-  /** Admin: só valida sobreposição com outros agendamentos (ignora grelha .env e bloqueios). */
+  /** Admin: só valida sobreposição com outros agendamentos (ignora a grelha semanal e bloqueios). */
   private async assertSlotAvailableForAdminBooking(
     startsAt: Date,
     excludeBookingId?: string | null,
@@ -418,7 +451,8 @@ export class RafacallBookingService {
 
     const duration = this.durationMinutes;
     const buffer = this.bufferMinutes;
-    const refTz = this.workingHoursTimezone;
+    const schedule = await this.getWorkingHoursSettings();
+    const refTz = schedule.timezone;
 
     // Buscar bookings que podem conflitar na janela (com folga de buffer).
     const MS_DAY = 86400000;
@@ -476,9 +510,9 @@ export class RafacallBookingService {
       if (!refParts) break;
       const { y: ry, m: rm, d: rd } = refParts;
       const dayKey = weekdayKeyForDateInTz(refTz, ry, rm, rd);
-      const ranges = this.workingHours[dayKey] ?? [];
+      const ranges = schedule.days[dayKey] ?? [];
 
-      for (const [startHm, endHm] of ranges) {
+      for (const { start: startHm, end: endHm } of ranges) {
         const startMin = hmToMinutes(startHm);
         const endMin = hmToMinutes(endHm);
         if (startMin == null || endMin == null || endMin <= startMin) continue;

@@ -38,7 +38,9 @@ Tipologia, quando precisar explicar:
 
 A cidade pretendida pode ser mais de uma, por exemplo "Viseu, Aveiro e São Pedro do Sul".
 
-Não invente preço, prazo, garantia legal, visto aprovado nem horário livre fora deste texto. Não marque a vídeo chamada dentro do chat. Não fale de contrato assinado.`;
+Não invente preço, prazo, garantia legal, visto aprovado nem horário livre fora deste texto. Não marque a vídeo chamada dentro do chat. Não fale de contrato assinado.
+
+Se a pessoa disser que não tem visto, o relocation não continua. Ela precisa primeiro se encaixar num tipo de visto válido. A Clara faz a assessoria de vistos e de passagens aéreas: https://movecasa.pt/whatsapp?t=clara-ac-viagens`;
 
 export function joanaWhatsappInstance(): string {
   return (

@@ -374,6 +374,7 @@ export class JoanaService {
 
       let farGuidanceSent = row.farGuidanceSent;
       let schedulingLinkSent = row.schedulingLinkSent;
+      let offerSchedulingLink = false;
       const append = [...decision.append];
       let saved =
         decision.createLead || Boolean(decision.nameToSave || decision.crmPatch);
@@ -385,19 +386,20 @@ export class JoanaService {
           lead,
           decision,
         });
+        const linkAlreadyDelivered = history.some(
+          (item) => item.role === 'assistant' && item.text.includes('/agendar?'),
+        );
         if (persisted) {
           const next = await this.crm.lookupLeadForJoana(row.whatsappDigits);
           if (next.kind === 'visible') {
             const guidance = this.columnGuidance(next.crmStatus, row.whatsappDigits, next.name);
             if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO) {
               farGuidanceSent = false;
-              if (!schedulingLinkSent && guidance) {
-                append.push(guidance);
-                schedulingLinkSent = true;
-              }
+              offerSchedulingLink = next.hasVisa === true && !linkAlreadyDelivered;
+              if (offerSchedulingLink && guidance) append.push(guidance);
             } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_LONGE) {
               schedulingLinkSent = false;
-              if (!farGuidanceSent && guidance) {
+              if (next.hasVisa !== false && !farGuidanceSent && guidance) {
                 append.push(guidance);
                 farGuidanceSent = true;
               }
@@ -419,6 +421,8 @@ export class JoanaService {
       }
 
       const assistantText = composeReply(reply, append, saved);
+      if (assistantText.includes('/agendar?')) schedulingLinkSent = true;
+      else if (offerSchedulingLink) schedulingLinkSent = false;
       await this.finishTurn({
         id,
         bufferIds: buffer.map((item) => item.id),

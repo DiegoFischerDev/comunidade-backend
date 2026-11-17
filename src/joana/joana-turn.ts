@@ -247,6 +247,10 @@ export const JOANA_INTRO =
 
 export const JOANA_INTEREST_QUESTION = 'Você tem interesse nesse serviço?';
 
+/** Orientação fixa quando a pessoa diz que ainda não tem visto. */
+export const JOANA_NO_VISA_GUIDANCE =
+  'Antes de continuar com o serviço de relocation, você precisa primeiro buscar se encaixar em algum tipo de visto válido. A Clara faz a assessoria de vistos e de passagens aéreas. Pode falar com ela por aqui: https://movecasa.pt/whatsapp?t=clara-ac-viagens';
+
 /** Garante a apresentação quando o modelo não se apresentou. */
 export function ensureJoanaIntro(reply: string, needsIntro: boolean): string {
   const text = reply.trim();
@@ -255,6 +259,7 @@ export function ensureJoanaIntro(reply: string, needsIntro: boolean): string {
 }
 
 export function missingFieldQuestion(profile: JoanaProfile): string | null {
+  if (profile.hasVisa === false) return null;
   if (!profile.immigration) {
     return 'Para quando você pretende vir para Portugal? Pode ser uma data, por exemplo 18/12/2026, ou dizer que é imediato.';
   }
@@ -295,20 +300,36 @@ export function composeJoanaReply(
   const extras = append
     .map((line) => line.trim())
     .filter((line) => line && !isAckLine(line));
-  const guidance = extras.filter((line) => !line.includes('?'));
-  const systemQuestion = extras.find((line) => line.includes('?')) ?? '';
+  const holdsRelocation = extras.some((line) => line.includes('clara-ac-viagens'));
+  const spoken = holdsRelocation ? dropQuestions(withoutVisaPitch(cleaned)) : cleaned;
+  const guidance = extras.filter((line) => !lineIsQuestion(line));
+  const systemQuestion = holdsRelocation
+    ? ''
+    : (extras.find((line) => lineIsQuestion(line)) ?? '');
 
-  if (hasQuestion(cleaned)) {
-    return [keepFirstQuestion(cleaned), ...guidance].filter(Boolean).join('\n\n').slice(0, 4000);
+  if (!holdsRelocation && hasQuestion(spoken)) {
+    return [keepFirstQuestion(spoken), ...guidance].filter(Boolean).join('\n\n').slice(0, 4000);
   }
 
-  const narrative = dropQuestions(cleaned);
+  const narrative = holdsRelocation ? spoken : dropQuestions(spoken);
   const intro = narrative || (systemQuestion || guidance.length ? '' : fallback.trim());
   return [intro, ...guidance, systemQuestion].filter(Boolean).join('\n\n').slice(0, 4000);
 }
 
 function isAckLine(line: string): boolean {
   return /^(anotei|tirei|deixei como estava)/i.test(line);
+}
+
+/** Um `?` dentro do link não transforma a frase numa pergunta. */
+function lineIsQuestion(line: string): boolean {
+  return line.replace(/https?:\/\/\S+/g, '').includes('?');
+}
+
+function withoutVisaPitch(text: string): string {
+  return splitSentences(text)
+    .filter((sentence) => !/clara|visto válido/i.test(sentence))
+    .join(' ')
+    .trim();
 }
 
 function withoutHelpPitch(text: string): string {
@@ -453,12 +474,22 @@ export function applyJoanaProposal(input: {
   const createLead =
     !input.hasLead && !input.excluded && input.proposal.interested === true;
 
-  if (input.hasLead || createLead) {
+  const informedNoVisa =
+    canCollect && input.proposal.hasVisa === false;
+
+  if (!informedNoVisa && (input.hasLead || createLead)) {
     const question = missingFieldQuestion(profile);
     if (question) append.push(question);
-  } else if (!input.hasLead && !input.excluded && input.proposal.interested !== false) {
+  } else if (
+    !informedNoVisa &&
+    !input.hasLead &&
+    !input.excluded &&
+    input.proposal.interested !== false
+  ) {
     append.push(JOANA_INTEREST_QUESTION);
   }
+
+  if (informedNoVisa) append.push(JOANA_NO_VISA_GUIDANCE);
 
   const hasPatch = Object.keys(patch).length > 0;
 

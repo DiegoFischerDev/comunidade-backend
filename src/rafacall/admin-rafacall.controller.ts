@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UploadedFile,
   UseInterceptors,
@@ -18,6 +19,7 @@ import { RafacallAdminService } from './rafacall-admin.service';
 import { RafacallBookingService } from './rafacall-booking.service';
 import { RafacallCrmService } from './rafacall-crm.service';
 import { AdminCreateRafacallBlockDto } from './dto/admin-rafacall-blocks.dto';
+import { UpdateRafacallWorkingHoursDto } from './dto/update-rafacall-working-hours.dto';
 import { AdminCreateRafacallBookingDto } from './dto/admin-create-rafacall-booking.dto';
 import { CreateRafacallCrmClientDto } from './dto/create-rafacall-crm-client.dto';
 import { UpdateRafacallCrmDto } from './dto/update-rafacall-crm.dto';
@@ -36,6 +38,16 @@ export class AdminRafacallController {
     private readonly booking: RafacallBookingService,
     private readonly crm: RafacallCrmService,
   ) {}
+
+  @Get('working-hours')
+  workingHours() {
+    return this.booking.getWorkingHoursSettings();
+  }
+
+  @Put('working-hours')
+  updateWorkingHours(@Body() dto: UpdateRafacallWorkingHoursDto) {
+    return this.booking.updateWorkingHoursSettings(dto.days);
+  }
 
   @Get('schedule')
   schedule(@Query('tz') tz?: string) {

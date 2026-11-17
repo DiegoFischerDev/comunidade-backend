@@ -50,8 +50,8 @@ Copia `backend/.env.example` para `backend/.env` e preenche os valores.
 | `EVOLUTION_HOUSES_RELOCATION_GROUP_JID` | (Opcional / legado) JID único; o envio de anúncios relocation para WhatsApp passa a ser **manual** pelo admin (`/dashboard/admin/houses` → grupos configuráveis + «Enviar nos grupos»). |
 | `WHATSAPP_REGISTRATION_NUMBER` (+ secundário, opcional) | Números nos links `wa.me` (sem `+`). |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_AMOUNT_EUR_CENTS`, `STRIPE_PIX_AMOUNT_BRL` | Stripe. |
-| `STRIPE_RAFA_CALL_EUR_CENTS`, `STRIPE_RAFA_CALL_PIX_BRL`, `RAFA_CALL_*` | Rafa Call (preços e horários em JSON). |
-| `RAFA_CALL_WORKING_HOURS_TIMEZONE` | Fuso em que `RAFA_CALL_WORKING_HOURS_JSON` é interpretado (omissão: `Europe/Lisboa`). Os horários mostram-se convertidos para o fuso de cada utilizador. |
+| `STRIPE_RAFA_CALL_EUR_CENTS`, `STRIPE_RAFA_CALL_PIX_BRL`, `RAFA_CALL_DURATION_MINUTES`, `RAFA_CALL_BUFFER_MINUTES` | Rafa Call (preços, duração e intervalo entre chamadas). |
+| `RAFA_CALL_WORKING_HOURS_JSON`, `RAFA_CALL_WORKING_HOURS_TIMEZONE` | Semente da grelha semanal, só até existir `rafa_call_working_hours`. Depois, os dias e horas editam-se em `/dashboard/admin/agendamentos` (fuso da semente, omissão `Europe/Lisbon`). O cliente vê o equivalente no fuso dele. |
 
 **R2 (opcional):** `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_BASE_URL` — sem isto, media fica em `uploads/houses/` no disco.
 

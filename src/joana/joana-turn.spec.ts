@@ -1,6 +1,7 @@
 import {
   JOANA_INTEREST_QUESTION,
   JOANA_INTRO,
+  JOANA_NO_VISA_GUIDANCE,
   applyJoanaProposal,
   canonicalImmigration,
   composeJoanaReply,
@@ -175,7 +176,7 @@ describe('applyJoanaProposal', () => {
     expect(result.append).toEqual([]);
   });
 
-  it('grava o visto e segue para as cidades', () => {
+  it('grava que não tem visto, indica a Clara e não segue a qualificação', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -184,7 +185,32 @@ describe('applyJoanaProposal', () => {
       proposal: { interested: null, confirmation: null, hasVisa: false },
     });
     expect(result.crmPatch?.hasVisa).toBe(false);
+    expect(result.append).toEqual([JOANA_NO_VISA_GUIDANCE]);
+    expect(result.append.some((line) => line.includes('cidades'))).toBe(false);
+  });
+
+  it('com visto, segue para as cidades', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, hasVisa: null, cities: null },
+      pending: null,
+      proposal: { interested: null, confirmation: null, hasVisa: true },
+    });
+    expect(result.crmPatch?.hasVisa).toBe(true);
     expect(result.append.some((line) => line.includes('cidades'))).toBe(true);
+  });
+
+  it('sem visto já anotado, não pede o próximo dado', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, hasVisa: false, cities: null },
+      pending: null,
+      proposal: { interested: null, confirmation: null },
+    });
+    expect(result.crmPatch).toBeNull();
+    expect(result.append).toEqual([]);
   });
 
   it('pede o visto quando a data já está e o visto ainda não', () => {
@@ -271,6 +297,18 @@ describe('composeJoanaReply', () => {
     expect(text).toBe('Você já tem visto?');
   });
 
+  it('mantém o link de agendar mesmo quando a resposta já tem uma pergunta', () => {
+    const link =
+      'Posso te passar o link para agendar a videochamada com a Rafa. São 20 a 30 minutos, então vale ter as dúvidas anotadas: https://movecasa.pt/agendar?whatsapp=351900000000';
+    const text = composeJoanaReply(
+      'Que bom que você já tem visto. Qual cidade você prefere?',
+      [link],
+      'fallback',
+    );
+    expect(text).toContain('https://movecasa.pt/agendar?whatsapp=351900000000');
+    expect(text).toContain('Qual cidade você prefere?');
+  });
+
   it('junta uma orientação sem pergunta depois da fala dela', () => {
     const text = composeJoanaReply(
       'Você já tem visto?',
@@ -278,6 +316,27 @@ describe('composeJoanaReply', () => {
       'fallback',
     );
     expect(text).toBe('Você já tem visto?\n\nPrepare o passaporte e a passagem.');
+  });
+
+  it('sem visto, fica a reação curta e a indicação da Clara, sem a pergunta seguinte', () => {
+    const text = composeJoanaReply(
+      'Entendi. Quais cidades você está considerando?',
+      ['Quais cidades você está considerando?', JOANA_NO_VISA_GUIDANCE],
+      'fallback',
+      true,
+    );
+    expect(text).toBe(`Entendi.\n\n${JOANA_NO_VISA_GUIDANCE}`);
+    expect(text).toContain('https://movecasa.pt/whatsapp?t=clara-ac-viagens');
+    expect(text).not.toContain('cidades');
+  });
+
+  it('não repete a indicação se o modelo já falou da Clara', () => {
+    const text = composeJoanaReply(
+      'A Clara faz a assessoria de vistos. Pode falar com ela por aqui: https://movecasa.pt/whatsapp?t=clara-ac-viagens',
+      [JOANA_NO_VISA_GUIDANCE],
+      'fallback',
+    );
+    expect(text).toBe(JOANA_NO_VISA_GUIDANCE);
   });
 });
 
