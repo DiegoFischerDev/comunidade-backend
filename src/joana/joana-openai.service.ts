@@ -33,6 +33,7 @@ export class JoanaOpenAiService {
       throw new Error('OPENAI_API_KEY não está configurada.');
     }
 
+    const today = joanaDateInstruction();
     const system = [
       input.context.trim() || JOANA_DEFAULT_CONTEXT,
       '',
@@ -44,9 +45,11 @@ export class JoanaOpenAiService {
       'confirmation: "yes" se a pessoa aceitou a confirmação pendente, "no" se recusou, null se não havia confirmação ou a resposta não foi sim nem não.',
       'name, immigration, cities, typology, hasPet: omita a chave se a pessoa não falou desse dado. immigration é YYYY-MM-DD, "IMEDIATO", ou "" para apagar. typology é uma de: QUARTO, T0, T1, T2, T3, T4, T5. hasPet é true ou false.',
       'cities pode juntar várias cidades numa frase.',
+      today,
     ].join('\n');
 
     const user = [
+      today,
       `Ficha atual: ${input.profileSummary}`,
       input.pendingQuestion
         ? `Confirmação pendente: ${input.pendingQuestion}`
@@ -89,6 +92,50 @@ export class JoanaOpenAiService {
       clearTimeout(timeout);
     }
   }
+}
+
+const LISBON_TZ = 'Europe/Lisbon';
+
+/** Dia civil de Lisboa, no formato da conversa: 17/11/2026. */
+export function lisbonCivilDate(now = new Date()): {
+  day: number;
+  month: number;
+  year: number;
+  label: string;
+} {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: LISBON_TZ,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).formatToParts(now);
+  const pick = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((part) => part.type === type)?.value);
+  const day = pick('day');
+  const month = pick('month');
+  const year = pick('year');
+  const label = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
+  return { day, month, year, label };
+}
+
+function lastDayOfFebruary(year: number): string {
+  const day = new Date(Date.UTC(year, 2, 0)).getUTCDate();
+  return `${year}-02-${String(day).padStart(2, '0')}`;
+}
+
+/** Contexto de data enviado em todos os pedidos da Joana. */
+export function joanaDateInstruction(now = new Date()): string {
+  const today = lisbonCivilDate(now);
+  const februaryYear = today.month > 2 ? today.year + 1 : today.year;
+  const februaryEnd = lastDayOfFebruary(februaryYear);
+  return [
+    `Data de hoje em Lisboa: ${today.label}.`,
+    'Quando a pessoa falar de um mês ou de um período sem dizer o ano, escolhe a próxima ocorrência que ainda não passou em relação a esta data.',
+    `Se esse mês já passou em ${today.year}, o ano é ${today.year + 1}.`,
+    `Exemplo: em ${today.label}, "final de fevereiro" é ${februaryEnd}, o último dia desse fevereiro.`,
+    '"Final de" é o último dia do mês. "Início de" ou "começo de" é o dia 1. Só o nome do mês, sem dia, é o dia 15.',
+    'Se a pessoa disser o ano, usa esse ano. Nunca escolhas um ano anterior ao de hoje.',
+  ].join(' ');
 }
 
 export function parseJoanaModelJson(content: string): {
