@@ -4,6 +4,8 @@ CREATE TYPE "ChatbotChannel" AS ENUM ('WHATSAPP', 'INSTAGRAM');
 ALTER TABLE "joana_conversations"
   ADD COLUMN "instagram_user_id" VARCHAR(64),
   ADD COLUMN "active_channel" "ChatbotChannel" NOT NULL DEFAULT 'WHATSAPP';
+
+ALTER TABLE "joana_conversations"
   ALTER COLUMN "whatsapp_digits" DROP NOT NULL;
 
 CREATE UNIQUE INDEX "joana_conversations_instagram_user_id_key"
