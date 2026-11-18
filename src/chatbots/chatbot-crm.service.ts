@@ -338,6 +338,17 @@ export class ChatbotCrmService {
           updated.crmProfileImageUrl,
         );
       }
+      await this.ensureJoanaRafaCallCard({
+        chatbotId: params.chatbotId,
+        crmLeadId: updated.id,
+        whatsapp: updated.whatsappDigits,
+        guestName:
+          updated.guestName ||
+          cleanName(params.displayName) ||
+          (updated.whatsappDigits
+            ? `Lead ${updated.whatsappDigits.slice(-3)}`
+            : `Lead IG ${(ig || '').slice(-4)}`),
+      });
       return updated;
     }
 
@@ -378,6 +389,17 @@ export class ChatbotCrmService {
           restored.crmProfileImageUrl,
         );
       }
+      await this.ensureJoanaRafaCallCard({
+        chatbotId: params.chatbotId,
+        crmLeadId: restored.id,
+        whatsapp: restored.whatsappDigits,
+        guestName:
+          restored.guestName ||
+          cleanName(params.displayName) ||
+          (restored.whatsappDigits
+            ? `Lead ${restored.whatsappDigits.slice(-3)}`
+            : `Lead IG ${(ig || '').slice(-4)}`),
+      });
       return restored;
     }
 
@@ -400,13 +422,99 @@ export class ChatbotCrmService {
         },
       });
       if (whatsapp) void this.scheduleEnsureProfileImage(whatsapp, null);
+      await this.ensureJoanaRafaCallCard({
+        chatbotId: params.chatbotId,
+        crmLeadId: created.id,
+        whatsapp,
+        guestName: created.guestName || fallbackName,
+      });
       return created;
     } catch (err: unknown) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        return this.prisma.crmLead.findFirst({ where: identityWhere });
+        const again = await this.prisma.crmLead.findFirst({
+          where: identityWhere,
+        });
+        if (again) {
+          await this.ensureJoanaRafaCallCard({
+            chatbotId: params.chatbotId,
+            crmLeadId: again.id,
+            whatsapp: again.whatsappDigits,
+            guestName: again.guestName || fallbackName,
+          });
+        }
+        return again;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Joana CRM (kanban RafaCall) só mostra RafaCallBooking.
+   * Ao escolher Joana no menu, cria já a ficha em «Sem data para imigar»
+   * (com ou sem WhatsApp — no IG o número vem depois no /agendar).
+   */
+  private async ensureJoanaRafaCallCard(params: {
+    chatbotId: string;
+    crmLeadId: string;
+    whatsapp: string | null;
+    guestName: string;
+  }): Promise<void> {
+    const bot = await this.prisma.chatbot.findUnique({
+      where: { id: params.chatbotId },
+      select: { slug: true },
+    });
+    if (bot?.slug !== 'joana') return;
+
+    const lead = await this.prisma.crmLead.findUnique({
+      where: { id: params.crmLeadId },
+      select: { id: true, rafaCallBookingId: true, guestName: true },
+    });
+    if (!lead) return;
+    if (lead.rafaCallBookingId) {
+      const existing = await this.prisma.rafaCallBooking.findFirst({
+        where: { id: lead.rafaCallBookingId, crmExcludedAt: null },
+        select: { id: true },
+      });
+      if (existing) return;
+    }
+
+    if (params.whatsapp) {
+      const visible = await this.rafacallCrm.lookupLeadForJoana(params.whatsapp);
+      if (visible.kind === 'visible') {
+        await this.prisma.crmLead.update({
+          where: { id: lead.id },
+          data: { rafaCallBookingId: visible.bookingId },
+        });
+        return;
+      }
+    }
+
+    try {
+      const created = await this.rafacallCrm.createCrmClient({
+        name: (params.guestName || lead.guestName || 'Lead').slice(0, 80),
+        whatsapp: params.whatsapp,
+      });
+      await this.prisma.crmLead.update({
+        where: { id: lead.id },
+        data: { rafaCallBookingId: created.id },
+      });
+    } catch (err: unknown) {
+      if (
+        err instanceof BadRequestException &&
+        err.message === 'Este cliente já está no CRM.' &&
+        params.whatsapp
+      ) {
+        const again = await this.rafacallCrm.lookupLeadForJoana(params.whatsapp);
+        if (again.kind === 'visible') {
+          await this.prisma.crmLead.update({
+            where: { id: lead.id },
+            data: { rafaCallBookingId: again.bookingId },
+          });
+        }
+        return;
       }
       throw err;
     }

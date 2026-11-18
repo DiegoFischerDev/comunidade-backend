@@ -4,7 +4,6 @@ import { ConversationOutboundService } from '../channels/conversation-outbound.s
 import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
-import { resolveImmigrationColumnFromDate } from '../rafacall/rafacall-crm.constants';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { JOANA_AUDIO_UNHEARD } from './joana-audio';
@@ -400,10 +399,20 @@ export class JoanaService {
       const pending = readPending(row.pendingConfirmation);
       const { contextText } = await this.getContext();
       const { steps: welcomeSteps } = await this.getWelcome();
-      // RafaCall exige WhatsApp; no IG a qualificação vive no histórico até /agendar.
-      const lead = row.whatsappDigits
+      let lead = row.whatsappDigits
         ? await this.crm.lookupLeadForJoana(row.whatsappDigits)
-        : ({ kind: 'none' } as const);
+        : row.instagramUserId
+          ? await this.crm.lookupLeadForJoanaByInstagram(row.instagramUserId)
+          : ({ kind: 'none' } as const);
+      // Conversas já na Joana sem ficha RafaCall (ex.: IG antes deste fix).
+      if (lead.kind === 'none') {
+        await this.ensureRafaCallCardForConversation(row);
+        lead = row.whatsappDigits
+          ? await this.crm.lookupLeadForJoana(row.whatsappDigits)
+          : row.instagramUserId
+            ? await this.crm.lookupLeadForJoanaByInstagram(row.instagramUserId)
+            : ({ kind: 'none' } as const);
+      }
       const profile = lead.kind === 'visible' ? profileFromLead(lead) : emptyJoanaProfile();
       const hasScheduledVideoCall =
         lead.kind === 'visible' ? lead.hasScheduledVideoCall : false;
@@ -540,69 +549,48 @@ export class JoanaService {
             (item.text.includes('/agendar?') || item.text.includes('/agendar')),
         );
 
-        if (row.whatsappDigits) {
-          const persisted = await this.persistDecision({
-            whatsapp: row.whatsappDigits,
-            lead,
-            decision,
-          });
-          if (persisted) {
-            const next = await this.crm.lookupLeadForJoana(row.whatsappDigits);
-            if (next.kind === 'visible') {
-              if (next.hasScheduledVideoCall) {
-                schedulingLinkSent = true;
+        const persisted = await this.persistDecision({
+          whatsapp: row.whatsappDigits,
+          instagramUserId: row.instagramUserId,
+          lead,
+          decision,
+        });
+        if (persisted) {
+          const next = row.whatsappDigits
+            ? await this.crm.lookupLeadForJoana(row.whatsappDigits)
+            : row.instagramUserId
+              ? await this.crm.lookupLeadForJoanaByInstagram(row.instagramUserId)
+              : ({ kind: 'none' } as const);
+          if (next.kind === 'visible') {
+            if (next.hasScheduledVideoCall) {
+              schedulingLinkSent = true;
+              farGuidanceSent = false;
+            } else {
+              const guidance = this.columnGuidance(
+                next.crmStatus,
+                row.whatsappDigits,
+                next.name,
+              );
+              if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO) {
                 farGuidanceSent = false;
-              } else {
-                const guidance = this.columnGuidance(
-                  next.crmStatus,
-                  row.whatsappDigits,
-                  next.name,
-                );
-                if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO) {
-                  farGuidanceSent = false;
-                  offerSchedulingLink = shouldOfferSchedulingLink({
-                    crmStatus: next.crmStatus,
-                    hasVisa: next.hasVisa,
-                    hasScheduledVideoCall: next.hasScheduledVideoCall,
-                    linkAlreadyDelivered,
-                    schedulingLinkSent,
-                  });
-                  if (offerSchedulingLink && guidance) append.push(guidance);
-                } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_LONGE) {
-                  schedulingLinkSent = false;
-                  if (next.hasVisa !== false && !farGuidanceSent && guidance) {
-                    append.push(guidance);
-                    farGuidanceSent = true;
-                  }
-                } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_NULL) {
-                  farGuidanceSent = false;
-                  schedulingLinkSent = false;
+                offerSchedulingLink = shouldOfferSchedulingLink({
+                  crmStatus: next.crmStatus,
+                  hasVisa: next.hasVisa,
+                  hasScheduledVideoCall: next.hasScheduledVideoCall,
+                  linkAlreadyDelivered,
+                  schedulingLinkSent,
+                });
+                if (offerSchedulingLink && guidance) append.push(guidance);
+              } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_LONGE) {
+                schedulingLinkSent = false;
+                if (next.hasVisa !== false && !farGuidanceSent && guidance) {
+                  append.push(guidance);
+                  farGuidanceSent = true;
                 }
+              } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_NULL) {
+                farGuidanceSent = false;
+                schedulingLinkSent = false;
               }
-            }
-          }
-        } else if (saved) {
-          // IG sem WhatsApp: oferecer /agendar sem pré-preencher número.
-          const merged = mergeProfileWithDecision(profile, decision);
-          const status = immigrationStatusFromProfile(merged);
-          const guidance = status
-            ? this.columnGuidance(status, null, merged.name)
-            : null;
-          if (status === RafaCallCrmStatus.IMIGRACAO_PERTO) {
-            farGuidanceSent = false;
-            offerSchedulingLink = shouldOfferSchedulingLink({
-              crmStatus: status,
-              hasVisa: merged.hasVisa,
-              hasScheduledVideoCall: false,
-              linkAlreadyDelivered,
-              schedulingLinkSent,
-            });
-            if (offerSchedulingLink && guidance) append.push(guidance);
-          } else if (status === RafaCallCrmStatus.IMIGRACAO_LONGE) {
-            schedulingLinkSent = false;
-            if (merged.hasVisa !== false && !farGuidanceSent && guidance) {
-              append.push(guidance);
-              farGuidanceSent = true;
             }
           }
         }
@@ -723,13 +711,18 @@ export class JoanaService {
   }
 
   private async persistDecision(input: {
-    whatsapp: string;
-    lead: Awaited<ReturnType<RafacallCrmService['lookupLeadForJoana']>>;
+    whatsapp: string | null;
+    instagramUserId?: string | null;
+    lead:
+      | Awaited<ReturnType<RafacallCrmService['lookupLeadForJoana']>>
+      | Awaited<ReturnType<RafacallCrmService['lookupLeadForJoanaByInstagram']>>;
     decision: ReturnType<typeof applyJoanaProposal>;
   }): Promise<boolean> {
     const { decision } = input;
     if (input.lead.kind === 'excluded') return false;
-    if (!decision.createLead && !decision.nameToSave && !decision.crmPatch) return true;
+    if (!decision.createLead && !decision.nameToSave && !decision.crmPatch) {
+      return true;
+    }
 
     let bookingId = input.lead.kind === 'visible' ? input.lead.bookingId : null;
 
@@ -737,7 +730,11 @@ export class JoanaService {
     if (decision.createLead && !bookingId) {
       // Nome da ficha: só o que a pessoa disse, ou «Lead XXX». O nick do WhatsApp
       // não entra — senão a qualificação trata «Mozi» como nome já preenchido.
-      const name = decision.nameToSave || fallbackLeadName(input.whatsapp);
+      const name =
+        decision.nameToSave ||
+        (input.whatsapp
+          ? fallbackLeadName(input.whatsapp)
+          : `Lead IG ${(input.instagramUserId || '').slice(-4) || 'novo'}`);
       try {
         const created = await this.crm.createCrmClient({
           name,
@@ -749,8 +746,15 @@ export class JoanaService {
         });
         bookingId = created.id;
         createdNow = true;
+        if (input.instagramUserId) {
+          await this.linkJoanaCrmLeadToBooking(
+            input.instagramUserId,
+            created.id,
+          );
+        }
       } catch (err: unknown) {
         if (!isCrmMessage(err, 'Este cliente já está no CRM.')) throw err;
+        if (!input.whatsapp) return false;
         const again = await this.crm.lookupLeadForJoana(input.whatsapp);
         if (again.kind !== 'visible') return false;
         bookingId = again.bookingId;
@@ -759,7 +763,14 @@ export class JoanaService {
 
     if (!bookingId) return false;
     if (!createdNow && decision.nameToSave) {
-      await this.crm.renameLeadForJoana(input.whatsapp, decision.nameToSave);
+      if (input.whatsapp) {
+        await this.crm.renameLeadForJoana(input.whatsapp, decision.nameToSave);
+      } else {
+        await this.prisma.rafaCallBooking.update({
+          where: { id: bookingId },
+          data: { guestName: decision.nameToSave },
+        });
+      }
     }
     if (decision.crmPatch) {
       const patch = createdNow
@@ -781,6 +792,54 @@ export class JoanaService {
       }
     }
     return true;
+  }
+
+  private async linkJoanaCrmLeadToBooking(
+    instagramUserId: string,
+    bookingId: string,
+  ): Promise<void> {
+    const bot = await this.prisma.chatbot.findUnique({
+      where: { slug: 'joana' },
+      select: { id: true },
+    });
+    if (!bot) return;
+    await this.prisma.crmLead.updateMany({
+      where: {
+        chatbotId: bot.id,
+        instagramUserId,
+        crmExcludedAt: null,
+      },
+      data: { rafaCallBookingId: bookingId },
+    });
+  }
+
+  private async ensureRafaCallCardForConversation(row: {
+    whatsappDigits: string | null;
+    instagramUserId: string | null;
+    displayName: string | null;
+  }): Promise<void> {
+    const name =
+      (row.displayName && row.displayName.trim().length >= 2
+        ? row.displayName.trim().slice(0, 80)
+        : null) ||
+      (row.whatsappDigits
+        ? fallbackLeadName(row.whatsappDigits)
+        : `Lead IG ${(row.instagramUserId || '').slice(-4) || 'novo'}`);
+    try {
+      const created = await this.crm.createCrmClient({
+        name,
+        whatsapp: row.whatsappDigits,
+      });
+      if (row.instagramUserId) {
+        await this.linkJoanaCrmLeadToBooking(row.instagramUserId, created.id);
+      }
+    } catch (err: unknown) {
+      if (!isCrmMessage(err, 'Este cliente já está no CRM.')) {
+        this.logger.warn(
+          `Joana ensure CRM: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
   }
 
   private async sendWelcomeSteps(
@@ -1157,50 +1216,6 @@ function composeReply(reply: string, append: string[], saved = false): string {
     'Oi, eu sou a Joana, atendente virtual da Rafa. A Rafa ajuda na busca do imóvel em Portugal, nas visitas por videochamada e na negociação com os proprietários.',
     saved,
   );
-}
-
-function mergeProfileWithDecision(
-  profile: JoanaProfile,
-  decision: ReturnType<typeof applyJoanaProposal>,
-): JoanaProfile {
-  const patch = decision.crmPatch;
-  return {
-    name: decision.nameToSave || profile.name,
-    immigration:
-      patch && 'immigration' in patch
-        ? patch.immigration ?? null
-        : profile.immigration,
-    hasVisa:
-      patch && 'hasVisa' in patch ? patch.hasVisa ?? null : profile.hasVisa,
-    cities:
-      patch && 'cities' in patch ? patch.cities ?? null : profile.cities,
-    typology:
-      patch && 'typology' in patch ? patch.typology ?? null : profile.typology,
-    desiredRent:
-      patch && 'desiredRent' in patch
-        ? patch.desiredRent ?? null
-        : profile.desiredRent,
-    hasPet:
-      patch && 'hasPet' in patch ? patch.hasPet ?? null : profile.hasPet,
-  };
-}
-
-function immigrationStatusFromProfile(
-  profile: JoanaProfile,
-): RafaCallCrmStatus | null {
-  if (!profile.immigration) return null;
-  const immediate = profile.immigration === 'IMEDIATO';
-  const expected = immediate
-    ? null
-    : (() => {
-        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(profile.immigration!);
-        if (!m) return null;
-        return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-      })();
-  return resolveImmigrationColumnFromDate({
-    expectedImmigrationAt: expected,
-    immigrationImmediate: immediate,
-  });
 }
 
 function cleanName(raw: string | null | undefined): string | null {

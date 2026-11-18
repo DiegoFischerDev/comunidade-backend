@@ -137,7 +137,9 @@ export class RafacallCrmService {
 
     const uniqueItems = this.buildUniqueCrmItems(items);
     this.scheduleMissingProfileImageBackfill(uniqueItems);
-    const whatsappDigits = uniqueItems.map((item) => this.extractWhatsappDigits(item));
+    const whatsappDigits = uniqueItems
+      .map((item) => this.extractWhatsappDigits(item))
+      .filter((digits) => digits.length >= 8);
     const [paymentsByWhatsapp, documentsByWhatsapp] = await Promise.all([
       this.loadPaymentsByWhatsapp(whatsappDigits),
       this.loadDocumentsByWhatsapp(whatsappDigits),
@@ -152,8 +154,8 @@ export class RafacallCrmService {
         const digits = this.extractWhatsappDigits(item);
         return this.serializeCrmItem(
           item,
-          paymentsByWhatsapp.get(digits) ?? [],
-          documentsByWhatsapp.get(digits) ?? [],
+          digits ? paymentsByWhatsapp.get(digits) ?? [] : [],
+          digits ? documentsByWhatsapp.get(digits) ?? [] : [],
         );
       }),
     }));
@@ -217,7 +219,8 @@ export class RafacallCrmService {
 
   async createCrmClient(params: {
     name: string;
-    whatsapp: string;
+    /** Opcional no IG: a ficha nasce sem número e o WhatsApp entra no /agendar. */
+    whatsapp?: string | null;
     crmExpectedImmigrationAt?: string | null;
     crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
     crmPreferredCity?: string | null;
@@ -228,8 +231,9 @@ export class RafacallCrmService {
       throw new BadRequestException('Indica o nome do cliente.');
     }
 
-    const whatsapp = waDigits(params.whatsapp);
-    if (whatsapp.length < 8) {
+    const whatsappRaw = (params.whatsapp || '').trim();
+    const whatsapp = whatsappRaw ? waDigits(whatsappRaw) : '';
+    if (whatsappRaw && whatsapp.length < 8) {
       throw new BadRequestException(
         'WhatsApp inválido. Inclui o indicativo do país (ex.: 351…).',
       );
@@ -253,11 +257,15 @@ export class RafacallCrmService {
       params.crmDesiredRent === undefined
         ? null
         : normalizeDesiredRent(params.crmDesiredRent);
-    const crmJoanaEnabled = !(await this.isJoanaConversationPaused(whatsapp));
+    const crmJoanaEnabled = whatsapp
+      ? !(await this.isJoanaConversationPaused(whatsapp))
+      : true;
 
-    const visibleSiblings = await this.findActiveBookingsByWhatsapp(whatsapp);
-    if (visibleSiblings.length > 0) {
-      throw new BadRequestException('Este cliente já está no CRM.');
+    if (whatsapp) {
+      const visibleSiblings = await this.findActiveBookingsByWhatsapp(whatsapp);
+      if (visibleSiblings.length > 0) {
+        throw new BadRequestException('Este cliente já está no CRM.');
+      }
     }
 
     const now = new Date();
@@ -268,45 +276,50 @@ export class RafacallCrmService {
       at: now,
     });
 
-    const excludedBooking = await this.prisma.rafaCallBooking.findFirst({
-      where: {
-        status: {
-          in: [RafaCallBookingStatus.SCHEDULED, RafaCallBookingStatus.COMPLETED],
-        },
-        crmExcludedAt: { not: null },
-        OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
-      },
-      select: BOOKING_CRM_SELECT,
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    if (excludedBooking) {
-      const restored = await this.prisma.rafaCallBooking.update({
-        where: { id: excludedBooking.id },
-        data: {
-          crmExcludedAt: null,
-          ...(excludedBooking.user ? {} : { guestName: name }),
-          crmStatus: initialStatus,
-          crmComments: null,
-          crmExpectedImmigrationAt: immigrationDate,
-          crmImmigrationImmediate: immigrationImmediate,
-          crmPropertyTypology: propertyTypology,
-          crmPreferredCity: preferredCity,
-          crmHasPet: null,
-          crmHasVisa: null,
-          crmDesiredRent: desiredRent,
-          crmJoanaEnabled,
+    if (whatsapp) {
+      const excludedBooking = await this.prisma.rafaCallBooking.findFirst({
+        where: {
+          status: {
+            in: [
+              RafaCallBookingStatus.SCHEDULED,
+              RafaCallBookingStatus.COMPLETED,
+            ],
+          },
+          crmExcludedAt: { not: null },
+          OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
         },
         select: BOOKING_CRM_SELECT,
+        orderBy: { updatedAt: 'desc' },
       });
 
-      const withAvatar = await this.ensureCrmProfileImage(whatsapp, {
-        existingUrl: restored.crmProfileImageUrl,
-      });
-      return this.serializeCrmItemWithPayments({
-        ...restored,
-        crmProfileImageUrl: withAvatar ?? restored.crmProfileImageUrl,
-      });
+      if (excludedBooking) {
+        const restored = await this.prisma.rafaCallBooking.update({
+          where: { id: excludedBooking.id },
+          data: {
+            crmExcludedAt: null,
+            ...(excludedBooking.user ? {} : { guestName: name }),
+            crmStatus: initialStatus,
+            crmComments: null,
+            crmExpectedImmigrationAt: immigrationDate,
+            crmImmigrationImmediate: immigrationImmediate,
+            crmPropertyTypology: propertyTypology,
+            crmPreferredCity: preferredCity,
+            crmHasPet: null,
+            crmHasVisa: null,
+            crmDesiredRent: desiredRent,
+            crmJoanaEnabled,
+          },
+          select: BOOKING_CRM_SELECT,
+        });
+
+        const withAvatar = await this.ensureCrmProfileImage(whatsapp, {
+          existingUrl: restored.crmProfileImageUrl,
+        });
+        return this.serializeCrmItemWithPayments({
+          ...restored,
+          crmProfileImageUrl: withAvatar ?? restored.crmProfileImageUrl,
+        });
+      }
     }
 
     const { startsAt, endsAt, timezone } = buildCrmPlaceholderSlotTimes(now);
@@ -315,7 +328,7 @@ export class RafacallCrmService {
       data: {
         userId: null,
         guestName: name,
-        guestWhatsapp: whatsapp,
+        guestWhatsapp: whatsapp || null,
         clientDeviceId: null,
         status: RafaCallBookingStatus.COMPLETED,
         origin: RafaCallBookingOrigin.PUBLIC_FREE,
@@ -337,7 +350,9 @@ export class RafacallCrmService {
       select: BOOKING_CRM_SELECT,
     });
 
-    const withAvatar = await this.ensureCrmProfileImage(whatsapp);
+    const withAvatar = whatsapp
+      ? await this.ensureCrmProfileImage(whatsapp)
+      : null;
     return this.serializeCrmItemWithPayments({
       ...created,
       crmProfileImageUrl: withAvatar ?? created.crmProfileImageUrl,
@@ -349,33 +364,7 @@ export class RafacallCrmService {
     const whatsapp = waDigits(whatsappRaw);
     const visible = await this.findActiveBookingsByWhatsapp(whatsapp);
     if (visible.length > 0) {
-      const source = this.pickCrmSource(visible);
-      const hasScheduledVideoCall =
-        source.crmStatus === RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA ||
-        source.crmStatus === RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA ||
-        source.crmStatus === RafaCallCrmStatus.AGUARDANDO_ASSINATURA ||
-        source.crmStatus === RafaCallCrmStatus.CONTRATO_ASSINADO ||
-        visible.some(
-          (item) =>
-            item.status === RafaCallBookingStatus.SCHEDULED &&
-            !isCrmPlaceholderSlotTimes(item),
-        );
-      return {
-        kind: 'visible' as const,
-        bookingId: source.id,
-        name: source.user?.name?.trim() || source.guestName?.trim() || null,
-        crmStatus: source.crmStatus,
-        hasScheduledVideoCall,
-        immigration: formatCrmImmigrationForApi(
-          source.crmExpectedImmigrationAt,
-          source.crmImmigrationImmediate,
-        ),
-        cities: source.crmPreferredCity?.trim() || null,
-        typology: source.crmPropertyTypology,
-        desiredRent: source.crmDesiredRent,
-        hasPet: source.crmHasPet,
-        hasVisa: source.crmHasVisa,
-      };
+      return this.toJoanaVisibleLead(visible);
     }
 
     const excluded = await this.prisma.rafaCallBooking.findFirst({
@@ -390,6 +379,65 @@ export class RafacallCrmService {
     });
     if (excluded) return { kind: 'excluded' as const };
     return { kind: 'none' as const };
+  }
+
+  /** Lead Joana ancorado no IGSID (CrmLead → RafaCallBooking), sem WhatsApp. */
+  async lookupLeadForJoanaByInstagram(instagramUserIdRaw: string) {
+    const ig = instagramUserIdRaw.trim();
+    if (!ig) return { kind: 'none' as const };
+
+    const bot = await this.prisma.chatbot.findUnique({
+      where: { slug: 'joana' },
+      select: { id: true },
+    });
+    if (!bot) return { kind: 'none' as const };
+
+    const crmLead = await this.prisma.crmLead.findFirst({
+      where: {
+        chatbotId: bot.id,
+        instagramUserId: ig,
+        crmExcludedAt: null,
+      },
+      select: { rafaCallBookingId: true },
+    });
+    if (!crmLead?.rafaCallBookingId) return { kind: 'none' as const };
+
+    const booking = await this.prisma.rafaCallBooking.findFirst({
+      where: { id: crmLead.rafaCallBookingId, crmExcludedAt: null },
+      select: BOOKING_CRM_SELECT,
+    });
+    if (!booking) return { kind: 'none' as const };
+    return this.toJoanaVisibleLead([booking]);
+  }
+
+  private toJoanaVisibleLead(visible: BookingCrmRow[]) {
+    const source = this.pickCrmSource(visible);
+    const hasScheduledVideoCall =
+      source.crmStatus === RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA ||
+      source.crmStatus === RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA ||
+      source.crmStatus === RafaCallCrmStatus.AGUARDANDO_ASSINATURA ||
+      source.crmStatus === RafaCallCrmStatus.CONTRATO_ASSINADO ||
+      visible.some(
+        (item) =>
+          item.status === RafaCallBookingStatus.SCHEDULED &&
+          !isCrmPlaceholderSlotTimes(item),
+      );
+    return {
+      kind: 'visible' as const,
+      bookingId: source.id,
+      name: source.user?.name?.trim() || source.guestName?.trim() || null,
+      crmStatus: source.crmStatus,
+      hasScheduledVideoCall,
+      immigration: formatCrmImmigrationForApi(
+        source.crmExpectedImmigrationAt,
+        source.crmImmigrationImmediate,
+      ),
+      cities: source.crmPreferredCity?.trim() || null,
+      typology: source.crmPropertyTypology,
+      desiredRent: source.crmDesiredRent,
+      hasPet: source.crmHasPet,
+      hasVisa: source.crmHasVisa,
+    };
   }
 
   async renameLeadForJoana(whatsappRaw: string, name: string) {
@@ -1657,10 +1705,11 @@ export class RafacallCrmService {
 
     for (const item of items) {
       const digits = this.extractWhatsappDigits(item);
-      if (!digits) continue;
-      const group = groups.get(digits) ?? [];
+      // Sem WhatsApp (ex.: lead IG): cada booking é um cartão próprio.
+      const key = digits || `id:${item.id}`;
+      const group = groups.get(key) ?? [];
       group.push(item);
-      groups.set(digits, group);
+      groups.set(key, group);
     }
 
     return Array.from(groups.values()).map((group) => {
