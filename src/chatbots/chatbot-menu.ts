@@ -17,15 +17,18 @@ Me conta, sobre qual assunto você gostaria de conversar?
 
 🔑 2. Financiamento ou compra de casa em Portugal
 
-💌 3. Publicidade e parcerias com a Rafa
+🛂 3. Visto e preparação para Portugal
 
-💬 4. Falar diretamente com a Rafa sobre outros assuntos`;
+💌 4. Publicidade e parcerias com a Rafa
+
+💬 5. Falar diretamente com a Rafa sobre outros assuntos`;
 
 const MENU_OPTION_EMOJI: Record<number, string> = {
   1: '🏡 ',
   2: '🔑 ',
-  3: '💌 ',
-  4: '💬 ',
+  3: '🛂 ',
+  4: '💌 ',
+  5: '💬 ',
 };
 
 /** Fallback se ainda não houver texto guardado na BD. */
@@ -65,6 +68,13 @@ export function parseChatbotMenuDigitChoice(
   return byOrder.get(order) ?? null;
 }
 
+function slugFromBots(
+  bots: MenuBot[],
+  slug: ChatbotSlug,
+): ChatbotSlug | null {
+  return bots.some((bot) => bot.slug === slug) ? slug : null;
+}
+
 /** @deprecated Preferir digito + OpenAI. Mantido para testes / fallback. */
 export function parseChatbotMenuChoice(
   text: string,
@@ -76,7 +86,6 @@ export function parseChatbotMenuChoice(
   const trimmed = text.trim().toLowerCase();
   if (!trimmed) return null;
 
-  const byOrder = new Map(bots.map((bot) => [bot.menuOrder, bot.slug]));
   const normalized = trimmed
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
@@ -90,31 +99,24 @@ export function parseChatbotMenuChoice(
     }
   }
 
-  if (
-    /\b(relocation|aluguel|arrendamento|imigr)/.test(normalized) &&
-    byOrder.has(1)
-  ) {
-    return byOrder.get(1) ?? null;
+  if (/\b(relocation|aluguel|arrendamento)\b/.test(normalized)) {
+    return slugFromBots(bots, 'joana');
+  }
+  if (/\b(credito|financ|compra de casa|imobiliario)\b/.test(normalized)) {
+    return slugFromBots(bots, 'bruna');
+  }
+  if (/\b(visto|imigracao|imigrar|preparacao para portugal|cidadania)\b/.test(normalized)) {
+    return slugFromBots(bots, 'bianca');
+  }
+  if (/\b(publicidade|propaganda|anuncio|parceria|marketing)\b/.test(normalized)) {
+    return slugFromBots(bots, 'gabi');
   }
   if (
-    /\b(credito|financ|compra de casa|imobiliario)/.test(normalized) &&
-    byOrder.has(2)
-  ) {
-    return byOrder.get(2) ?? null;
-  }
-  if (
-    /\b(publicidade|propaganda|anuncio|parceria|marketing)/.test(normalized) &&
-    byOrder.has(3)
-  ) {
-    return byOrder.get(3) ?? null;
-  }
-  if (
-    /\b(outros|outra coisa|falar (com|diretamente)|falar com a rafa|assunto diferente)/.test(
+    /\b(outros|outra coisa|falar (com|diretamente)|falar com a rafa|assunto diferente)\b/.test(
       normalized,
-    ) &&
-    byOrder.has(4)
+    )
   ) {
-    return byOrder.get(4) ?? null;
+    return slugFromBots(bots, 'outros');
   }
 
   return null;
@@ -134,8 +136,8 @@ export function buildMenuClassifySystemPrompt(bots: MenuBot[]): string {
   return [
     'És um classificador de intenções para o WhatsApp da Rafa.',
     'Dado o texto do contacto, escolhe UMA opção (slug) da lista.',
-    'Aceita número (1/2/3/4), nome do bot, ou qualquer frase em português que indique o assunto.',
-    'Exemplos: "publicidade" → gabi; "quero alugar em Viseu" → joana; "crédito para comprar casa" → bruna; "quero falar com a Rafa" / "outro assunto" / "4" → outros.',
+    'Aceita número (1/2/3/4/5), nome do bot, ou qualquer frase em português que indique o assunto.',
+    'Exemplos: "publicidade" → gabi; "quero alugar em Viseu" → joana; "crédito para comprar casa" → bruna; "preciso de visto" / "preparação para Portugal" → bianca; "quero falar com a Rafa" / "outro assunto" / "5" → outros.',
     'Se não der para perceber o assunto, devolve null.',
     `Responde APENAS JSON válido: {"slug":${slugList}|null}`,
     '',
@@ -173,7 +175,7 @@ export function parseMenuClassifyResponse(
   }
 }
 
-/** Resume o assunto num frase curta para o CRM Outros. */
+/** Resume o assunto numa frase curta para o CRM Outros. */
 export function parseSubjectSummaryResponse(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;

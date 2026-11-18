@@ -3,11 +3,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, RafaCallCrmPropertyTypology } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
 import { ChatbotService } from './chatbot.service';
 import { isChatbotSlug, type ChatbotSlug } from './chatbot.constants';
+import {
+  normalizePreferredCities,
+  parseDesiredHouseValue,
+  type BrunaProfile,
+} from './bruna-turn';
 import {
   normalizeCampaignObjective,
   normalizeCompanyName,
@@ -412,6 +417,17 @@ export class ChatbotCrmService {
     });
   }
 
+  async patchBrunaQualification(leadId: string, profile: BrunaProfile) {
+    await this.prisma.crmLead.update({
+      where: { id: leadId },
+      data: {
+        desiredHouseValue: profile.desiredHouseValue,
+        crmPreferredCity: profile.preferredCities,
+        crmPropertyTypology: profile.propertyTypology,
+      },
+    });
+  }
+
   async updateLead(
     slug: string,
     leadId: string,
@@ -424,6 +440,9 @@ export class ChatbotCrmService {
       instagramHandle?: string | null;
       campaignObjective?: string | null;
       subjectSummary?: string | null;
+      desiredHouseValue?: number | null;
+      preferredCities?: string | null;
+      propertyTypology?: RafaCallCrmPropertyTypology | null;
     },
   ) {
     const bot = await this.chatbots.requireBySlug(slug);
@@ -484,6 +503,31 @@ export class ChatbotCrmService {
     if (input.subjectSummary !== undefined) {
       const summary = input.subjectSummary?.trim() || null;
       data.subjectSummary = summary ? summary.slice(0, 200) : null;
+    }
+    if (input.desiredHouseValue !== undefined) {
+      if (input.desiredHouseValue === null) {
+        data.desiredHouseValue = null;
+      } else {
+        const value = parseDesiredHouseValue(input.desiredHouseValue);
+        if (typeof value !== 'number') {
+          throw new BadRequestException('Valor da casa pretendida inválido.');
+        }
+        data.desiredHouseValue = value;
+      }
+    }
+    if (input.preferredCities !== undefined) {
+      if (input.preferredCities === null || input.preferredCities.trim() === '') {
+        data.crmPreferredCity = null;
+      } else {
+        const cities = normalizePreferredCities(input.preferredCities);
+        if (!cities) {
+          throw new BadRequestException('Cidades pretendidas inválidas.');
+        }
+        data.crmPreferredCity = cities;
+      }
+    }
+    if (input.propertyTypology !== undefined) {
+      data.crmPropertyTypology = input.propertyTypology;
     }
     if (input.botEnabled !== undefined) {
       data.botEnabled = input.botEnabled;
@@ -658,6 +702,9 @@ export class ChatbotCrmService {
       instagramHandle?: string | null;
       campaignObjective?: string | null;
       subjectSummary?: string | null;
+      desiredHouseValue?: number | null;
+      crmPreferredCity?: string | null;
+      crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
       botEnabled: boolean;
       crmComments: string | null;
       crmProfileImageUrl: string | null;
@@ -687,6 +734,9 @@ export class ChatbotCrmService {
       instagramHandle?: string | null;
       campaignObjective?: string | null;
       subjectSummary?: string | null;
+      desiredHouseValue?: number | null;
+      crmPreferredCity?: string | null;
+      crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
       botEnabled: boolean;
       crmComments: string | null;
       crmProfileImageUrl: string | null;
@@ -712,6 +762,9 @@ export class ChatbotCrmService {
       instagramHandle: lead.instagramHandle ?? null,
       campaignObjective: lead.campaignObjective ?? null,
       subjectSummary: lead.subjectSummary ?? null,
+      desiredHouseValue: lead.desiredHouseValue ?? null,
+      preferredCities: lead.crmPreferredCity ?? null,
+      propertyTypology: lead.crmPropertyTypology ?? null,
       botEnabled: lead.botEnabled,
       crmComments: lead.crmComments,
       crmProfileImageUrl: lead.crmProfileImageUrl,

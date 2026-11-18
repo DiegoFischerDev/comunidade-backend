@@ -1394,6 +1394,8 @@ model CrmLead {
   campaignObjective        String?                      @map("campaign_objective") @db.VarChar(280)
   /// Resumo curto do assunto (CRM Outros / handoff Rafa).
   subjectSummary           String?                      @map("subject_summary") @db.VarChar(200)
+  /// Valor da casa pretendida em euros (CRM Bruna / crédito).
+  desiredHouseValue        Int?                         @map("desired_house_value")
   botEnabled               Boolean                      @default(true) @map("bot_enabled")
   crmComments              String?                      @map("crm_comments") @db.Text
   crmExpectedImmigrationAt DateTime?                    @map("crm_expected_immigration_at")

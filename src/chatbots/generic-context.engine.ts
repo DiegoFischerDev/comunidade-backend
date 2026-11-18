@@ -12,6 +12,14 @@ import { ChatbotService } from './chatbot.service';
 import { isChatbotSlug } from './chatbot.constants';
 import { ChatbotCrmService } from './chatbot-crm.service';
 import {
+  applyBrunaProposal,
+  brunaProfileSummary,
+  composeBrunaReply,
+  emptyBrunaProfile,
+  parseBrunaModelJson,
+  type BrunaProfile,
+} from './bruna-turn';
+import {
   applyGabiProposal,
   composeGabiReply,
   emptyGabiProfile,
@@ -143,12 +151,44 @@ export class GenericContextEngine {
           await this.crm.patchGabiQualification(lead.id, nextProfile);
         }
         reply = composeGabiReply(interpreted.reply, nextProfile);
+      } else if (slug === 'bruna') {
+        const profile: BrunaProfile = lead
+          ? {
+              desiredHouseValue: lead.desiredHouseValue,
+              preferredCities: lead.crmPreferredCity,
+              propertyTypology: lead.crmPropertyTypology,
+            }
+          : emptyBrunaProfile();
+        const interpreted = await this.interpretBruna({
+          context: bot.contextText,
+          history: historyForModel,
+          userText: combined,
+          profile,
+        });
+        const nextProfile = applyBrunaProposal(profile, interpreted.proposal);
+        if (
+          lead &&
+          (interpreted.proposal.desiredHouseValue !== undefined ||
+            interpreted.proposal.preferredCities !== undefined ||
+            interpreted.proposal.propertyTypology !== undefined)
+        ) {
+          await this.crm.patchBrunaQualification(lead.id, nextProfile);
+        }
+        reply = composeBrunaReply(interpreted.reply, nextProfile);
       } else {
         reply = await this.replyWithContext({
           botName: bot.name,
           context: bot.contextText,
           history: historyForModel,
           userText: combined,
+          ...(slug === 'bianca'
+            ? {
+                schedulingLink: this.buildSchedulingLink(
+                  row.whatsappDigits,
+                  lead?.guestName || row.displayName,
+                ),
+              }
+            : {}),
         });
       }
     } catch (err: unknown) {
@@ -189,6 +229,74 @@ export class GenericContextEngine {
       welcomeSent,
       outbound: sent ? null : reply,
     });
+  }
+
+  private async interpretBruna(input: {
+    context: string;
+    history: HistoryItem[];
+    userText: string;
+    profile: BrunaProfile;
+  }): Promise<{
+    reply: string;
+    proposal: ReturnType<typeof parseBrunaModelJson>['proposal'];
+  }> {
+    const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY não está configurada.');
+    }
+    const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+    const system = [
+      input.context.trim(),
+      '',
+      'És a Bruna no WhatsApp. A Rafa é mulher — fala no feminino.',
+      'Responde em JSON: {"reply":"...","desiredHouseValue":250000,"preferredCities":"...","propertyTypology":"T2"}',
+      'desiredHouseValue, preferredCities e propertyTypology: só inclui a chave se a pessoa falou desse dado agora.',
+      'desiredHouseValue: euros inteiros do imóvel pretendido (ex.: 220000).',
+      'preferredCities: cidade(s) em Portugal, texto curto.',
+      'propertyTypology: um de QUARTO, T0, T1, T2, T3, T4, T5.',
+      'Na reply: frases curtas. Reage ao que disseram. Não digas que gravaste dados.',
+      'Ordem: valor da casa pretendida → cidades pretendidas → tipologia do imóvel.',
+      'Não inventes taxas, spreads, prazos nem condições bancárias. Não digas que és uma IA.',
+      `Ficha actual: ${brunaProfileSummary(input.profile)}`,
+    ].join('\n');
+
+    const messages: Array<{
+      role: 'system' | 'user' | 'assistant';
+      content: string;
+    }> = [{ role: 'system', content: system }];
+    for (const item of input.history.slice(-HISTORY_LIMIT)) {
+      messages.push({ role: item.role, content: item.text });
+    }
+    messages.push({ role: 'user', content: input.userText });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45_000);
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.3,
+          response_format: { type: 'json_object' },
+          messages,
+        }),
+        signal: controller.signal,
+      });
+      const raw = await res.text();
+      if (!res.ok) {
+        throw new Error(`OpenAI ${res.status}: ${raw.slice(0, 400)}`);
+      }
+      const parsed = JSON.parse(raw) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      return parseBrunaModelJson(parsed.choices?.[0]?.message?.content || '');
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private async interpretGabi(input: {
@@ -254,17 +362,48 @@ export class GenericContextEngine {
     }
   }
 
+  private buildSchedulingLink(
+    whatsapp: string,
+    name: string | null | undefined,
+  ): string | null {
+    try {
+      const base = getFrontendBaseUrl().replace(/\/$/, '');
+      const params = new URLSearchParams();
+      params.set('whatsapp', whatsapp);
+      const clean = name?.trim();
+      if (clean && clean.length >= 2 && !/^Lead\s+\d+$/i.test(clean)) {
+        params.set('name', clean.slice(0, 80));
+      }
+      return `${base}/agendar?${params.toString()}`;
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Bianca sem link de agenda: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return null;
+    }
+  }
+
   private async replyWithContext(input: {
     botName: string;
     context: string;
     history: HistoryItem[];
     userText: string;
+    schedulingLink?: string | null;
   }): Promise<string> {
     const apiKey = (process.env.OPENAI_API_KEY || '').trim();
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY não está configurada.');
     }
     const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+    const schedulingHints = input.schedulingLink
+      ? [
+          'Quando a pessoa mostrar interesse em falar com a especialista / agendar, inclui este link exacto na resposta:',
+          input.schedulingLink,
+          'Não inventes outro URL de agendamento.',
+        ]
+      : [];
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       {
         role: 'system',
@@ -274,6 +413,7 @@ export class GenericContextEngine {
           `És a ${input.botName}. Responde numa única mensagem curta de WhatsApp.`,
           'Não inventes preços, prazos nem compromissos fora do contexto.',
           'Não digas que gravaste dados nem que és uma IA.',
+          ...schedulingHints,
         ].join('\n'),
       },
     ];

@@ -1550,6 +1550,41 @@ export class RafacallCrmService {
     await this.applyJoanaEnabled(whatsapp, enabled);
   }
 
+  /**
+   * Mensagem manual do admin no WhatsApp: move leads activos em NOVO
+   * (Bruna / Bianca / Gabi / Outros) para EM_ATENDIMENTO. Joana não usa CrmLead.
+   */
+  async promoteGenericCrmNovoToEmAtendimento(whatsappRaw: string): Promise<number> {
+    const whatsapp = waDigits(whatsappRaw);
+    if (!whatsapp) return 0;
+
+    const leads = await this.prisma.crmLead.findMany({
+      where: {
+        whatsappDigits: whatsapp,
+        crmExcludedAt: null,
+        chatbot: { slug: { in: ['bruna', 'bianca', 'gabi', 'outros'] } },
+        column: { slug: 'NOVO' },
+      },
+      select: { id: true, chatbotId: true },
+    });
+    if (!leads.length) return 0;
+
+    let moved = 0;
+    for (const lead of leads) {
+      const target = await this.prisma.crmColumn.findFirst({
+        where: { chatbotId: lead.chatbotId, slug: 'EM_ATENDIMENTO' },
+        select: { id: true },
+      });
+      if (!target) continue;
+      await this.prisma.crmLead.update({
+        where: { id: lead.id },
+        data: { columnId: target.id },
+      });
+      moved += 1;
+    }
+    return moved;
+  }
+
   private async isJoanaConversationPaused(whatsapp: string): Promise<boolean> {
     const row = await this.prisma.joanaConversation.findUnique({
       where: { whatsappDigits: whatsapp },

@@ -1,10 +1,16 @@
+import { RafaCallCrmPropertyTypology } from '@prisma/client';
 import {
   IsArray,
   IsBoolean,
+  IsEnum,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
+  Min,
   MinLength,
   ArrayMinSize,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateCrmLeadDto {
@@ -54,6 +60,22 @@ export class UpdateCrmLeadDto {
   @IsOptional()
   @IsString()
   subjectSummary?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsInt()
+  @Min(0)
+  @Max(5_000_000)
+  desiredHouseValue?: number | null;
+
+  @IsOptional()
+  @IsString()
+  preferredCities?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsEnum(RafaCallCrmPropertyTypology)
+  propertyTypology?: RafaCallCrmPropertyTypology | null;
 }
 
 export class CreateCrmColumnDto {

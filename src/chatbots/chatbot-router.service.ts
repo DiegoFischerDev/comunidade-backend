@@ -156,7 +156,7 @@ export class ChatbotRouterService {
       try {
         await this.wa.sendText(
           input.whatsapp,
-          'Para começar, responde com o número do menu (1, 2 ou 3) por escrito. Se ainda não viste o menu, escreve oi.',
+          'Para começar, responde com o número do menu (1 a 5) por escrito. Se ainda não viste o menu, escreve oi.',
           { preferredInstance: instance },
         );
       } catch {
@@ -387,7 +387,7 @@ export class ChatbotRouterService {
 
     if (!choice) {
       const clarify =
-        `Não percebi o assunto. Podes dizer por exemplo «relocation», «crédito», «publicidade» ou «outros», ou o número 1, 2, 3 ou 4.\n\n${menuText}`;
+        `Não percebi o assunto. Podes dizer por exemplo «relocation», «crédito», «visto», «publicidade» ou «outros», ou o número 1 a 5.\n\n${menuText}`;
       try {
         await this.wa.sendText(row.whatsappDigits, clarify, {
           preferredInstance: row.instance || undefined,

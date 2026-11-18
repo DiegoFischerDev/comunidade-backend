@@ -1204,7 +1204,11 @@ export class RafacallBookingService {
 
     if (!incoming || incoming.toLowerCase() !== triggerPhrase.toLowerCase()) {
       await this.crm.setJoanaEnabledForWhatsapp(whatsapp, false);
-      this.logger.log(`Joana desligada: mensagem manual do admin para ${whatsapp}`);
+      const promoted = await this.crm.promoteGenericCrmNovoToEmAtendimento(whatsapp);
+      this.logger.log(
+        `Joana desligada: mensagem manual do admin para ${whatsapp}` +
+          (promoted > 0 ? ` (CRM: ${promoted} lead(s) Novo→Em atendimento)` : ''),
+      );
       return { ok: true, status: 'joana_paused' };
     }
 
