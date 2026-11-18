@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JoanaModule } from '../joana/joana.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { RafacallModule } from '../rafacall/rafacall.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { AdminChatbotCrmController } from './admin-chatbot-crm.controller';
 import { ChatbotCrmService } from './chatbot-crm.service';
@@ -11,7 +12,7 @@ import { ChatbotsController } from './chatbots.controller';
 import { GenericContextEngine } from './generic-context.engine';
 
 @Module({
-  imports: [PrismaModule, WhatsAppModule, JoanaModule],
+  imports: [PrismaModule, WhatsAppModule, JoanaModule, RafacallModule],
   controllers: [ChatbotsController, AdminChatbotCrmController],
   providers: [
     ChatbotService,

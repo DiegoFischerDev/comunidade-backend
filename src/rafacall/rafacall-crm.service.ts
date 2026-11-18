@@ -1676,15 +1676,28 @@ export class RafacallCrmService {
 
     try {
       if (!opts?.force) {
-        const already = await this.prisma.rafaCallBooking.findFirst({
-          where: {
-            crmProfileImageUrl: { not: null },
-            OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
-          },
-          select: { crmProfileImageUrl: true },
-          orderBy: { updatedAt: 'desc' },
-        });
-        const cached = already?.crmProfileImageUrl?.trim() || null;
+        const [fromBooking, fromLead] = await Promise.all([
+          this.prisma.rafaCallBooking.findFirst({
+            where: {
+              crmProfileImageUrl: { not: null },
+              OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
+            },
+            select: { crmProfileImageUrl: true },
+            orderBy: { updatedAt: 'desc' },
+          }),
+          this.prisma.crmLead.findFirst({
+            where: {
+              whatsappDigits: whatsapp,
+              crmProfileImageUrl: { not: null },
+            },
+            select: { crmProfileImageUrl: true },
+            orderBy: { updatedAt: 'desc' },
+          }),
+        ]);
+        const cached =
+          fromBooking?.crmProfileImageUrl?.trim() ||
+          fromLead?.crmProfileImageUrl?.trim() ||
+          null;
         if (cached) {
           await this.applyCrmProfileImageUrl(whatsapp, cached);
           return cached;
@@ -1731,15 +1744,21 @@ export class RafacallCrmService {
     whatsappDigits: string,
     url: string,
   ): Promise<void> {
-    await this.prisma.rafaCallBooking.updateMany({
-      where: {
-        OR: [
-          { guestWhatsapp: whatsappDigits },
-          { user: { whatsapp: whatsappDigits } },
-        ],
-      },
-      data: { crmProfileImageUrl: url },
-    });
+    await Promise.all([
+      this.prisma.rafaCallBooking.updateMany({
+        where: {
+          OR: [
+            { guestWhatsapp: whatsappDigits },
+            { user: { whatsapp: whatsappDigits } },
+          ],
+        },
+        data: { crmProfileImageUrl: url },
+      }),
+      this.prisma.crmLead.updateMany({
+        where: { whatsappDigits },
+        data: { crmProfileImageUrl: url },
+      }),
+    ]);
   }
 
   private async downloadRemoteImage(url: string): Promise<Buffer | null> {

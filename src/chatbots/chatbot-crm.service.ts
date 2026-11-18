@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
 import { ChatbotService } from './chatbot.service';
 import { isChatbotSlug, type ChatbotSlug } from './chatbot.constants';
 import {
@@ -12,6 +13,8 @@ import {
   normalizeInstagramHandle,
   type GabiProfile,
 } from './gabi-turn';
+
+const CRM_AVATAR_BOARD_BACKFILL_LIMIT = 8;
 
 function waDigits(value: string): string {
   return value.replace(/\D/g, '');
@@ -22,6 +25,7 @@ export class ChatbotCrmService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly chatbots: ChatbotService,
+    private readonly rafacallCrm: RafacallCrmService,
   ) {}
 
   async listBoard(slug: string) {
@@ -34,6 +38,8 @@ export class ChatbotCrmService {
       where: { chatbotId: bot.id, crmExcludedAt: null },
       orderBy: { updatedAt: 'desc' },
     });
+
+    this.scheduleMissingProfileImageBackfill(leads);
 
     return {
       chatbot: {
@@ -243,6 +249,10 @@ export class ChatbotCrmService {
           crmComments: null,
         },
       });
+      void this.scheduleEnsureProfileImage(
+        whatsapp,
+        restored.crmProfileImageUrl,
+      );
       return this.serializeLead(restored, column.slug);
     }
 
@@ -255,6 +265,7 @@ export class ChatbotCrmService {
         botEnabled: true,
       },
     });
+    void this.scheduleEnsureProfileImage(whatsapp, null);
     return this.serializeLead(created, column.slug);
   }
 
@@ -275,7 +286,7 @@ export class ChatbotCrmService {
       },
     });
     if (existing) {
-      return this.prisma.crmLead.update({
+      const updated = await this.prisma.crmLead.update({
         where: { id: existing.id },
         data: {
           botEnabled,
@@ -284,6 +295,11 @@ export class ChatbotCrmService {
             : {}),
         },
       });
+      void this.scheduleEnsureProfileImage(
+        params.whatsappDigits,
+        updated.crmProfileImageUrl,
+      );
+      return updated;
     }
 
     const firstColumn = await this.prisma.crmColumn.findFirst({
@@ -301,7 +317,7 @@ export class ChatbotCrmService {
       orderBy: { updatedAt: 'desc' },
     });
     if (excluded) {
-      return this.prisma.crmLead.update({
+      const restored = await this.prisma.crmLead.update({
         where: { id: excluded.id },
         data: {
           crmExcludedAt: null,
@@ -311,10 +327,15 @@ export class ChatbotCrmService {
           subjectSummary: params.subjectSummary ?? excluded.subjectSummary,
         },
       });
+      void this.scheduleEnsureProfileImage(
+        params.whatsappDigits,
+        restored.crmProfileImageUrl,
+      );
+      return restored;
     }
 
     try {
-      return await this.prisma.crmLead.create({
+      const created = await this.prisma.crmLead.create({
         data: {
           chatbotId: params.chatbotId,
           columnId: firstColumn.id,
@@ -324,6 +345,8 @@ export class ChatbotCrmService {
           subjectSummary: params.subjectSummary ?? null,
         },
       });
+      void this.scheduleEnsureProfileImage(params.whatsappDigits, null);
+      return created;
     } catch (err: unknown) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -546,6 +569,26 @@ export class ChatbotCrmService {
 
   isGenericSlug(slug: string): slug is Exclude<ChatbotSlug, 'joana'> {
     return isChatbotSlug(slug) && slug !== 'joana';
+  }
+
+  private scheduleEnsureProfileImage(
+    whatsappRaw: string,
+    existingUrl?: string | null,
+  ) {
+    void this.rafacallCrm.ensureCrmProfileImage(whatsappRaw, {
+      existingUrl: existingUrl ?? null,
+    });
+  }
+
+  private scheduleMissingProfileImageBackfill(
+    leads: Array<{ whatsappDigits: string; crmProfileImageUrl: string | null }>,
+  ) {
+    const missing = leads
+      .filter((lead) => !lead.crmProfileImageUrl?.trim())
+      .slice(0, CRM_AVATAR_BOARD_BACKFILL_LIMIT);
+    for (const lead of missing) {
+      this.scheduleEnsureProfileImage(lead.whatsappDigits, null);
+    }
   }
 
   private serializeLead(
