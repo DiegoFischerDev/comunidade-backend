@@ -59,7 +59,7 @@ export class GenericContextEngine {
       await this.dropPaused(id);
       return;
     }
-    if (!row.whatsappDigits) {
+    if (!row.whatsappDigits && !row.instagramUserId) {
       await this.release(id);
       return;
     }
@@ -70,10 +70,10 @@ export class GenericContextEngine {
       return;
     }
 
-    const lead = await this.crm.findActiveLead(
-      row.chatbotId!,
-      row.whatsappDigits,
-    );
+    const lead = await this.crm.findActiveLead(row.chatbotId!, {
+      whatsappDigits: row.whatsappDigits,
+      instagramUserId: row.instagramUserId,
+    });
     if (lead && !lead.botEnabled) {
       await this.dropPaused(id);
       return;
@@ -105,7 +105,8 @@ export class GenericContextEngine {
       try {
         if (
           bot.welcomeSteps.length > 0 &&
-          row.activeChannel === ChatbotChannel.WHATSAPP
+          row.activeChannel === ChatbotChannel.WHATSAPP &&
+          row.whatsappDigits
         ) {
           await this.sendWelcomeSteps(
             row.whatsappDigits,
@@ -384,18 +385,20 @@ export class GenericContextEngine {
   }
 
   private buildSchedulingLink(
-    whatsapp: string,
+    whatsapp: string | null | undefined,
     name: string | null | undefined,
   ): string | null {
     try {
       const base = getFrontendBaseUrl().replace(/\/$/, '');
       const params = new URLSearchParams();
-      params.set('whatsapp', whatsapp);
+      // No IG o número é pedido na página /agendar — não pré-preenchemos.
+      if (whatsapp?.trim()) params.set('whatsapp', whatsapp.trim());
       const clean = name?.trim();
       if (clean && clean.length >= 2 && !/^Lead\s+\d+$/i.test(clean)) {
         params.set('name', clean.slice(0, 80));
       }
-      return `${base}/agendar?${params.toString()}`;
+      const qs = params.toString();
+      return qs ? `${base}/agendar?${qs}` : `${base}/agendar`;
     } catch (err: unknown) {
       this.logger.warn(
         `Bianca sem link de agenda: ${

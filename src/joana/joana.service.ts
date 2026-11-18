@@ -4,6 +4,7 @@ import { ConversationOutboundService } from '../channels/conversation-outbound.s
 import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveImmigrationColumnFromDate } from '../rafacall/rafacall-crm.constants';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { JOANA_AUDIO_UNHEARD } from './joana-audio';
@@ -265,14 +266,13 @@ export class JoanaService {
     const turn: HistoryItem[] = [{ role: 'user', text: userText }];
     if (assistantText) turn.push({ role: 'assistant', text: assistantText });
 
-    const existing = await this.prisma.joanaConversation.findUnique({
-      where: { whatsappDigits: input.whatsapp },
-    });
+    const existing = await this.findWhatsappConversation(input.whatsapp);
     if (!existing) {
       try {
         await this.prisma.joanaConversation.create({
           data: {
             whatsappDigits: input.whatsapp,
+            activeChannel: ChatbotChannel.WHATSAPP,
             instance: input.instance,
             displayName: cleanName(input.pushName),
             buffer: [] as unknown as Prisma.InputJsonValue,
@@ -290,11 +290,7 @@ export class JoanaService {
       }
     }
 
-    const row =
-      existing ??
-      (await this.prisma.joanaConversation.findUnique({
-        where: { whatsappDigits: input.whatsapp },
-      }));
+    const row = existing ?? (await this.findWhatsappConversation(input.whatsapp));
     if (!row) return;
 
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -358,12 +354,20 @@ export class JoanaService {
 
     try {
       const row = await this.prisma.joanaConversation.findUnique({ where: { id } });
-      if (!row?.whatsappDigits) {
+      if (!row?.whatsappDigits && !row?.instagramUserId) {
         await this.release(id);
         return;
       }
 
-      if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
+      const contactLabel =
+        row.whatsappDigits || `ig:${row.instagramUserId || row.id}`;
+
+      if (row.whatsappDigits) {
+        if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
+          await this.dropBecausePaused(id);
+          return;
+        }
+      } else if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId!))) {
         await this.dropBecausePaused(id);
         return;
       }
@@ -376,7 +380,11 @@ export class JoanaService {
           data: { pendingOutbound: null, processing: false },
         });
         if (outbound.includes(JOANA_DECLINE_HANDOFF)) {
-          await this.crm.setJoanaEnabledForWhatsapp(row.whatsappDigits, false);
+          if (row.whatsappDigits) {
+            await this.crm.setJoanaEnabledForWhatsapp(row.whatsappDigits, false);
+          } else if (row.instagramUserId) {
+            await this.setJoanaEnabledOnInstagram(row.instagramUserId, false);
+          }
         }
         return;
       }
@@ -392,7 +400,10 @@ export class JoanaService {
       const pending = readPending(row.pendingConfirmation);
       const { contextText } = await this.getContext();
       const { steps: welcomeSteps } = await this.getWelcome();
-      const lead = await this.crm.lookupLeadForJoana(row.whatsappDigits);
+      // RafaCall exige WhatsApp; no IG a qualificação vive no histórico até /agendar.
+      const lead = row.whatsappDigits
+        ? await this.crm.lookupLeadForJoana(row.whatsappDigits)
+        : ({ kind: 'none' } as const);
       const profile = lead.kind === 'visible' ? profileFromLead(lead) : emptyJoanaProfile();
       const hasScheduledVideoCall =
         lead.kind === 'visible' ? lead.hasScheduledVideoCall : false;
@@ -411,7 +422,7 @@ export class JoanaService {
               'Olá! Sou a Joana.';
             await this.outbound.sendText(row, body, { requireDelivery: true });
             welcomeSummary = body;
-          } else {
+          } else if (row.whatsappDigits) {
             await this.sendWelcomeSteps(
               row.whatsappDigits,
               welcomeSteps,
@@ -422,7 +433,7 @@ export class JoanaService {
           welcomeSent = true;
         } catch (err: unknown) {
           this.logger.warn(
-            `Joana boas-vindas ${row.whatsappDigits}: ${
+            `Joana boas-vindas ${contactLabel}: ${
               err instanceof Error ? err.message : String(err)
             }`,
           );
@@ -464,7 +475,7 @@ export class JoanaService {
         if (needsIntro) welcomeSent = true;
       } catch (err: unknown) {
         this.logger.warn(
-          `Joana OpenAI ${row.whatsappDigits}: ${err instanceof Error ? err.message : String(err)}`,
+          `Joana OpenAI ${contactLabel}: ${err instanceof Error ? err.message : String(err)}`,
         );
         reply = 'Tive um problema para responder agora. Pode escrever de novo daqui a pouco?';
         await this.finishTurn({
@@ -481,12 +492,18 @@ export class JoanaService {
           welcomeSent,
           outbound: reply,
           whatsapp: row.whatsappDigits,
+          instagramUserId: row.instagramUserId,
           instance: row.instance,
         });
         return;
       }
 
-      if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
+      if (row.whatsappDigits) {
+        if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
+          await this.dropBecausePaused(id);
+          return;
+        }
+      } else if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId!))) {
         await this.dropBecausePaused(id);
         return;
       }
@@ -517,53 +534,81 @@ export class JoanaService {
         decision.createLead || Boolean(decision.nameToSave || decision.crmPatch);
 
       try {
-        const persisted = await this.persistDecision({
-          whatsapp: row.whatsappDigits,
-          lead,
-          decision,
-        });
         const linkAlreadyDelivered = history.some(
-          (item) => item.role === 'assistant' && item.text.includes('/agendar?'),
+          (item) =>
+            item.role === 'assistant' &&
+            (item.text.includes('/agendar?') || item.text.includes('/agendar')),
         );
-        if (persisted) {
-          const next = await this.crm.lookupLeadForJoana(row.whatsappDigits);
-          if (next.kind === 'visible') {
-            if (next.hasScheduledVideoCall) {
-              // Já tem videochamada marcada — não voltar a mandar o link.
-              schedulingLinkSent = true;
-              farGuidanceSent = false;
-            } else {
-              const guidance = this.columnGuidance(
-                next.crmStatus,
-                row.whatsappDigits,
-                next.name,
-              );
-              if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO) {
+
+        if (row.whatsappDigits) {
+          const persisted = await this.persistDecision({
+            whatsapp: row.whatsappDigits,
+            lead,
+            decision,
+          });
+          if (persisted) {
+            const next = await this.crm.lookupLeadForJoana(row.whatsappDigits);
+            if (next.kind === 'visible') {
+              if (next.hasScheduledVideoCall) {
+                schedulingLinkSent = true;
                 farGuidanceSent = false;
-                offerSchedulingLink = shouldOfferSchedulingLink({
-                  crmStatus: next.crmStatus,
-                  hasVisa: next.hasVisa,
-                  hasScheduledVideoCall: next.hasScheduledVideoCall,
-                  linkAlreadyDelivered,
-                  schedulingLinkSent,
-                });
-                if (offerSchedulingLink && guidance) append.push(guidance);
-              } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_LONGE) {
-                schedulingLinkSent = false;
-                if (next.hasVisa !== false && !farGuidanceSent && guidance) {
-                  append.push(guidance);
-                  farGuidanceSent = true;
+              } else {
+                const guidance = this.columnGuidance(
+                  next.crmStatus,
+                  row.whatsappDigits,
+                  next.name,
+                );
+                if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO) {
+                  farGuidanceSent = false;
+                  offerSchedulingLink = shouldOfferSchedulingLink({
+                    crmStatus: next.crmStatus,
+                    hasVisa: next.hasVisa,
+                    hasScheduledVideoCall: next.hasScheduledVideoCall,
+                    linkAlreadyDelivered,
+                    schedulingLinkSent,
+                  });
+                  if (offerSchedulingLink && guidance) append.push(guidance);
+                } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_LONGE) {
+                  schedulingLinkSent = false;
+                  if (next.hasVisa !== false && !farGuidanceSent && guidance) {
+                    append.push(guidance);
+                    farGuidanceSent = true;
+                  }
+                } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_NULL) {
+                  farGuidanceSent = false;
+                  schedulingLinkSent = false;
                 }
-              } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_NULL) {
-                farGuidanceSent = false;
-                schedulingLinkSent = false;
               }
+            }
+          }
+        } else if (saved) {
+          // IG sem WhatsApp: oferecer /agendar sem pré-preencher número.
+          const merged = mergeProfileWithDecision(profile, decision);
+          const status = immigrationStatusFromProfile(merged);
+          const guidance = status
+            ? this.columnGuidance(status, null, merged.name)
+            : null;
+          if (status === RafaCallCrmStatus.IMIGRACAO_PERTO) {
+            farGuidanceSent = false;
+            offerSchedulingLink = shouldOfferSchedulingLink({
+              crmStatus: status,
+              hasVisa: merged.hasVisa,
+              hasScheduledVideoCall: false,
+              linkAlreadyDelivered,
+              schedulingLinkSent,
+            });
+            if (offerSchedulingLink && guidance) append.push(guidance);
+          } else if (status === RafaCallCrmStatus.IMIGRACAO_LONGE) {
+            schedulingLinkSent = false;
+            if (merged.hasVisa !== false && !farGuidanceSent && guidance) {
+              append.push(guidance);
+              farGuidanceSent = true;
             }
           }
         }
       } catch (err: unknown) {
         this.logger.warn(
-          `Joana CRM ${row.whatsappDigits}: ${err instanceof Error ? err.message : String(err)}`,
+          `Joana CRM ${contactLabel}: ${err instanceof Error ? err.message : String(err)}`,
         );
         append.splice(0, append.length, 'Tive um problema agora. Pode repetir daqui a pouco?');
         decision.pending = pending;
@@ -571,7 +616,7 @@ export class JoanaService {
       }
 
       const composed = composeReply(reply, append, saved);
-      if (composed.includes('/agendar?')) schedulingLinkSent = true;
+      if (composed.includes('/agendar')) schedulingLinkSent = true;
       else if (offerSchedulingLink) schedulingLinkSent = false;
       const assistantText = welcomeSummary
         ? `${welcomeSummary}\n\n${composed}`
@@ -588,10 +633,15 @@ export class JoanaService {
         welcomeSent,
         outbound: composed,
         whatsapp: row.whatsappDigits,
+        instagramUserId: row.instagramUserId,
         instance: row.instance,
       });
       if (decision.disableJoana && sent) {
-        await this.crm.setJoanaEnabledForWhatsapp(row.whatsappDigits, false);
+        if (row.whatsappDigits) {
+          await this.crm.setJoanaEnabledForWhatsapp(row.whatsappDigits, false);
+        } else if (row.instagramUserId) {
+          await this.setJoanaEnabledOnInstagram(row.instagramUserId, false);
+        }
       }
     } catch (err: unknown) {
       this.logger.warn(
@@ -603,7 +653,7 @@ export class JoanaService {
 
   private columnGuidance(
     status: RafaCallCrmStatus,
-    whatsapp: string,
+    whatsapp: string | null,
     name: string | null,
   ): string | null {
     if (status === RafaCallCrmStatus.IMIGRACAO_PERTO) {
@@ -611,9 +661,10 @@ export class JoanaService {
       try {
         const base = getFrontendBaseUrl().replace(/\/$/, '');
         const params = new URLSearchParams();
-        params.set('whatsapp', whatsapp);
+        if (whatsapp?.trim()) params.set('whatsapp', whatsapp.trim());
         if (name && !isPlaceholderLeadName(name)) params.set('name', name);
-        link = `${base}/agendar?${params.toString()}`;
+        const qs = params.toString();
+        link = qs ? `${base}/agendar?${qs}` : `${base}/agendar`;
       } catch (err: unknown) {
         this.logger.warn(
           `Joana sem link de agenda: ${err instanceof Error ? err.message : String(err)}`,
@@ -626,6 +677,49 @@ export class JoanaService {
       return 'Como sua viagem ainda está a dois meses ou mais, a Rafa ainda não consegue te acompanhar na busca do imóvel agora. Quando faltarem menos de dois meses, é a hora certa de agendar a videochamada e começar a procura. Até lá, prepare o passaporte, o visto e compre a passagem. Quando estiver mais perto, me chama de novo que eu te mando o link para agendar.';
     }
     return null;
+  }
+
+  private async isJoanaActiveOnInstagram(
+    instagramUserId: string,
+  ): Promise<boolean> {
+    const bot = await this.prisma.chatbot.findUnique({
+      where: { slug: 'joana' },
+      select: { id: true },
+    });
+    if (!bot) return true;
+    const lead = await this.prisma.crmLead.findFirst({
+      where: {
+        chatbotId: bot.id,
+        instagramUserId,
+        crmExcludedAt: null,
+      },
+      select: { botEnabled: true },
+    });
+    if (!lead) return true;
+    return lead.botEnabled;
+  }
+
+  private async setJoanaEnabledOnInstagram(
+    instagramUserId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    const bot = await this.prisma.chatbot.findUnique({
+      where: { slug: 'joana' },
+      select: { id: true },
+    });
+    if (!bot) return;
+    await this.prisma.crmLead.updateMany({
+      where: {
+        chatbotId: bot.id,
+        instagramUserId,
+        crmExcludedAt: null,
+      },
+      data: { botEnabled: enabled },
+    });
+    await this.prisma.joanaConversation.updateMany({
+      where: { instagramUserId },
+      data: { paused: !enabled },
+    });
   }
 
   private async persistDecision(input: {
@@ -770,13 +864,25 @@ export class JoanaService {
     schedulingLinkSent: boolean;
     welcomeSent: boolean;
     outbound: string;
-    whatsapp: string;
+    whatsapp: string | null;
+    instagramUserId?: string | null;
     instance: string | null;
   }): Promise<boolean> {
-    if (!(await this.crm.isJoanaActive(input.whatsapp))) {
-      await this.dropBecausePaused(input.id);
-      return false;
+    if (input.whatsapp) {
+      if (!(await this.crm.isJoanaActive(input.whatsapp))) {
+        await this.dropBecausePaused(input.id);
+        return false;
+      }
+    } else if (input.instagramUserId) {
+      if (!(await this.isJoanaActiveOnInstagram(input.instagramUserId))) {
+        await this.dropBecausePaused(input.id);
+        return false;
+      }
     }
+
+    const contactLabel =
+      input.whatsapp ||
+      (input.instagramUserId ? `ig:${input.instagramUserId}` : input.id);
 
     let outboundSaved: string | null = null;
     let sent = false;
@@ -788,16 +894,18 @@ export class JoanaService {
         await this.outbound.sendText(conv, input.outbound, {
           requireDelivery: true,
         });
-      } else {
+      } else if (input.whatsapp) {
         await this.wa.sendText(input.whatsapp, input.outbound, {
           preferredInstance: input.instance || undefined,
           requireDelivery: true,
         });
+      } else {
+        throw new Error('Sem canal de envio para a Joana');
       }
       sent = true;
     } catch (err: unknown) {
       this.logger.warn(
-        `Joana envio ${input.whatsapp}: ${err instanceof Error ? err.message : String(err)}`,
+        `Joana envio ${contactLabel}: ${err instanceof Error ? err.message : String(err)}`,
       );
       outboundSaved = input.outbound;
     }
@@ -868,20 +976,35 @@ export class JoanaService {
     });
   }
 
+  private async findWhatsappConversation(whatsapp: string) {
+    return (
+      (await this.prisma.joanaConversation.findFirst({
+        where: {
+          whatsappDigits: whatsapp,
+          activeChannel: ChatbotChannel.WHATSAPP,
+        },
+        orderBy: { updatedAt: 'desc' },
+      })) ??
+      this.prisma.joanaConversation.findFirst({
+        where: { whatsappDigits: whatsapp },
+        orderBy: { updatedAt: 'desc' },
+      })
+    );
+  }
+
   private async appendBuffer(input: {
     whatsapp: string;
     instance: string | null;
     displayName: string | null;
     item: BufferItem;
   }) {
-    const existing = await this.prisma.joanaConversation.findUnique({
-      where: { whatsappDigits: input.whatsapp },
-    });
+    const existing = await this.findWhatsappConversation(input.whatsapp);
     if (!existing) {
       try {
         await this.prisma.joanaConversation.create({
           data: {
             whatsappDigits: input.whatsapp,
+            activeChannel: ChatbotChannel.WHATSAPP,
             instance: input.instance,
             displayName: input.displayName,
             buffer: [input.item] as unknown as Prisma.InputJsonValue,
@@ -900,11 +1023,7 @@ export class JoanaService {
       }
     }
 
-    const row =
-      existing ??
-      (await this.prisma.joanaConversation.findUnique({
-        where: { whatsappDigits: input.whatsapp },
-      }));
+    const row = existing ?? (await this.findWhatsappConversation(input.whatsapp));
     if (!row) return;
 
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -1038,6 +1157,50 @@ function composeReply(reply: string, append: string[], saved = false): string {
     'Oi, eu sou a Joana, atendente virtual da Rafa. A Rafa ajuda na busca do imóvel em Portugal, nas visitas por videochamada e na negociação com os proprietários.',
     saved,
   );
+}
+
+function mergeProfileWithDecision(
+  profile: JoanaProfile,
+  decision: ReturnType<typeof applyJoanaProposal>,
+): JoanaProfile {
+  const patch = decision.crmPatch;
+  return {
+    name: decision.nameToSave || profile.name,
+    immigration:
+      patch && 'immigration' in patch
+        ? patch.immigration ?? null
+        : profile.immigration,
+    hasVisa:
+      patch && 'hasVisa' in patch ? patch.hasVisa ?? null : profile.hasVisa,
+    cities:
+      patch && 'cities' in patch ? patch.cities ?? null : profile.cities,
+    typology:
+      patch && 'typology' in patch ? patch.typology ?? null : profile.typology,
+    desiredRent:
+      patch && 'desiredRent' in patch
+        ? patch.desiredRent ?? null
+        : profile.desiredRent,
+    hasPet:
+      patch && 'hasPet' in patch ? patch.hasPet ?? null : profile.hasPet,
+  };
+}
+
+function immigrationStatusFromProfile(
+  profile: JoanaProfile,
+): RafaCallCrmStatus | null {
+  if (!profile.immigration) return null;
+  const immediate = profile.immigration === 'IMEDIATO';
+  const expected = immediate
+    ? null
+    : (() => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(profile.immigration!);
+        if (!m) return null;
+        return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+      })();
+  return resolveImmigrationColumnFromDate({
+    expectedImmigrationAt: expected,
+    immigrationImmediate: immediate,
+  });
 }
 
 function cleanName(raw: string | null | undefined): string | null {

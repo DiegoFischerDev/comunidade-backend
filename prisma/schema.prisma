@@ -1330,8 +1330,8 @@ model JoanaSettings {
 /// Conversa multi-canal partilhada pelos chatbots (id interno = âncora).
 model JoanaConversation {
   id                  String         @id @default(cuid())
-  /// Canal WhatsApp (dígitos). Null até o contacto o partilhar (ex.: veio do IG).
-  whatsappDigits      String?        @unique @map("whatsapp_digits")
+  /// Canal WhatsApp (dígitos). Opcional; pode repetir-se noutra conversa (ex. IG + WA).
+  whatsappDigits      String?        @map("whatsapp_digits")
   /// IGSID do utilizador no Instagram Direct.
   instagramUserId     String?        @unique @map("instagram_user_id") @db.VarChar(64)
   /// Canal a usar no outbound.
@@ -1366,6 +1366,7 @@ model JoanaConversation {
   @@index([processing, lastInboundAt])
   @@index([chatbotId])
   @@index([activeChannel])
+  @@index([whatsappDigits])
   @@map("joana_conversations")
 }
 
@@ -1396,7 +1397,10 @@ model CrmLead {
   chatbot                  Chatbot                      @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
   columnId                 String                       @map("column_id")
   column                   CrmColumn                    @relation(fields: [columnId], references: [id], onDelete: Restrict)
-  whatsappDigits           String                       @map("whatsapp_digits")
+  /// WhatsApp opcional (no IG a ficha nasce só com IGSID; agenda via /agendar).
+  whatsappDigits           String?                      @map("whatsapp_digits")
+  /// IGSID quando o lead veio do Instagram Direct.
+  instagramUserId          String?                      @map("instagram_user_id") @db.VarChar(64)
   guestName                String?                      @map("guest_name")
   /// Nome da empresa (CRM Gabi / publicidade).
   companyName              String?                      @map("company_name") @db.VarChar(160)
@@ -1424,8 +1428,9 @@ model CrmLead {
   createdAt                DateTime                     @default(now()) @map("created_at")
   updatedAt                DateTime                     @updatedAt @map("updated_at")
 
-  @@unique([chatbotId, whatsappDigits])
+  @@unique([chatbotId, instagramUserId])
   @@index([chatbotId, columnId])
+  @@index([chatbotId, whatsappDigits])
   @@index([whatsappDigits])
   @@map("crm_leads")
 }

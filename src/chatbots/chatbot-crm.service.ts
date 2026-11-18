@@ -287,33 +287,53 @@ export class ChatbotCrmService {
   /** Cria lead na 1ª coluna se ainda não existir (escolha do menu). */
   async ensureLeadOnMenuAssign(params: {
     chatbotId: string;
-    whatsappDigits: string;
+    whatsappDigits?: string | null;
+    instagramUserId?: string | null;
     displayName?: string | null;
     botEnabled?: boolean;
     subjectSummary?: string | null;
   }) {
     const botEnabled = params.botEnabled !== false;
+    const whatsapp = params.whatsappDigits
+      ? waDigits(params.whatsappDigits)
+      : null;
+    const ig = (params.instagramUserId || '').trim() || null;
+    if (!whatsapp && !ig) return null;
+
+    const identityWhere = {
+      chatbotId: params.chatbotId,
+      crmExcludedAt: null as null,
+      OR: [
+        ...(whatsapp ? [{ whatsappDigits: whatsapp }] : []),
+        ...(ig ? [{ instagramUserId: ig }] : []),
+      ],
+    };
+
     const existing = await this.prisma.crmLead.findFirst({
-      where: {
-        chatbotId: params.chatbotId,
-        whatsappDigits: params.whatsappDigits,
-        crmExcludedAt: null,
-      },
+      where: identityWhere,
     });
     if (existing) {
       const updated = await this.prisma.crmLead.update({
         where: { id: existing.id },
         data: {
           botEnabled,
+          ...(whatsapp && !existing.whatsappDigits
+            ? { whatsappDigits: whatsapp }
+            : {}),
+          ...(ig && !existing.instagramUserId
+            ? { instagramUserId: ig }
+            : {}),
           ...(params.subjectSummary
             ? { subjectSummary: params.subjectSummary }
             : {}),
         },
       });
-      void this.scheduleEnsureProfileImage(
-        params.whatsappDigits,
-        updated.crmProfileImageUrl,
-      );
+      if (whatsapp || updated.whatsappDigits) {
+        void this.scheduleEnsureProfileImage(
+          whatsapp || updated.whatsappDigits!,
+          updated.crmProfileImageUrl,
+        );
+      }
       return updated;
     }
 
@@ -323,12 +343,16 @@ export class ChatbotCrmService {
     });
     if (!firstColumn) return null;
 
+    const excludedWhere = {
+      chatbotId: params.chatbotId,
+      crmExcludedAt: { not: null as null },
+      OR: [
+        ...(whatsapp ? [{ whatsappDigits: whatsapp }] : []),
+        ...(ig ? [{ instagramUserId: ig }] : []),
+      ],
+    };
     const excluded = await this.prisma.crmLead.findFirst({
-      where: {
-        chatbotId: params.chatbotId,
-        whatsappDigits: params.whatsappDigits,
-        crmExcludedAt: { not: null },
-      },
+      where: excludedWhere,
       orderBy: { updatedAt: 'desc' },
     });
     if (excluded) {
@@ -340,40 +364,45 @@ export class ChatbotCrmService {
           botEnabled,
           guestName: excluded.guestName || cleanName(params.displayName),
           subjectSummary: params.subjectSummary ?? excluded.subjectSummary,
+          ...(whatsapp ? { whatsappDigits: whatsapp } : {}),
+          ...(ig ? { instagramUserId: ig } : {}),
         },
       });
-      void this.scheduleEnsureProfileImage(
-        params.whatsappDigits,
-        restored.crmProfileImageUrl,
-      );
+      if (whatsapp || restored.whatsappDigits) {
+        void this.scheduleEnsureProfileImage(
+          whatsapp || restored.whatsappDigits!,
+          restored.crmProfileImageUrl,
+        );
+      }
       return restored;
     }
+
+    const fallbackName =
+      cleanName(params.displayName) ||
+      (whatsapp
+        ? `Lead ${whatsapp.slice(-3)}`
+        : `Lead IG ${(ig || '').slice(-4)}`);
 
     try {
       const created = await this.prisma.crmLead.create({
         data: {
           chatbotId: params.chatbotId,
           columnId: firstColumn.id,
-          whatsappDigits: params.whatsappDigits,
-          guestName: cleanName(params.displayName) || `Lead ${params.whatsappDigits.slice(-3)}`,
+          whatsappDigits: whatsapp,
+          instagramUserId: ig,
+          guestName: fallbackName,
           botEnabled,
           subjectSummary: params.subjectSummary ?? null,
         },
       });
-      void this.scheduleEnsureProfileImage(params.whatsappDigits, null);
+      if (whatsapp) void this.scheduleEnsureProfileImage(whatsapp, null);
       return created;
     } catch (err: unknown) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        return this.prisma.crmLead.findFirst({
-          where: {
-            chatbotId: params.chatbotId,
-            whatsappDigits: params.whatsappDigits,
-            crmExcludedAt: null,
-          },
-        });
+        return this.prisma.crmLead.findFirst({ where: identityWhere });
       }
       throw err;
     }
@@ -598,12 +627,23 @@ export class ChatbotCrmService {
     return { ok: true as const };
   }
 
-  async findActiveLead(chatbotId: string, whatsappDigits: string) {
+  async findActiveLead(
+    chatbotId: string,
+    identity: { whatsappDigits?: string | null; instagramUserId?: string | null },
+  ) {
+    const whatsapp = identity.whatsappDigits
+      ? waDigits(identity.whatsappDigits)
+      : null;
+    const ig = (identity.instagramUserId || '').trim() || null;
+    if (!whatsapp && !ig) return null;
     return this.prisma.crmLead.findFirst({
       where: {
         chatbotId,
-        whatsappDigits: waDigits(whatsappDigits),
         crmExcludedAt: null,
+        OR: [
+          ...(whatsapp ? [{ whatsappDigits: whatsapp }] : []),
+          ...(ig ? [{ instagramUserId: ig }] : []),
+        ],
       },
     });
   }
@@ -631,6 +671,16 @@ export class ChatbotCrmService {
       select: { id: true },
     });
     return Boolean(booking);
+  }
+
+  async isInstagramInAnyCrm(instagramUserIdRaw: string): Promise<boolean> {
+    const ig = instagramUserIdRaw.trim();
+    if (!ig) return false;
+    const lead = await this.prisma.crmLead.findFirst({
+      where: { instagramUserId: ig, crmExcludedAt: null },
+      select: { id: true },
+    });
+    return Boolean(lead);
   }
 
   async setBotEnabledForWhatsapp(whatsappRaw: string, enabled: boolean) {
