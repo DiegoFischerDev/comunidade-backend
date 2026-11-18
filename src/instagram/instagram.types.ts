@@ -8,7 +8,16 @@ export type InstagramInboundMessage = {
   externalMessageId: string;
   text: string;
   timestampMs: number;
+  /** Nome do perfil (Graph User Profile) — o webhook não traz isto. */
+  profileName?: string | null;
+  /** @username do Instagram (Graph User Profile). */
+  profileUsername?: string | null;
   raw: unknown;
+};
+
+export type InstagramUserProfile = {
+  name: string | null;
+  username: string | null;
 };
 
 export type InstagramWebhookPayload = {

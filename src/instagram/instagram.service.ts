@@ -2,12 +2,19 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
 import type {
   InstagramInboundMessage,
+  InstagramUserProfile,
   InstagramWebhookPayload,
 } from './instagram.types';
 
 @Injectable()
 export class InstagramService {
   private readonly logger = new Logger(InstagramService.name);
+  /** Cache curto para não bater na Graph em cada DM do mesmo IGSID. */
+  private readonly profileCache = new Map<
+    string,
+    { at: number; profile: InstagramUserProfile | null }
+  >();
+  private static readonly PROFILE_CACHE_MS = 6 * 60 * 60 * 1000;
 
   /** Verify token configurado no painel Meta (hub.verify_token). */
   getWebhookVerifyToken(): string {
@@ -148,12 +155,79 @@ export class InstagramService {
 
     const messages = this.parseInboundMessages(payload);
     for (const msg of messages) {
+      const profile = await this.fetchUserProfile(msg.instagramUserId);
+      if (profile) {
+        msg.profileName = profile.name;
+        msg.profileUsername = profile.username;
+      }
       this.logger.log(
-        `IG DM de ${msg.instagramUserId}: ${msg.text.slice(0, 80)}`,
+        `IG DM de ${msg.profileUsername || msg.instagramUserId}: ${msg.text.slice(0, 80)}`,
       );
     }
 
     return { ok: true, messages };
+  }
+
+  /**
+   * O webhook só traz o IGSID. Nome e @username vêm do User Profile API
+   * (consentimento implícito quando a pessoa envia DM).
+   */
+  async fetchUserProfile(
+    instagramUserId: string,
+  ): Promise<InstagramUserProfile | null> {
+    const igsid = instagramUserId.trim();
+    if (!igsid) return null;
+
+    const cached = this.profileCache.get(igsid);
+    if (
+      cached &&
+      Date.now() - cached.at < InstagramService.PROFILE_CACHE_MS
+    ) {
+      return cached.profile;
+    }
+
+    const token = this.getPageAccessToken();
+    if (!token) {
+      this.logger.warn('INSTAGRAM_PAGE_ACCESS_TOKEN em falta — sem perfil IG');
+      return null;
+    }
+
+    const apiVersion = process.env.META_GRAPH_API_VERSION?.trim() || 'v21.0';
+    const url =
+      `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(igsid)}` +
+      `?fields=name,username&access_token=${encodeURIComponent(token)}`;
+
+    try {
+      const res = await fetch(url);
+      const body = await res.text();
+      if (!res.ok) {
+        this.logger.warn(
+          `Perfil IG ${igsid} falhou (${res.status}): ${body.slice(0, 240)}`,
+        );
+        this.profileCache.set(igsid, { at: Date.now(), profile: null });
+        return null;
+      }
+      const parsed = JSON.parse(body) as {
+        name?: unknown;
+        username?: unknown;
+      };
+      const name =
+        typeof parsed.name === 'string' && parsed.name.trim()
+          ? parsed.name.trim().slice(0, 80)
+          : null;
+      const username =
+        typeof parsed.username === 'string' && parsed.username.trim()
+          ? parsed.username.trim().replace(/^@+/, '').slice(0, 119)
+          : null;
+      const profile = { name, username };
+      this.profileCache.set(igsid, { at: Date.now(), profile });
+      return profile;
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Perfil IG ${igsid}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
   }
 
   /**

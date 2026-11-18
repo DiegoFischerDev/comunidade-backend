@@ -37,6 +37,82 @@ export class ChatbotRouterService {
   ) {}
 
   /**
+   * Actualiza nome / @ a partir do User Profile API (o webhook IG só traz IGSID).
+   * Propaga para conversa, CrmLead e ficha RafaCall se ainda for «Lead IG …».
+   */
+  async enrichInstagramSender(input: {
+    instagramUserId: string;
+    profileName?: string | null;
+    profileUsername?: string | null;
+  }): Promise<void> {
+    const ig = input.instagramUserId.trim();
+    if (!ig) return;
+
+    const displayName =
+      cleanName(input.profileName) ||
+      (input.profileUsername?.trim()
+        ? `@${input.profileUsername.trim().replace(/^@+/, '')}`
+        : null);
+    const handle = input.profileUsername?.trim()
+      ? `@${input.profileUsername.trim().replace(/^@+/, '').slice(0, 119)}`
+      : null;
+
+    if (displayName) {
+      await this.prisma.joanaConversation.updateMany({
+        where: {
+          instagramUserId: ig,
+          OR: [{ displayName: null }, { displayName: { startsWith: 'Lead IG' } }],
+        },
+        data: { displayName },
+      });
+    }
+
+    const leads = await this.prisma.crmLead.findMany({
+      where: { instagramUserId: ig, crmExcludedAt: null },
+      select: {
+        id: true,
+        guestName: true,
+        instagramHandle: true,
+        rafaCallBookingId: true,
+      },
+    });
+
+    for (const lead of leads) {
+      const nextName =
+        displayName &&
+        (!lead.guestName?.trim() || /^Lead\s+IG\b/i.test(lead.guestName))
+          ? displayName
+          : undefined;
+
+      if (nextName || handle) {
+        await this.prisma.crmLead.update({
+          where: { id: lead.id },
+          data: {
+            ...(nextName ? { guestName: nextName } : {}),
+            ...(handle ? { instagramHandle: handle } : {}),
+          },
+        });
+      }
+
+      if (lead.rafaCallBookingId && nextName) {
+        const booking = await this.prisma.rafaCallBooking.findUnique({
+          where: { id: lead.rafaCallBookingId },
+          select: { guestName: true },
+        });
+        if (
+          booking &&
+          (!booking.guestName?.trim() || /^Lead\s+IG\b/i.test(booking.guestName))
+        ) {
+          await this.prisma.rafaCallBooking.update({
+            where: { id: lead.rafaCallBookingId },
+            data: { guestName: nextName },
+          });
+        }
+      }
+    }
+  }
+
+  /**
    * Entrada de texto (WhatsApp DM ou Instagram DM).
    * Sem ficha em nenhum CRM → menu (mesmo com histórico).
    * Com bot atribuído e ficha → engine respectivo.

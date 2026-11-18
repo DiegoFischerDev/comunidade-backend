@@ -71,11 +71,22 @@ export class InstagramController {
 
     for (const msg of result.messages) {
       try {
+        const pushName =
+          msg.profileName?.trim() ||
+          (msg.profileUsername ? `@${msg.profileUsername}` : undefined);
+        if (msg.profileName || msg.profileUsername) {
+          await this.router.enrichInstagramSender({
+            instagramUserId: msg.instagramUserId,
+            profileName: msg.profileName ?? null,
+            profileUsername: msg.profileUsername ?? null,
+          });
+        }
         await this.router.bufferInbound({
           channel: 'instagram',
           instagramUserId: msg.instagramUserId,
           text: msg.text,
           externalMessageId: msg.externalMessageId,
+          pushName,
         });
       } catch (err: unknown) {
         this.logger.warn(

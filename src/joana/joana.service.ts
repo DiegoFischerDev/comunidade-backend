@@ -595,10 +595,10 @@ export class JoanaService {
           }
         }
       } catch (err: unknown) {
+        // Falha a gravar no CRM, mas a resposta da conversa (OpenAI) mantém-se.
         this.logger.warn(
           `Joana CRM ${contactLabel}: ${err instanceof Error ? err.message : String(err)}`,
         );
-        append.splice(0, append.length, 'Tive um problema agora. Pode repetir daqui a pouco?');
         decision.pending = pending;
         saved = false;
       }

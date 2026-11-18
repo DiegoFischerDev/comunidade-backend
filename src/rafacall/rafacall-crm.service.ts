@@ -38,6 +38,12 @@ function waDigits(value: string): string {
   return value.replace(/\D/g, '');
 }
 
+function normalizeIgUsername(raw: string | null | undefined): string | null {
+  const handle = (raw || '').trim().replace(/^@+/, '');
+  if (handle.length < 2) return null;
+  return handle.slice(0, 119);
+}
+
 function normalizeDesiredRent(value: number | null): number | null {
   if (value == null) return null;
   if (!Number.isInteger(value) || value < 0 || value > 100_000) {
@@ -140,10 +146,12 @@ export class RafacallCrmService {
     const whatsappDigits = uniqueItems
       .map((item) => this.extractWhatsappDigits(item))
       .filter((digits) => digits.length >= 8);
-    const [paymentsByWhatsapp, documentsByWhatsapp] = await Promise.all([
-      this.loadPaymentsByWhatsapp(whatsappDigits),
-      this.loadDocumentsByWhatsapp(whatsappDigits),
-    ]);
+    const [paymentsByWhatsapp, documentsByWhatsapp, igByBooking] =
+      await Promise.all([
+        this.loadPaymentsByWhatsapp(whatsappDigits),
+        this.loadDocumentsByWhatsapp(whatsappDigits),
+        this.loadInstagramLinksByBookingIds(uniqueItems.map((item) => item.id)),
+      ]);
 
     const columns = RAFA_CALL_CRM_STATUS_ORDER.map((status) => ({
       status,
@@ -152,10 +160,12 @@ export class RafacallCrmService {
         uniqueItems.filter((item) => item.crmStatus === status),
       ).map((item) => {
         const digits = this.extractWhatsappDigits(item);
+        const ig = igByBooking.get(item.id);
         return this.serializeCrmItem(
           item,
           digits ? paymentsByWhatsapp.get(digits) ?? [] : [],
           digits ? documentsByWhatsapp.get(digits) ?? [] : [],
+          ig,
         );
       }),
     }));
@@ -486,11 +496,13 @@ export class RafacallCrmService {
     }
 
     const whatsapp = this.extractWhatsappDigits(booking);
-    if (!whatsapp) {
-      throw new BadRequestException('Cliente sem WhatsApp válido no CRM.');
+    // Lead IG pode existir sem WhatsApp até /agendar — actualiza só este booking.
+    const siblings = whatsapp
+      ? await this.findActiveBookingsByWhatsapp(whatsapp)
+      : [booking];
+    if (siblings.length === 0) {
+      throw new BadRequestException('Cliente não encontrado no CRM.');
     }
-
-    const siblings = await this.findActiveBookingsByWhatsapp(whatsapp);
     const crmSource = this.pickCrmSource(siblings);
     const displayBooking = this.pickDisplayBooking(siblings);
 
@@ -653,7 +665,7 @@ export class RafacallCrmService {
       nextStatus !== crmSource.crmStatus &&
       isJoanaOffCrmStatus(nextStatus);
 
-    await this.syncCrmToWhatsappGroup(whatsapp, {
+    const crmPatch = {
       crmStatus: nextStatus,
       crmComments: nextComments,
       crmExpectedImmigrationAt: nextImmigrationDate,
@@ -664,23 +676,26 @@ export class RafacallCrmService {
       crmHasVisa: nextHasVisa,
       crmDesiredRent: nextDesiredRent,
       crmJoanaEnabled: nextJoanaEnabled,
-    });
-    if (joanaChanged || enteredJoanaOffColumn) {
-      await this.applyJoanaEnabled(whatsapp, nextJoanaEnabled);
+    };
+
+    if (whatsapp) {
+      await this.syncCrmToWhatsappGroup(whatsapp, crmPatch);
+      if (joanaChanged || enteredJoanaOffColumn) {
+        await this.applyJoanaEnabled(whatsapp, nextJoanaEnabled);
+      }
+    } else {
+      await this.prisma.rafaCallBooking.update({
+        where: { id: booking.id },
+        data: crmPatch,
+      });
+      if (joanaChanged || enteredJoanaOffColumn) {
+        await this.applyJoanaEnabledByBookingId(booking.id, nextJoanaEnabled);
+      }
     }
 
     const merged = this.mergeDisplayAndCrm(nextDisplayBooking, {
       ...crmSource,
-      crmStatus: nextStatus,
-      crmComments: nextComments,
-      crmExpectedImmigrationAt: nextImmigrationDate,
-      crmImmigrationImmediate: nextImmigrationImmediate,
-      crmPropertyTypology: nextPropertyTypology,
-      crmPreferredCity: nextPreferredCity,
-      crmHasPet: nextHasPet,
-      crmHasVisa: nextHasVisa,
-      crmDesiredRent: nextDesiredRent,
-      crmJoanaEnabled: nextJoanaEnabled,
+      ...crmPatch,
       updatedAt: new Date(),
     });
 
@@ -693,7 +708,10 @@ export class RafacallCrmService {
         id: params.bookingId,
         ...this.visibleCrmBookingWhere(),
       },
-      select: BOOKING_CRM_SELECT,
+      select: {
+        ...BOOKING_CRM_SELECT,
+        userId: true,
+      },
     });
 
     if (!booking) {
@@ -701,8 +719,31 @@ export class RafacallCrmService {
     }
 
     const whatsapp = this.extractWhatsappDigits(booking);
+    const excludedAt = new Date();
+
+    // Lead IG (ou sem número): remove/exclui pelo ID do booking, não pelo WhatsApp.
     if (!whatsapp) {
-      throw new BadRequestException('Cliente sem WhatsApp válido no CRM.');
+      await this.excludeCrmLeadsLinkedToBooking(booking.id, excludedAt);
+
+      if (
+        booking.status === RafaCallBookingStatus.SCHEDULED ||
+        isCrmLeadPlaceholderBooking(booking)
+      ) {
+        if (booking.status === RafaCallBookingStatus.SCHEDULED && booking.userId) {
+          await this.prisma.user.update({
+            where: { id: booking.userId },
+            data: { rafaCallSlotStartsAt: null, rafaCallSlotEndsAt: null },
+          });
+        }
+        await this.prisma.rafaCallBooking.delete({ where: { id: booking.id } });
+      } else {
+        await this.prisma.rafaCallBooking.update({
+          where: { id: booking.id },
+          data: { crmExcludedAt: excludedAt },
+        });
+      }
+
+      return { ok: true as const };
     }
 
     const siblings = await this.prisma.rafaCallBooking.findMany({
@@ -737,6 +778,9 @@ export class RafacallCrmService {
     ];
 
     const deleteIds = [...new Set([...scheduledIds, ...placeholderIds])];
+    for (const id of deleteIds) {
+      await this.excludeCrmLeadsLinkedToBooking(id, excludedAt);
+    }
     if (deleteIds.length > 0) {
       await this.prisma.rafaCallBooking.deleteMany({
         where: { id: { in: deleteIds } },
@@ -750,7 +794,17 @@ export class RafacallCrmService {
       });
     }
 
-    const excludedAt = new Date();
+    const remaining = await this.prisma.rafaCallBooking.findMany({
+      where: {
+        status: RafaCallBookingStatus.COMPLETED,
+        crmExcludedAt: null,
+        OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
+      },
+      select: { id: true },
+    });
+    for (const row of remaining) {
+      await this.excludeCrmLeadsLinkedToBooking(row.id, excludedAt);
+    }
     await this.prisma.rafaCallBooking.updateMany({
       where: {
         status: RafaCallBookingStatus.COMPLETED,
@@ -1700,6 +1754,45 @@ export class RafacallCrmService {
     });
   }
 
+  /** Pausa/liga Joana em lead IG (sem WhatsApp) via booking → CrmLead → conversa. */
+  private async applyJoanaEnabledByBookingId(
+    bookingId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    await this.prisma.rafaCallBooking.update({
+      where: { id: bookingId },
+      data: { crmJoanaEnabled: enabled },
+    });
+
+    const leads = await this.prisma.crmLead.findMany({
+      where: { rafaCallBookingId: bookingId, crmExcludedAt: null },
+      select: { id: true, instagramUserId: true },
+    });
+    if (leads.length === 0) return;
+
+    await this.prisma.crmLead.updateMany({
+      where: { id: { in: leads.map((l) => l.id) } },
+      data: { botEnabled: enabled },
+    });
+
+    const igIds = leads
+      .map((l) => l.instagramUserId)
+      .filter((id): id is string => Boolean(id));
+    if (igIds.length === 0) return;
+
+    await this.prisma.joanaConversation.updateMany({
+      where: { instagramUserId: { in: igIds } },
+      data: enabled
+        ? { paused: false }
+        : {
+            paused: true,
+            buffer: [] as Prisma.InputJsonValue,
+            pendingOutbound: null,
+            processing: false,
+          },
+    });
+  }
+
   private buildUniqueCrmItems(items: BookingCrmRow[]): BookingCrmRow[] {
     const groups = new Map<string, BookingCrmRow[]>();
 
@@ -1907,15 +2000,55 @@ export class RafacallCrmService {
 
   private async serializeCrmItemWithPayments(item: BookingCrmRow) {
     const whatsappDigits = this.extractWhatsappDigits(item);
-    const [paymentsMap, documentsMap] = await Promise.all([
+    const [paymentsMap, documentsMap, igByBooking] = await Promise.all([
       this.loadPaymentsByWhatsapp([whatsappDigits]),
       this.loadDocumentsByWhatsapp([whatsappDigits]),
+      this.loadInstagramLinksByBookingIds([item.id]),
     ]);
     return this.serializeCrmItem(
       item,
       paymentsMap.get(whatsappDigits) ?? [],
       documentsMap.get(whatsappDigits) ?? [],
+      igByBooking.get(item.id),
     );
+  }
+
+  private async loadInstagramLinksByBookingIds(
+    bookingIds: string[],
+  ): Promise<
+    Map<
+      string,
+      { instagramUsername: string | null; instagramProfileUrl: string | null }
+    >
+  > {
+    const ids = [...new Set(bookingIds.filter(Boolean))];
+    const map = new Map<
+      string,
+      { instagramUsername: string | null; instagramProfileUrl: string | null }
+    >();
+    if (ids.length === 0) return map;
+
+    const leads = await this.prisma.crmLead.findMany({
+      where: { rafaCallBookingId: { in: ids } },
+      select: {
+        rafaCallBookingId: true,
+        instagramHandle: true,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    for (const lead of leads) {
+      const bookingId = lead.rafaCallBookingId;
+      if (!bookingId || map.has(bookingId)) continue;
+      const username = normalizeIgUsername(lead.instagramHandle);
+      map.set(bookingId, {
+        instagramUsername: username ? `@${username}` : null,
+        instagramProfileUrl: username
+          ? `https://instagram.com/${username}`
+          : null,
+      });
+    }
+    return map;
   }
 
   private async loadPaymentsByWhatsapp(
@@ -1981,6 +2114,39 @@ export class RafacallCrmService {
     };
   }
 
+  private async excludeCrmLeadsLinkedToBooking(
+    bookingId: string,
+    excludedAt: Date,
+  ): Promise<void> {
+    const leads = await this.prisma.crmLead.findMany({
+      where: { rafaCallBookingId: bookingId, crmExcludedAt: null },
+      select: { id: true, instagramUserId: true, whatsappDigits: true },
+    });
+    if (leads.length === 0) return;
+
+    await this.prisma.crmLead.updateMany({
+      where: { id: { in: leads.map((l) => l.id) } },
+      data: { crmExcludedAt: excludedAt, botEnabled: false, rafaCallBookingId: null },
+    });
+
+    const igIds = leads
+      .map((l) => l.instagramUserId)
+      .filter((id): id is string => Boolean(id));
+    if (igIds.length > 0) {
+      await this.prisma.joanaConversation.updateMany({
+        where: { instagramUserId: { in: igIds } },
+        data: {
+          chatbotId: null,
+          menuSent: false,
+          welcomeSent: false,
+          paused: false,
+          buffer: [] as Prisma.InputJsonValue,
+          pendingOutbound: null,
+        },
+      });
+    }
+  }
+
   private async requireCrmWhatsapp(bookingId: string): Promise<string> {
     const booking = await this.prisma.rafaCallBooking.findFirst({
       where: {
@@ -1994,7 +2160,9 @@ export class RafacallCrmService {
     }
     const whatsapp = this.extractWhatsappDigits(booking);
     if (!whatsapp) {
-      throw new BadRequestException('Cliente sem WhatsApp válido no CRM.');
+      throw new BadRequestException(
+        'Este lead ainda não tem WhatsApp — pagamentos e documentos ficam associados ao número.',
+      );
     }
     return whatsapp;
   }
@@ -2082,6 +2250,10 @@ export class RafacallCrmService {
     },
     payments: ReturnType<RafacallCrmService['serializePayment']>[] = [],
     documents: SerializedCrmDocument[] = [],
+    ig?: {
+      instagramUsername: string | null;
+      instagramProfileUrl: string | null;
+    } | null,
   ) {
     const whatsappDigits = this.extractWhatsappDigits(item);
     const hasVideoCall = this.hasDisplayableVideoCall(item);
@@ -2115,6 +2287,8 @@ export class RafacallCrmService {
       userId: item.user?.id ?? null,
       userName: item.user?.name ?? item.guestName ?? null,
       whatsappDigits,
+      instagramUsername: ig?.instagramUsername ?? null,
+      instagramProfileUrl: ig?.instagramProfileUrl ?? null,
       updatedAt: item.updatedAt.toISOString(),
     };
   }

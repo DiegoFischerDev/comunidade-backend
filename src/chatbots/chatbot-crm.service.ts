@@ -408,6 +408,10 @@ export class ChatbotCrmService {
       (whatsapp
         ? `Lead ${whatsapp.slice(-3)}`
         : `Lead IG ${(ig || '').slice(-4)}`);
+    const handleFromDisplay =
+      fallbackName?.startsWith('@') && fallbackName.length >= 3
+        ? fallbackName.slice(0, 120)
+        : null;
 
     try {
       const created = await this.prisma.crmLead.create({
@@ -417,6 +421,7 @@ export class ChatbotCrmService {
           whatsappDigits: whatsapp,
           instagramUserId: ig,
           guestName: fallbackName,
+          instagramHandle: handleFromDisplay,
           botEnabled,
           subjectSummary: params.subjectSummary ?? null,
         },
