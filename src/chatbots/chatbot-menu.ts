@@ -7,32 +7,48 @@ export type MenuBot = {
   name: string;
 };
 
-export const DEFAULT_CHATBOT_MENU_TEXT = `Olá! Sou a equipa virtual da Rafa. Diz-me o que precisas, ou escolhe o número do assunto:
+export const DEFAULT_CHATBOT_MENU_TEXT = `Oiê! 🥰 Seja muito bem-vindo(a)!
 
-1 — Relocation / aluguel
-2 — Crédito imobiliário / compra de casa
-3 — Publicidade com a Rafa
+Sou a assistente virtual da Rafa e estou aqui pra te ajudar! 💛
 
-Podes responder com o número ou em texto livre (ex.: «publicidade», «quero alugar»).`;
+Me conta, sobre qual assunto você gostaria de conversar?
+
+🏡 1. Aluguel de imóveis em Portugal (Relocation)
+
+🔑 2. Financiamento ou compra de casa em Portugal
+
+💌 3. Publicidade e parcerias com a Rafa
+
+💬 4. Falar diretamente com a Rafa sobre outros assuntos`;
+
+const MENU_OPTION_EMOJI: Record<number, string> = {
+  1: '🏡 ',
+  2: '🔑 ',
+  3: '💌 ',
+  4: '💬 ',
+};
 
 /** Fallback se ainda não houver texto guardado na BD. */
 export function buildChatbotMenuText(bots: MenuBot[]): string {
   const lines = [
-    'Olá! Sou a equipa virtual da Rafa. Diz-me o que precisas, ou escolhe o número do assunto:',
+    'Oiê! 🥰 Seja muito bem-vindo(a)!',
+    '',
+    'Sou a assistente virtual da Rafa e estou aqui pra te ajudar! 💛',
+    '',
+    'Me conta, sobre qual assunto você gostaria de conversar?',
     '',
   ];
   for (const bot of [...bots].sort((a, b) => a.menuOrder - b.menuOrder)) {
-    lines.push(`${bot.menuOrder} — ${bot.menuLabel}`);
+    const emoji = MENU_OPTION_EMOJI[bot.menuOrder] ?? '';
+    lines.push(`${emoji}${bot.menuOrder}. ${bot.menuLabel}`);
+    lines.push('');
   }
-  lines.push(
-    '',
-    'Podes responder com o número ou em texto livre (ex.: «publicidade», «quero alugar»).',
-  );
+  if (lines[lines.length - 1] === '') lines.pop();
   return lines.join('\n');
 }
 
 /**
- * Atalho determinístico: "1", "2", "3" (e variantes "1)", "2 - …").
+ * Atalho determinístico: número do menu (1, 2, 3, 4, …).
  * Texto livre fica para a OpenAI.
  */
 export function parseChatbotMenuDigitChoice(
@@ -43,7 +59,7 @@ export function parseChatbotMenuDigitChoice(
   if (!trimmed) return null;
 
   const byOrder = new Map(bots.map((bot) => [bot.menuOrder, bot.slug]));
-  const digit = trimmed.match(/^([123])(?:\b|[.)\-\s]|$)/);
+  const digit = trimmed.match(/^(\d{1,2})(?:\b|[.)\-\s]|$)/);
   if (!digit) return null;
   const order = Number(digit[1]);
   return byOrder.get(order) ?? null;
@@ -92,6 +108,14 @@ export function parseChatbotMenuChoice(
   ) {
     return byOrder.get(3) ?? null;
   }
+  if (
+    /\b(outros|outra coisa|falar (com|diretamente)|falar com a rafa|assunto diferente)/.test(
+      normalized,
+    ) &&
+    byOrder.has(4)
+  ) {
+    return byOrder.get(4) ?? null;
+  }
 
   return null;
 }
@@ -105,13 +129,15 @@ export function buildMenuClassifySystemPrompt(bots: MenuBot[]): string {
     )
     .join('\n');
 
+  const slugList = bots.map((bot) => `"${bot.slug}"`).join('|');
+
   return [
     'És um classificador de intenções para o WhatsApp da Rafa.',
     'Dado o texto do contacto, escolhe UMA opção (slug) da lista.',
-    'Aceita número (1/2/3), nome do bot, ou qualquer frase em português que indique o assunto.',
-    'Exemplos: "publicidade" → gabi; "quero alugar em Viseu" → joana; "crédito para comprar casa" → bruna.',
+    'Aceita número (1/2/3/4), nome do bot, ou qualquer frase em português que indique o assunto.',
+    'Exemplos: "publicidade" → gabi; "quero alugar em Viseu" → joana; "crédito para comprar casa" → bruna; "quero falar com a Rafa" / "outro assunto" / "4" → outros.',
     'Se não der para perceber o assunto, devolve null.',
-    'Responde APENAS JSON válido: {"slug":"joana"|"bruna"|"gabi"|null}',
+    `Responde APENAS JSON válido: {"slug":${slugList}|null}`,
     '',
     'Opções:',
     options,
@@ -144,5 +170,25 @@ export function parseMenuClassifyResponse(
       }
     }
     return null;
+  }
+}
+
+/** Resume o assunto num frase curta para o CRM Outros. */
+export function parseSubjectSummaryResponse(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const start = trimmed.indexOf('{');
+    const end = trimmed.lastIndexOf('}');
+    const jsonText =
+      start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
+    const parsed = JSON.parse(jsonText) as { summary?: unknown };
+    if (typeof parsed.summary !== 'string') return null;
+    const summary = parsed.summary.trim().replace(/\s+/g, ' ');
+    if (summary.length < 2) return null;
+    return summary.slice(0, 200);
+  } catch {
+    const fallback = trimmed.replace(/\s+/g, ' ').slice(0, 200);
+    return fallback.length >= 2 ? fallback : null;
   }
 }

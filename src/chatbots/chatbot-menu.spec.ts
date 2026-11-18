@@ -28,19 +28,42 @@ const bots = [
 
 describe('buildChatbotMenuText', () => {
   it('lista os bots pela ordem do menu', () => {
-    const text = buildChatbotMenuText(bots);
-    expect(text).toContain('1 — Relocation / aluguel');
-    expect(text).toContain('2 — Crédito imobiliário / compra de casa');
-    expect(text).toContain('3 — Publicidade com a Rafa');
-    expect(text).toContain('texto livre');
+    const text = buildChatbotMenuText([
+      ...bots,
+      {
+        slug: 'outros' as const,
+        menuOrder: 4,
+        menuLabel: 'Falar diretamente com a Rafa sobre outros assuntos',
+        name: 'Outros',
+      },
+    ]);
+    expect(text).toContain('🏡 1. Relocation / aluguel');
+    expect(text).toContain('🔑 2. Crédito imobiliário / compra de casa');
+    expect(text).toContain('💌 3. Publicidade com a Rafa');
+    expect(text).toContain(
+      '💬 4. Falar diretamente com a Rafa sobre outros assuntos',
+    );
   });
 });
 
 describe('parseChatbotMenuDigitChoice', () => {
-  it('aceita 1, 2 e 3', () => {
-    expect(parseChatbotMenuDigitChoice('1', bots)).toBe('joana');
-    expect(parseChatbotMenuDigitChoice('2)', bots)).toBe('bruna');
-    expect(parseChatbotMenuDigitChoice('3 - publicidade', bots)).toBe('gabi');
+  const botsWithOutros = [
+    ...bots,
+    {
+      slug: 'outros' as const,
+      menuOrder: 4,
+      menuLabel: 'Falar diretamente com a Rafa sobre outros assuntos',
+      name: 'Outros',
+    },
+  ];
+
+  it('aceita 1, 2, 3 e 4', () => {
+    expect(parseChatbotMenuDigitChoice('1', botsWithOutros)).toBe('joana');
+    expect(parseChatbotMenuDigitChoice('2)', botsWithOutros)).toBe('bruna');
+    expect(parseChatbotMenuDigitChoice('3 - publicidade', botsWithOutros)).toBe(
+      'gabi',
+    );
+    expect(parseChatbotMenuDigitChoice('4', botsWithOutros)).toBe('outros');
   });
 
   it('não classifica texto livre', () => {

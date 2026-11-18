@@ -263,7 +263,10 @@ export class ChatbotCrmService {
     chatbotId: string;
     whatsappDigits: string;
     displayName?: string | null;
+    botEnabled?: boolean;
+    subjectSummary?: string | null;
   }) {
+    const botEnabled = params.botEnabled !== false;
     const existing = await this.prisma.crmLead.findFirst({
       where: {
         chatbotId: params.chatbotId,
@@ -271,7 +274,17 @@ export class ChatbotCrmService {
         crmExcludedAt: null,
       },
     });
-    if (existing) return existing;
+    if (existing) {
+      return this.prisma.crmLead.update({
+        where: { id: existing.id },
+        data: {
+          botEnabled,
+          ...(params.subjectSummary
+            ? { subjectSummary: params.subjectSummary }
+            : {}),
+        },
+      });
+    }
 
     const firstColumn = await this.prisma.crmColumn.findFirst({
       where: { chatbotId: params.chatbotId },
@@ -293,8 +306,9 @@ export class ChatbotCrmService {
         data: {
           crmExcludedAt: null,
           columnId: firstColumn.id,
-          botEnabled: true,
+          botEnabled,
           guestName: excluded.guestName || cleanName(params.displayName),
+          subjectSummary: params.subjectSummary ?? excluded.subjectSummary,
         },
       });
     }
@@ -306,7 +320,8 @@ export class ChatbotCrmService {
           columnId: firstColumn.id,
           whatsappDigits: params.whatsappDigits,
           guestName: cleanName(params.displayName) || `Lead ${params.whatsappDigits.slice(-3)}`,
-          botEnabled: true,
+          botEnabled,
+          subjectSummary: params.subjectSummary ?? null,
         },
       });
     } catch (err: unknown) {
@@ -324,6 +339,30 @@ export class ChatbotCrmService {
       }
       throw err;
     }
+  }
+
+  async findActiveOutrosLead(whatsappDigits: string) {
+    const bot = await this.prisma.chatbot.findUnique({
+      where: { slug: 'outros' },
+      select: { id: true },
+    });
+    if (!bot) return null;
+    return this.prisma.crmLead.findFirst({
+      where: {
+        chatbotId: bot.id,
+        whatsappDigits: waDigits(whatsappDigits),
+        crmExcludedAt: null,
+      },
+    });
+  }
+
+  async updateSubjectSummary(leadId: string, subjectSummary: string) {
+    const summary = subjectSummary.trim().slice(0, 200);
+    if (summary.length < 2) return null;
+    return this.prisma.crmLead.update({
+      where: { id: leadId },
+      data: { subjectSummary: summary },
+    });
   }
 
   async patchGabiQualification(leadId: string, profile: GabiProfile) {
@@ -349,6 +388,7 @@ export class ChatbotCrmService {
       crmComments?: string | null;
       companyName?: string | null;
       instagramHandle?: string | null;
+      subjectSummary?: string | null;
     },
   ) {
     const bot = await this.chatbots.requireBySlug(slug);
@@ -391,6 +431,10 @@ export class ChatbotCrmService {
         }
         data.instagramHandle = handle;
       }
+    }
+    if (input.subjectSummary !== undefined) {
+      const summary = input.subjectSummary?.trim() || null;
+      data.subjectSummary = summary ? summary.slice(0, 200) : null;
     }
     if (input.botEnabled !== undefined) {
       data.botEnabled = input.botEnabled;
@@ -451,6 +495,31 @@ export class ChatbotCrmService {
     });
   }
 
+  /**
+   * Está em algum CRM activo? (CrmLead Bruna/Gabi/Joana lock, ou kanban Joana RafaCall).
+   * Sem ficha → o router manda para o menu inicial, mesmo com histórico de chat.
+   */
+  async isWhatsappInAnyCrm(whatsappRaw: string): Promise<boolean> {
+    const whatsapp = waDigits(whatsappRaw);
+    if (whatsapp.length < 8) return false;
+
+    const lead = await this.prisma.crmLead.findFirst({
+      where: { whatsappDigits: whatsapp, crmExcludedAt: null },
+      select: { id: true },
+    });
+    if (lead) return true;
+
+    const booking = await this.prisma.rafaCallBooking.findFirst({
+      where: {
+        status: { in: ['SCHEDULED', 'COMPLETED'] },
+        crmExcludedAt: null,
+        OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
+      },
+      select: { id: true },
+    });
+    return Boolean(booking);
+  }
+
   async setBotEnabledForWhatsapp(whatsappRaw: string, enabled: boolean) {
     const whatsapp = waDigits(whatsappRaw);
     await this.prisma.crmLead.updateMany({
@@ -488,6 +557,7 @@ export class ChatbotCrmService {
       guestName: string | null;
       companyName?: string | null;
       instagramHandle?: string | null;
+      subjectSummary?: string | null;
       botEnabled: boolean;
       crmComments: string | null;
       crmProfileImageUrl: string | null;
@@ -504,6 +574,7 @@ export class ChatbotCrmService {
       guestName: lead.guestName,
       companyName: lead.companyName ?? null,
       instagramHandle: lead.instagramHandle ?? null,
+      subjectSummary: lead.subjectSummary ?? null,
       botEnabled: lead.botEnabled,
       crmComments: lead.crmComments,
       crmProfileImageUrl: lead.crmProfileImageUrl,

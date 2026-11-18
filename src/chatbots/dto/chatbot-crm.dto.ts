@@ -46,6 +46,10 @@ export class UpdateCrmLeadDto {
   @IsOptional()
   @IsString()
   instagramHandle?: string | null;
+
+  @IsOptional()
+  @IsString()
+  subjectSummary?: string | null;
 }
 
 export class CreateCrmColumnDto {

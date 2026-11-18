@@ -19,6 +19,7 @@ import {
   parseChatbotMenuChoice,
   parseChatbotMenuDigitChoice,
   parseMenuClassifyResponse,
+  parseSubjectSummaryResponse,
   type MenuBot,
 } from './chatbot-menu';
 
@@ -95,7 +96,7 @@ export class ChatbotService {
   }
 
   /**
-   * Escolha do menu: dígito 1/2/3 sem LLM; texto livre via OpenAI
+   * Escolha do menu: dígito sem LLM; texto livre via OpenAI
    * (com fallback de palavras-chave se a API falhar).
    */
   async resolveMenuChoice(
@@ -113,6 +114,66 @@ export class ChatbotService {
     }
 
     return parseChatbotMenuChoice(text, bots);
+  }
+
+  /** Resume o assunto do contacto numa frase curta (CRM Outros). */
+  async summarizeSubject(text: string): Promise<string | null> {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+
+    // Só o número do menu — ainda não há assunto.
+    if (/^\d{1,2}([.)\-\s].*)?$/i.test(trimmed) && trimmed.length < 8) {
+      return null;
+    }
+
+    const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+    if (!apiKey) {
+      return trimmed.slice(0, 200);
+    }
+    const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content: [
+                'Resume o assunto do contacto numa única frase curta em português (máx. 12 palavras).',
+                'Ignora escolhas de menu ("4", "outros") se não houver mais contexto.',
+                'Se não houver assunto útil, devolve {"summary":null}.',
+                'Responde APENAS JSON: {"summary":"..."|null}',
+              ].join('\n'),
+            },
+            { role: 'user', content: trimmed.slice(0, 2000) },
+          ],
+        }),
+        signal: controller.signal,
+      });
+      const raw = await res.text();
+      if (!res.ok) {
+        throw new Error(`OpenAI ${res.status}: ${raw.slice(0, 300)}`);
+      }
+      const parsed = JSON.parse(raw) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      return parseSubjectSummaryResponse(
+        parsed.choices?.[0]?.message?.content || '',
+      );
+    } catch {
+      return trimmed.slice(0, 200);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private async classifyMenuChoiceWithOpenAi(
