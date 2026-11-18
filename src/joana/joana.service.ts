@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { ChatbotChannel, Prisma, RafaCallCrmStatus } from '@prisma/client';
+import {
+  ChatbotChannel,
+  ChatbotEngineKind,
+  Prisma,
+  RafaCallCrmStatus,
+} from '@prisma/client';
 import { ConversationOutboundService } from '../channels/conversation-outbound.service';
 import {
   sharedOutboundGuard,
@@ -337,9 +342,11 @@ export class JoanaService {
     });
 
     const dueBefore = new Date(Date.now() - joanaDebounceMs());
+    // Só conversas já atribuídas à Joana. Menu / Bruna / Gabi / etc. são do router.
     const due = await this.prisma.joanaConversation.findMany({
       where: {
         processing: false,
+        chatbot: { engineKind: ChatbotEngineKind.JOANA_QUALIFICATION },
         OR: [
           { pendingOutbound: { not: null } },
           { lastInboundAt: { lte: dueBefore } },
@@ -539,14 +546,22 @@ export class JoanaService {
         return;
       }
 
-      if (row.whatsappDigits) {
+      // No IG (mesmo com WA na ficha) a pausa segue o CrmLead IG — não o check WA.
+      if (isIgChannel) {
+        if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId!))) {
+          await this.dropBecausePaused(id);
+          return;
+        }
+      } else if (row.whatsappDigits) {
         if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
           await this.dropBecausePaused(id);
           return;
         }
-      } else if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId!))) {
-        await this.dropBecausePaused(id);
-        return;
+      } else if (row.instagramUserId) {
+        if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId))) {
+          await this.dropBecausePaused(id);
+          return;
+        }
       }
 
       const proposalWithInferences = withInferredName({
@@ -963,28 +978,39 @@ export class JoanaService {
     instagramUserId?: string | null;
     instance: string | null;
   }): Promise<boolean> {
-    if (input.whatsapp) {
+    const conv = await this.prisma.joanaConversation.findUnique({
+      where: { id: input.id },
+    });
+    const isIgChannel =
+      conv?.activeChannel === ChatbotChannel.INSTAGRAM &&
+      Boolean(conv.instagramUserId?.trim() || input.instagramUserId?.trim());
+    const igsid =
+      (conv?.instagramUserId || input.instagramUserId || '').trim() || null;
+
+    // IG com WhatsApp na ficha: não usar isJoanaActive(WA) — isso pausava a DM.
+    if (isIgChannel && igsid) {
+      if (!(await this.isJoanaActiveOnInstagram(igsid))) {
+        await this.dropBecausePaused(input.id);
+        return false;
+      }
+    } else if (input.whatsapp) {
       if (!(await this.crm.isJoanaActive(input.whatsapp))) {
         await this.dropBecausePaused(input.id);
         return false;
       }
-    } else if (input.instagramUserId) {
-      if (!(await this.isJoanaActiveOnInstagram(input.instagramUserId))) {
+    } else if (igsid) {
+      if (!(await this.isJoanaActiveOnInstagram(igsid))) {
         await this.dropBecausePaused(input.id);
         return false;
       }
     }
 
     const contactLabel =
-      input.whatsapp ||
-      (input.instagramUserId ? `ig:${input.instagramUserId}` : input.id);
+      input.whatsapp || (igsid ? `ig:${igsid}` : input.id);
 
     let outboundSaved: string | null = null;
     let sent = false;
     try {
-      const conv = await this.prisma.joanaConversation.findUnique({
-        where: { id: input.id },
-      });
       if (conv) {
         await this.outbound.sendText(conv, input.outbound, {
           requireDelivery: true,

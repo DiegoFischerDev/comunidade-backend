@@ -217,7 +217,12 @@ export class ChatbotRouterService {
         });
         existing = { ...existing, paused: false };
       } else {
-        return { handled: true, status: 'paused' };
+        // Admin Off → silêncio. Circuit expirado / pausa indevida → retomar.
+        const resumed = await this.tryResumePausedConversation(existing, peer);
+        if (!resumed) {
+          return { handled: true, status: 'paused' };
+        }
+        existing = { ...existing, paused: false };
       }
     }
 
@@ -433,7 +438,13 @@ export class ChatbotRouterService {
         continue;
       }
 
-      if (row.whatsappDigits) {
+      // IG com WhatsApp na ficha: detach pelo IGSID (não pelo WA).
+      if (
+        row.activeChannel === ChatbotChannel.INSTAGRAM &&
+        row.instagramUserId
+      ) {
+        await this.detachBotIfOutsideCrmByInstagram(row.instagramUserId);
+      } else if (row.whatsappDigits) {
         await this.detachBotIfOutsideCrm(row.whatsappDigits);
       } else if (row.instagramUserId) {
         await this.detachBotIfOutsideCrmByInstagram(row.instagramUserId);
@@ -766,6 +777,44 @@ export class ChatbotRouterService {
         },
       });
     }
+    return true;
+  }
+
+  /**
+   * Conversa pausada com bot On e circuit fechado → retoma (pausa indevida
+   * por check WA no IG, ou circuit já expirou após restart).
+   */
+  private async tryResumePausedConversation(
+    existing: {
+      id: string;
+      chatbotId: string | null;
+      whatsappDigits: string | null;
+      instagramUserId: string | null;
+      activeChannel: ChatbotChannel;
+    },
+    peer: ReturnType<typeof whatsappPeer> | ReturnType<typeof instagramPeer> | null,
+  ): Promise<boolean> {
+    if (!existing.chatbotId) return true;
+
+    if (peer && sharedOutboundGuard.isCircuitOpen(peer)) {
+      return false;
+    }
+
+    const lead = await this.crm.findActiveLead(existing.chatbotId, {
+      whatsappDigits: existing.whatsappDigits,
+      instagramUserId: existing.instagramUserId,
+    });
+    if (lead && !lead.botEnabled) {
+      return false;
+    }
+
+    await this.prisma.joanaConversation.update({
+      where: { id: existing.id },
+      data: { paused: false },
+    });
+    this.logger.log(
+      `Chatbot: conversa ${existing.id} retomada após pausa (bot On / circuit fechado)`,
+    );
     return true;
   }
 
