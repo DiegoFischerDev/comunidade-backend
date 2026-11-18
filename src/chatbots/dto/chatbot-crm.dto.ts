@@ -38,6 +38,14 @@ export class UpdateCrmLeadDto {
   @IsOptional()
   @IsString()
   crmComments?: string | null;
+
+  @IsOptional()
+  @IsString()
+  companyName?: string | null;
+
+  @IsOptional()
+  @IsString()
+  instagramHandle?: string | null;
 }
 
 export class CreateCrmColumnDto {

@@ -1384,6 +1384,10 @@ model CrmLead {
   column                   CrmColumn                    @relation(fields: [columnId], references: [id], onDelete: Restrict)
   whatsappDigits           String                       @map("whatsapp_digits")
   guestName                String?                      @map("guest_name")
+  /// Nome da empresa (CRM Gabi / publicidade).
+  companyName              String?                      @map("company_name") @db.VarChar(160)
+  /// @ do Instagram. null = ainda não perguntado; "" = sem Instagram / não aplicável.
+  instagramHandle          String?                      @map("instagram_handle") @db.VarChar(120)
   botEnabled               Boolean                      @default(true) @map("bot_enabled")
   crmComments              String?                      @map("crm_comments") @db.Text
   crmExpectedImmigrationAt DateTime?                    @map("crm_expected_immigration_at")

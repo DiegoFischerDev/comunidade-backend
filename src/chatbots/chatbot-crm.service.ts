@@ -7,6 +7,11 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatbotService } from './chatbot.service';
 import { isChatbotSlug, type ChatbotSlug } from './chatbot.constants';
+import {
+  normalizeCompanyName,
+  normalizeInstagramHandle,
+  type GabiProfile,
+} from './gabi-turn';
 
 function waDigits(value: string): string {
   return value.replace(/\D/g, '');
@@ -321,6 +326,19 @@ export class ChatbotCrmService {
     }
   }
 
+  async patchGabiQualification(leadId: string, profile: GabiProfile) {
+    await this.prisma.crmLead.update({
+      where: { id: leadId },
+      data: {
+        companyName: profile.companyName,
+        instagramHandle: profile.instagramHandle,
+        ...(profile.companyName?.trim()
+          ? { guestName: profile.companyName.trim() }
+          : {}),
+      },
+    });
+  }
+
   async updateLead(
     slug: string,
     leadId: string,
@@ -329,6 +347,8 @@ export class ChatbotCrmService {
       columnId?: string;
       botEnabled?: boolean;
       crmComments?: string | null;
+      companyName?: string | null;
+      instagramHandle?: string | null;
     },
   ) {
     const bot = await this.chatbots.requireBySlug(slug);
@@ -348,6 +368,29 @@ export class ChatbotCrmService {
     }
     if (input.crmComments !== undefined) {
       data.crmComments = input.crmComments?.trim() || null;
+    }
+    if (input.companyName !== undefined) {
+      if (input.companyName === null || input.companyName.trim() === '') {
+        data.companyName = null;
+      } else {
+        const name = normalizeCompanyName(input.companyName);
+        if (!name) {
+          throw new BadRequestException('Nome da empresa inválido.');
+        }
+        data.companyName = name;
+        data.guestName = name;
+      }
+    }
+    if (input.instagramHandle !== undefined) {
+      if (input.instagramHandle === null) {
+        data.instagramHandle = null;
+      } else {
+        const handle = normalizeInstagramHandle(input.instagramHandle);
+        if (handle === undefined) {
+          throw new BadRequestException('Instagram inválido.');
+        }
+        data.instagramHandle = handle;
+      }
     }
     if (input.botEnabled !== undefined) {
       data.botEnabled = input.botEnabled;
@@ -443,6 +486,8 @@ export class ChatbotCrmService {
       columnId: string;
       whatsappDigits: string;
       guestName: string | null;
+      companyName?: string | null;
+      instagramHandle?: string | null;
       botEnabled: boolean;
       crmComments: string | null;
       crmProfileImageUrl: string | null;
@@ -457,6 +502,8 @@ export class ChatbotCrmService {
       columnSlug,
       whatsapp: lead.whatsappDigits,
       guestName: lead.guestName,
+      companyName: lead.companyName ?? null,
+      instagramHandle: lead.instagramHandle ?? null,
       botEnabled: lead.botEnabled,
       crmComments: lead.crmComments,
       crmProfileImageUrl: lead.crmProfileImageUrl,

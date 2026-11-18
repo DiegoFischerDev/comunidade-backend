@@ -11,6 +11,14 @@ import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { ChatbotService } from './chatbot.service';
 import { isChatbotSlug } from './chatbot.constants';
 import { ChatbotCrmService } from './chatbot-crm.service';
+import {
+  applyGabiProposal,
+  composeGabiReply,
+  emptyGabiProfile,
+  gabiProfileSummary,
+  parseGabiModelJson,
+  type GabiProfile,
+} from './gabi-turn';
 
 type HistoryItem = { role: 'user' | 'assistant'; text: string };
 type BufferItem = { id: string; text: string; at: string };
@@ -111,12 +119,32 @@ export class GenericContextEngine {
 
     let reply = '';
     try {
-      reply = await this.replyWithContext({
-        botName: bot.name,
-        context: bot.contextText,
-        history: historyForModel,
-        userText: combined,
-      });
+      if (slug === 'gabi') {
+        const profile = lead
+          ? {
+              companyName: lead.companyName,
+              instagramHandle: lead.instagramHandle,
+            }
+          : emptyGabiProfile();
+        const interpreted = await this.interpretGabi({
+          context: bot.contextText,
+          history: historyForModel,
+          userText: combined,
+          profile,
+        });
+        const nextProfile = applyGabiProposal(profile, interpreted.proposal);
+        if (lead && (interpreted.proposal.companyName !== undefined || interpreted.proposal.instagramHandle !== undefined)) {
+          await this.crm.patchGabiQualification(lead.id, nextProfile);
+        }
+        reply = composeGabiReply(interpreted.reply, nextProfile);
+      } else {
+        reply = await this.replyWithContext({
+          botName: bot.name,
+          context: bot.contextText,
+          history: historyForModel,
+          userText: combined,
+        });
+      }
     } catch (err: unknown) {
       this.logger.warn(
         `${bot.name} OpenAI ${row.whatsappDigits}: ${
@@ -155,6 +183,68 @@ export class GenericContextEngine {
       welcomeSent,
       outbound: sent ? null : reply,
     });
+  }
+
+  private async interpretGabi(input: {
+    context: string;
+    history: HistoryItem[];
+    userText: string;
+    profile: GabiProfile;
+  }): Promise<{ reply: string; proposal: ReturnType<typeof parseGabiModelJson>['proposal'] }> {
+    const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY não está configurada.');
+    }
+    const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+    const system = [
+      input.context.trim(),
+      '',
+      'És a Gabi no WhatsApp. A Rafa é mulher — fala no feminino.',
+      'Responde em JSON: {"reply":"...","companyName":"...","instagramHandle":"..."}',
+      'companyName e instagramHandle: só inclui a chave se a pessoa falou desse dado agora.',
+      'instagramHandle: o @ (com ou sem @); se disser que não tem / não aplicável, usa "".',
+      'Na reply: frases curtas. Reage ao que disseram. Não digas que gravaste dados.',
+      'Se a ficha ainda não tem nome da empresa, pergunta isso. Depois pergunta se tem Instagram e o @.',
+      'Não inventes preços nem compromissos. Não digas que és uma IA.',
+      `Ficha actual: ${gabiProfileSummary(input.profile)}`,
+    ].join('\n');
+
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: system },
+    ];
+    for (const item of input.history.slice(-HISTORY_LIMIT)) {
+      messages.push({ role: item.role, content: item.text });
+    }
+    messages.push({ role: 'user', content: input.userText });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45_000);
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.3,
+          response_format: { type: 'json_object' },
+          messages,
+        }),
+        signal: controller.signal,
+      });
+      const raw = await res.text();
+      if (!res.ok) {
+        throw new Error(`OpenAI ${res.status}: ${raw.slice(0, 400)}`);
+      }
+      const parsed = JSON.parse(raw) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      return parseGabiModelJson(parsed.choices?.[0]?.message?.content || '');
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private async replyWithContext(input: {
