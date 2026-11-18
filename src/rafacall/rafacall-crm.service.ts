@@ -813,6 +813,21 @@ export class RafacallCrmService {
     file: Express.Multer.File | undefined;
   }): Promise<SerializedCrmDocument> {
     const whatsapp = await this.requireCrmWhatsapp(params.bookingId);
+    return this.uploadCrmDocumentByWhatsapp({
+      whatsappDigits: whatsapp,
+      file: params.file,
+    });
+  }
+
+  /** Upload manual de PDF por WhatsApp (CRM Joana / Bruna / Gabi / Outros). */
+  async uploadCrmDocumentByWhatsapp(params: {
+    whatsappDigits: string;
+    file: Express.Multer.File | undefined;
+  }): Promise<SerializedCrmDocument> {
+    const whatsapp = waDigits(params.whatsappDigits);
+    if (whatsapp.length < 8) {
+      throw new BadRequestException('WhatsApp inválido.');
+    }
     const file = params.file;
     if (!file?.buffer?.length) {
       throw new BadRequestException('Seleciona um PDF.');
@@ -859,6 +874,17 @@ export class RafacallCrmService {
 
   async deleteCrmDocument(params: { bookingId: string; documentId: string }) {
     const whatsapp = await this.requireCrmWhatsapp(params.bookingId);
+    return this.deleteCrmDocumentByWhatsapp({
+      whatsappDigits: whatsapp,
+      documentId: params.documentId,
+    });
+  }
+
+  async deleteCrmDocumentByWhatsapp(params: {
+    whatsappDigits: string;
+    documentId: string;
+  }) {
+    const whatsapp = waDigits(params.whatsappDigits);
     const existing = await this.prisma.rafaCallCrmDocument.findFirst({
       where: { id: params.documentId, whatsappDigits: whatsapp },
       select: { id: true, fileUrl: true },
@@ -870,6 +896,13 @@ export class RafacallCrmService {
     await this.prisma.rafaCallCrmDocument.delete({ where: { id: existing.id } });
     await this.storage.deleteStoredUrl(existing.fileUrl);
     return { ok: true as const };
+  }
+
+  /** Documentos do CRM partilhados por WhatsApp (todos os kanbans). */
+  async listDocumentsByWhatsapp(
+    whatsappDigitsList: string[],
+  ): Promise<Map<string, SerializedCrmDocument[]>> {
+    return this.loadDocumentsByWhatsapp(whatsappDigitsList);
   }
 
   /**

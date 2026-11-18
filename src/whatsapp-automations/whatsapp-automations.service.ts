@@ -217,8 +217,9 @@ export class WhatsappAutomationsService {
   }
 
   /**
-   * Imagem/documento na DM da Joana → download Evolution → anexo CRM.
-   * Legenda (se houver) continua no debounce da Joana como texto.
+   * Imagem/documento na DM dos chatbots → download Evolution → anexo CRM
+   * (chave = WhatsApp; visível em Joana / Bruna / Gabi / Outros).
+   * Legenda (se houver) continua no debounce do router como texto.
    */
   private async handleInboundCrmFile(
     dto: WhatsappClientAutomationInboundDto,

@@ -41,6 +41,9 @@ export class ChatbotCrmService {
     });
 
     this.scheduleMissingProfileImageBackfill(leads);
+    const documentsByWhatsapp = await this.rafacallCrm.listDocumentsByWhatsapp(
+      leads.map((lead) => lead.whatsappDigits),
+    );
 
     return {
       chatbot: {
@@ -57,7 +60,13 @@ export class ChatbotCrmService {
         pausesBot: column.pausesBot,
         items: leads
           .filter((lead) => lead.columnId === column.id)
-          .map((lead) => this.serializeLead(lead, column.slug)),
+          .map((lead) =>
+            this.serializeLead(
+              lead,
+              column.slug,
+              documentsByWhatsapp.get(lead.whatsappDigits) ?? [],
+            ),
+          ),
       })),
     };
   }
@@ -254,7 +263,7 @@ export class ChatbotCrmService {
         whatsapp,
         restored.crmProfileImageUrl,
       );
-      return this.serializeLead(restored, column.slug);
+      return this.serializeLeadWithDocuments(restored, column.slug);
     }
 
     const created = await this.prisma.crmLead.create({
@@ -267,7 +276,7 @@ export class ChatbotCrmService {
       },
     });
     void this.scheduleEnsureProfileImage(whatsapp, null);
-    return this.serializeLead(created, column.slug);
+    return this.serializeLeadWithDocuments(created, column.slug);
   }
 
   /** Cria lead na 1ª coluna se ainda não existir (escolha do menu). */
@@ -505,7 +514,27 @@ export class ChatbotCrmService {
       where: { id: lead.id },
       data,
     });
-    return this.serializeLead(saved, columnSlug);
+    return this.serializeLeadWithDocuments(saved, columnSlug);
+  }
+
+  async uploadLeadDocument(
+    slug: string,
+    leadId: string,
+    file: Express.Multer.File | undefined,
+  ) {
+    const lead = await this.requireActiveLead(slug, leadId);
+    return this.rafacallCrm.uploadCrmDocumentByWhatsapp({
+      whatsappDigits: lead.whatsappDigits,
+      file,
+    });
+  }
+
+  async deleteLeadDocument(slug: string, leadId: string, documentId: string) {
+    const lead = await this.requireActiveLead(slug, leadId);
+    return this.rafacallCrm.deleteCrmDocumentByWhatsapp({
+      whatsappDigits: lead.whatsappDigits,
+      documentId,
+    });
   }
 
   async deleteLead(slug: string, leadId: string) {
@@ -588,6 +617,16 @@ export class ChatbotCrmService {
     return isChatbotSlug(slug) && slug !== 'joana';
   }
 
+  private async requireActiveLead(slug: string, leadId: string) {
+    const bot = await this.chatbots.requireBySlug(slug);
+    const lead = await this.prisma.crmLead.findFirst({
+      where: { id: leadId, chatbotId: bot.id, crmExcludedAt: null },
+      include: { column: true },
+    });
+    if (!lead) throw new NotFoundException('Lead não encontrado.');
+    return lead;
+  }
+
   private scheduleEnsureProfileImage(
     whatsappRaw: string,
     existingUrl?: string | null,
@@ -608,7 +647,7 @@ export class ChatbotCrmService {
     }
   }
 
-  private serializeLead(
+  private async serializeLeadWithDocuments(
     lead: {
       id: string;
       chatbotId: string;
@@ -627,6 +666,42 @@ export class ChatbotCrmService {
     },
     columnSlug: string,
   ) {
+    const docs = await this.rafacallCrm.listDocumentsByWhatsapp([
+      lead.whatsappDigits,
+    ]);
+    return this.serializeLead(
+      lead,
+      columnSlug,
+      docs.get(lead.whatsappDigits) ?? [],
+    );
+  }
+
+  private serializeLead(
+    lead: {
+      id: string;
+      chatbotId: string;
+      columnId: string;
+      whatsappDigits: string;
+      guestName: string | null;
+      companyName?: string | null;
+      instagramHandle?: string | null;
+      campaignObjective?: string | null;
+      subjectSummary?: string | null;
+      botEnabled: boolean;
+      crmComments: string | null;
+      crmProfileImageUrl: string | null;
+      updatedAt: Date;
+      createdAt: Date;
+    },
+    columnSlug: string,
+    documents: Array<{
+      id: string;
+      fileName: string;
+      fileUrl: string;
+      sizeBytes: number;
+      createdAt: string;
+    }> = [],
+  ) {
     return {
       id: lead.id,
       columnId: lead.columnId,
@@ -640,6 +715,7 @@ export class ChatbotCrmService {
       botEnabled: lead.botEnabled,
       crmComments: lead.crmComments,
       crmProfileImageUrl: lead.crmProfileImageUrl,
+      documents,
       createdAt: lead.createdAt.toISOString(),
       updatedAt: lead.updatedAt.toISOString(),
     };
