@@ -50,6 +50,7 @@ Copia `backend/.env.example` para `backend/.env` e preenche os valores.
 | `EVOLUTION_HOUSES_RELOCATION_GROUP_JID` | (Opcional / legado) JID único; o envio de anúncios relocation para WhatsApp passa a ser **manual** pelo admin (`/dashboard/admin/houses` → grupos configuráveis + «Enviar nos grupos»). |
 | `WHATSAPP_REGISTRATION_NUMBER` (+ secundário, opcional) | Números nos links `wa.me` (sem `+`). |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_AMOUNT_EUR_CENTS`, `STRIPE_PIX_AMOUNT_BRL` | Stripe. |
+| `META_APP_SECRET`, `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`, `INSTAGRAM_PAGE_ACCESS_TOKEN`, `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram DM (webhook + envio). Ver `docs/instagram-meta.md`. |
 | `STRIPE_RAFA_CALL_EUR_CENTS`, `STRIPE_RAFA_CALL_PIX_BRL`, `RAFA_CALL_DURATION_MINUTES`, `RAFA_CALL_BUFFER_MINUTES` | Rafa Call (preços, duração e intervalo entre chamadas). |
 | `RAFA_CALL_WORKING_HOURS_JSON`, `RAFA_CALL_WORKING_HOURS_TIMEZONE` | Semente da grelha semanal, só até existir `rafa_call_working_hours`. Depois, os dias e horas editam-se em `/dashboard/admin/agendamentos` (fuso da semente, omissão `Europe/Lisbon`). O cliente vê o equivalente no fuso dele. |
 

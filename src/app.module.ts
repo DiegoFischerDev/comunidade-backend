@@ -25,6 +25,7 @@ import { FinanceModule } from './finance/finance.module';
 import { WhatsappAutomationsModule } from './whatsapp-automations/whatsapp-automations.module';
 import { JoanaModule } from './joana/joana.module';
 import { ChatbotsModule } from './chatbots/chatbots.module';
+import { InstagramModule } from './instagram/instagram.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { ChatbotsModule } from './chatbots/chatbots.module';
     WhatsappAutomationsModule,
     JoanaModule,
     ChatbotsModule,
+    InstagramModule,
   ],
   controllers: [AppController],
   providers: [

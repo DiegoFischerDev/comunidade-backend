@@ -28,7 +28,10 @@ async function bootstrap() {
       next: express.NextFunction,
     ) => {
       const path = req.originalUrl.split('?')[0] ?? req.originalUrl;
-      if (req.originalUrl === '/stripe/webhook') {
+      if (
+        req.originalUrl === '/stripe/webhook' ||
+        path === '/instagram/webhook'
+      ) {
         express.raw({ type: 'application/json' })(req, res, next);
       } else if (whatsappIngestPaths.has(path)) {
         jsonWhatsappIngest(req, res, next);
