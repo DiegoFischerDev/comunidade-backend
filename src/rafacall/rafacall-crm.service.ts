@@ -1,13 +1,9 @@
 import {
   BadRequestException,
-  Inject,
   Injectable,
   Logger,
-  Optional,
   PayloadTooLargeException,
-  forwardRef,
 } from '@nestjs/common';
-import { InstagramService } from '../instagram/instagram.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
@@ -136,9 +132,6 @@ export class RafacallCrmService {
     private readonly prisma: PrismaService,
     private readonly storage: HouseImageStorageService,
     private readonly wa: WhatsAppService,
-    @Optional()
-    @Inject(forwardRef(() => InstagramService))
-    private readonly instagram?: InstagramService,
   ) {}
 
   async listCrmBoard() {
@@ -2065,27 +2058,30 @@ export class RafacallCrmService {
       void this.ensureCrmProfileImage(row.digits);
     }
 
+    // Sync avatar IG já guardado no CrmLead → booking (sem Graph API aqui —
+    // evita ciclo Nest Rafacall ↔ Instagram). Fetch novo fica no webhook/CRM bots.
     const missingWithoutWa = items
       .filter(
         (item) =>
           !this.extractWhatsappDigits(item) && !item.crmProfileImageUrl?.trim(),
       )
       .slice(0, CRM_AVATAR_BOARD_BACKFILL_LIMIT);
-    if (missingWithoutWa.length > 0 && this.instagram) {
-      void this.backfillInstagramAvatarsForBookings(
+    if (missingWithoutWa.length > 0) {
+      void this.syncInstagramAvatarsFromCrmLeads(
         missingWithoutWa.map((item) => item.id),
       );
     }
   }
 
-  private async backfillInstagramAvatarsForBookings(
+  private async syncInstagramAvatarsFromCrmLeads(
     bookingIds: string[],
   ): Promise<void> {
-    if (!this.instagram || bookingIds.length === 0) return;
+    if (bookingIds.length === 0) return;
     const leads = await this.prisma.crmLead.findMany({
       where: {
         rafaCallBookingId: { in: bookingIds },
         instagramUserId: { not: null },
+        crmProfileImageUrl: { not: null },
       },
       select: {
         instagramUserId: true,
@@ -2094,20 +2090,13 @@ export class RafacallCrmService {
     });
     for (const lead of leads) {
       const ig = lead.instagramUserId?.trim();
-      if (!ig) continue;
+      const url = lead.crmProfileImageUrl?.trim();
+      if (!ig || !url) continue;
       try {
-        let remoteUrl: string | null = null;
-        if (!lead.crmProfileImageUrl?.trim()) {
-          const profile = await this.instagram.fetchUserProfile(ig);
-          remoteUrl = profile?.profilePicUrl ?? null;
-        }
-        await this.ensureCrmProfileImageFromInstagram(ig, {
-          remoteUrl,
-          existingUrl: lead.crmProfileImageUrl,
-        });
+        await this.ensureCrmProfileImageFromInstagram(ig, { existingUrl: url });
       } catch (e) {
         this.logger.warn(
-          `backfill IG avatar ${ig}: ${e instanceof Error ? e.message : e}`,
+          `sync IG avatar ${ig}: ${e instanceof Error ? e.message : e}`,
         );
       }
     }
