@@ -54,7 +54,7 @@ export class ChatbotRouterService {
 
     await this.detachBotIfOutsideCrm(input.whatsapp);
 
-    const existing = await this.prisma.joanaConversation.findUnique({
+    let existing = await this.prisma.joanaConversation.findUnique({
       where: { whatsappDigits: input.whatsapp },
       include: { chatbot: true },
     });
@@ -66,7 +66,17 @@ export class ChatbotRouterService {
         pushName: input.pushName,
       });
       if (captured) return { handled: true, status: 'outros_subject_captured' };
-      return { handled: true, status: 'paused' };
+
+      // Pausado sem bot (ex.: detach para menu) não pode engolir mensagens.
+      if (!existing.chatbotId) {
+        await this.prisma.joanaConversation.update({
+          where: { id: existing.id },
+          data: { paused: false },
+        });
+        existing = { ...existing, paused: false };
+      } else {
+        return { handled: true, status: 'paused' };
+      }
     }
 
     if (existing?.chatbotId) {
@@ -124,13 +134,21 @@ export class ChatbotRouterService {
 
     await this.detachBotIfOutsideCrm(input.whatsapp);
 
-    const existing = await this.prisma.joanaConversation.findUnique({
+    let existing = await this.prisma.joanaConversation.findUnique({
       where: { whatsappDigits: input.whatsapp },
       include: { chatbot: true },
     });
 
     if (existing?.paused) {
-      return { handled: true, status: 'paused' };
+      if (!existing.chatbotId) {
+        await this.prisma.joanaConversation.update({
+          where: { id: existing.id },
+          data: { paused: false },
+        });
+        existing = { ...existing, paused: false };
+      } else {
+        return { handled: true, status: 'paused' };
+      }
     }
 
     // Sem bot / menu: nota de voz não escolhe menu — pede texto
@@ -591,6 +609,8 @@ export class ChatbotRouterService {
         chatbotId: null,
         menuSent: false,
         welcomeSent: false,
+        paused: false,
+        buffer: [] as unknown as Prisma.InputJsonValue,
         pendingConfirmation: Prisma.JsonNull,
         pendingOutbound: null,
         farGuidanceSent: false,
