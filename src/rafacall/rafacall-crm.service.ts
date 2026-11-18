@@ -1586,9 +1586,10 @@ export class RafacallCrmService {
   }
 
   private async isJoanaConversationPaused(whatsapp: string): Promise<boolean> {
-    const row = await this.prisma.joanaConversation.findUnique({
+    const row = await this.prisma.joanaConversation.findFirst({
       where: { whatsappDigits: whatsapp },
       select: { paused: true },
+      orderBy: { updatedAt: 'desc' },
     });
     return row?.paused === true;
   }
@@ -1615,9 +1616,10 @@ export class RafacallCrmService {
       return;
     }
 
-    const existing = await this.prisma.joanaConversation.findUnique({
+    const existing = await this.prisma.joanaConversation.findFirst({
       where: { whatsappDigits: whatsapp },
       select: { id: true },
+      orderBy: { updatedAt: 'desc' },
     });
     if (!existing) {
       try {
@@ -1639,7 +1641,7 @@ export class RafacallCrmService {
       }
     }
 
-    await this.prisma.joanaConversation.update({
+    await this.prisma.joanaConversation.updateMany({
       where: { whatsappDigits: whatsapp },
       data: {
         paused: true,

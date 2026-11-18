@@ -46,9 +46,11 @@ export class ChatbotCrmService {
     });
 
     this.scheduleMissingProfileImageBackfill(leads);
-    const documentsByWhatsapp = await this.rafacallCrm.listDocumentsByWhatsapp(
-      leads.map((lead) => lead.whatsappDigits),
-    );
+    const whatsappList = leads
+      .map((lead) => lead.whatsappDigits)
+      .filter((digits): digits is string => Boolean(digits));
+    const documentsByWhatsapp =
+      await this.rafacallCrm.listDocumentsByWhatsapp(whatsappList);
 
     return {
       chatbot: {
@@ -69,7 +71,9 @@ export class ChatbotCrmService {
             this.serializeLead(
               lead,
               column.slug,
-              documentsByWhatsapp.get(lead.whatsappDigits) ?? [],
+              lead.whatsappDigits
+                ? documentsByWhatsapp.get(lead.whatsappDigits) ?? []
+                : [],
             ),
           ),
       })),
@@ -560,10 +564,7 @@ export class ChatbotCrmService {
     }
     if (input.botEnabled !== undefined) {
       data.botEnabled = input.botEnabled;
-      await this.prisma.joanaConversation.updateMany({
-        where: { whatsappDigits: lead.whatsappDigits, chatbotId: bot.id },
-        data: { paused: !input.botEnabled },
-      });
+      await this.pauseLeadConversations(lead, bot.id, !input.botEnabled);
     }
 
     let columnSlug = lead.column.slug;
@@ -576,10 +577,7 @@ export class ChatbotCrmService {
       columnSlug = column.slug;
       if (column.pausesBot && input.botEnabled === undefined) {
         data.botEnabled = false;
-        await this.prisma.joanaConversation.updateMany({
-          where: { whatsappDigits: lead.whatsappDigits, chatbotId: bot.id },
-          data: { paused: true },
-        });
+        await this.pauseLeadConversations(lead, bot.id, true);
       }
     }
 
@@ -596,6 +594,11 @@ export class ChatbotCrmService {
     file: Express.Multer.File | undefined,
   ) {
     const lead = await this.requireActiveLead(slug, leadId);
+    if (!lead.whatsappDigits) {
+      throw new BadRequestException(
+        'Este lead ainda não tem WhatsApp — documentos ficam associados ao número.',
+      );
+    }
     return this.rafacallCrm.uploadCrmDocumentByWhatsapp({
       whatsappDigits: lead.whatsappDigits,
       file,
@@ -604,6 +607,11 @@ export class ChatbotCrmService {
 
   async deleteLeadDocument(slug: string, leadId: string, documentId: string) {
     const lead = await this.requireActiveLead(slug, leadId);
+    if (!lead.whatsappDigits) {
+      throw new BadRequestException(
+        'Este lead ainda não tem WhatsApp — documentos ficam associados ao número.',
+      );
+    }
     return this.rafacallCrm.deleteCrmDocumentByWhatsapp({
       whatsappDigits: lead.whatsappDigits,
       documentId,
@@ -620,10 +628,7 @@ export class ChatbotCrmService {
       where: { id: lead.id },
       data: { crmExcludedAt: new Date(), botEnabled: false },
     });
-    await this.prisma.joanaConversation.updateMany({
-      where: { whatsappDigits: lead.whatsappDigits, chatbotId: bot.id },
-      data: { paused: true },
-    });
+    await this.pauseLeadConversations(lead, bot.id, true);
     return { ok: true as const };
   }
 
@@ -731,13 +736,38 @@ export class ChatbotCrmService {
   }
 
   private scheduleMissingProfileImageBackfill(
-    leads: Array<{ whatsappDigits: string; crmProfileImageUrl: string | null }>,
+    leads: Array<{
+      whatsappDigits: string | null;
+      crmProfileImageUrl: string | null;
+    }>,
   ) {
     const missing = leads
-      .filter((lead) => !lead.crmProfileImageUrl?.trim())
+      .filter(
+        (lead) =>
+          Boolean(lead.whatsappDigits) && !lead.crmProfileImageUrl?.trim(),
+      )
       .slice(0, CRM_AVATAR_BOARD_BACKFILL_LIMIT);
     for (const lead of missing) {
-      this.scheduleEnsureProfileImage(lead.whatsappDigits, null);
+      this.scheduleEnsureProfileImage(lead.whatsappDigits!, null);
+    }
+  }
+
+  private async pauseLeadConversations(
+    lead: { whatsappDigits: string | null; instagramUserId: string | null },
+    chatbotId: string,
+    paused: boolean,
+  ) {
+    if (lead.whatsappDigits) {
+      await this.prisma.joanaConversation.updateMany({
+        where: { whatsappDigits: lead.whatsappDigits, chatbotId },
+        data: { paused },
+      });
+    }
+    if (lead.instagramUserId) {
+      await this.prisma.joanaConversation.updateMany({
+        where: { instagramUserId: lead.instagramUserId, chatbotId },
+        data: { paused },
+      });
     }
   }
 
@@ -746,7 +776,8 @@ export class ChatbotCrmService {
       id: string;
       chatbotId: string;
       columnId: string;
-      whatsappDigits: string;
+      whatsappDigits: string | null;
+      instagramUserId?: string | null;
       guestName: string | null;
       companyName?: string | null;
       instagramHandle?: string | null;
@@ -763,6 +794,9 @@ export class ChatbotCrmService {
     },
     columnSlug: string,
   ) {
+    if (!lead.whatsappDigits) {
+      return this.serializeLead(lead, columnSlug, []);
+    }
     const docs = await this.rafacallCrm.listDocumentsByWhatsapp([
       lead.whatsappDigits,
     ]);
@@ -778,7 +812,8 @@ export class ChatbotCrmService {
       id: string;
       chatbotId: string;
       columnId: string;
-      whatsappDigits: string;
+      whatsappDigits: string | null;
+      instagramUserId?: string | null;
       guestName: string | null;
       companyName?: string | null;
       instagramHandle?: string | null;
@@ -807,6 +842,7 @@ export class ChatbotCrmService {
       columnId: lead.columnId,
       columnSlug,
       whatsapp: lead.whatsappDigits,
+      instagramUserId: lead.instagramUserId ?? null,
       guestName: lead.guestName,
       companyName: lead.companyName ?? null,
       instagramHandle: lead.instagramHandle ?? null,
