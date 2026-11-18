@@ -1,4 +1,6 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { ChannelsModule } from '../channels/channels.module';
+import { InstagramModule } from '../instagram/instagram.module';
 import { JoanaModule } from '../joana/joana.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RafacallModule } from '../rafacall/rafacall.module';
@@ -12,7 +14,14 @@ import { ChatbotsController } from './chatbots.controller';
 import { GenericContextEngine } from './generic-context.engine';
 
 @Module({
-  imports: [PrismaModule, WhatsAppModule, JoanaModule, RafacallModule],
+  imports: [
+    PrismaModule,
+    WhatsAppModule,
+    ChannelsModule,
+    JoanaModule,
+    RafacallModule,
+    forwardRef(() => InstagramModule),
+  ],
   controllers: [ChatbotsController, AdminChatbotCrmController],
   providers: [
     ChatbotService,

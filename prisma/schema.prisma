@@ -1278,6 +1278,12 @@ enum ChatbotEngineKind {
   HANDOFF_OTHER
 }
 
+/// Canal activo da conversa multi-bot (outbound).
+enum ChatbotChannel {
+  WHATSAPP
+  INSTAGRAM
+}
+
 /// Chatbot na mesma instância Evolution (Joana / Bruna / Gabi).
 model Chatbot {
   id            String            @id @default(cuid())
@@ -1321,39 +1327,45 @@ model JoanaSettings {
   @@map("joana_settings")
 }
 
-/// Conversa WhatsApp partilhada pelos chatbots (um número = um bot activo).
+/// Conversa multi-canal partilhada pelos chatbots (id interno = âncora).
 model JoanaConversation {
-  id                  String    @id @default(cuid())
-  whatsappDigits      String    @unique @map("whatsapp_digits")
+  id                  String         @id @default(cuid())
+  /// Canal WhatsApp (dígitos). Null até o contacto o partilhar (ex.: veio do IG).
+  whatsappDigits      String?        @unique @map("whatsapp_digits")
+  /// IGSID do utilizador no Instagram Direct.
+  instagramUserId     String?        @unique @map("instagram_user_id") @db.VarChar(64)
+  /// Canal a usar no outbound.
+  activeChannel       ChatbotChannel @default(WHATSAPP) @map("active_channel")
   /// Bot atribuído após o menu 1/2/3. Null = ainda no router.
-  chatbotId           String?   @map("chatbot_id")
-  chatbot             Chatbot?  @relation(fields: [chatbotId], references: [id], onDelete: SetNull)
+  chatbotId           String?        @map("chatbot_id")
+  chatbot             Chatbot?       @relation(fields: [chatbotId], references: [id], onDelete: SetNull)
   /// Já enviámos o menu inicial a este número.
-  menuSent            Boolean   @default(false) @map("menu_sent")
+  menuSent            Boolean        @default(false) @map("menu_sent")
   instance            String?
-  displayName         String?   @map("display_name") @db.VarChar(80)
+  displayName         String?        @map("display_name") @db.VarChar(80)
   /// Mensagens ainda não processadas: `{ id, text, at }[]`.
-  buffer              Json      @default("[]")
-  lastInboundAt       DateTime? @map("last_inbound_at")
+  buffer              Json           @default("[]")
+  lastInboundAt       DateTime?      @map("last_inbound_at")
   /// `{ field, value, question }` ou null.
-  pendingConfirmation Json?     @map("pending_confirmation")
+  pendingConfirmation Json?          @map("pending_confirmation")
   /// Últimos turnos `{ role, text }[]`.
-  history             Json      @default("[]")
-  /// Resposta já decidida que ainda não saiu no WhatsApp.
-  pendingOutbound     String?   @map("pending_outbound") @db.Text
-  farGuidanceSent     Boolean   @default(false) @map("far_guidance_sent")
-  schedulingLinkSent  Boolean   @default(false) @map("scheduling_link_sent")
+  history             Json           @default("[]")
+  /// Resposta já decidida que ainda não saiu no canal activo.
+  pendingOutbound     String?        @map("pending_outbound") @db.Text
+  farGuidanceSent     Boolean        @default(false) @map("far_guidance_sent")
+  schedulingLinkSent  Boolean        @default(false) @map("scheduling_link_sent")
   /// Já enviámos a sequência de boas-vindas (ou a intro por omissão) a este número.
-  welcomeSent         Boolean   @default(false) @map("welcome_sent")
-  /// O chatbot atribuído não responde. O admin desligou ou assumiu o WhatsApp.
-  paused              Boolean   @default(false)
-  processing          Boolean   @default(false)
-  processingStartedAt DateTime? @map("processing_started_at")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
+  welcomeSent         Boolean        @default(false) @map("welcome_sent")
+  /// O chatbot atribuído não responde. O admin desligou ou assumiu a conversa.
+  paused              Boolean        @default(false)
+  processing          Boolean        @default(false)
+  processingStartedAt DateTime?      @map("processing_started_at")
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
 
   @@index([processing, lastInboundAt])
   @@index([chatbotId])
+  @@index([activeChannel])
   @@map("joana_conversations")
 }
 

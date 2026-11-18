@@ -43,6 +43,7 @@ describe('JoanaService.acceptVoiceNote', () => {
     const service = new JoanaService(
       {} as never,
       wa as never,
+      { sendText: jest.fn() } as never,
       { isJoanaActive: jest.fn().mockResolvedValue(true) } as never,
       openai as never,
     );
@@ -82,6 +83,7 @@ describe('JoanaService.acceptVoiceNote', () => {
     const service = new JoanaService(
       prisma as never,
       wa as never,
+      { sendText: jest.fn() } as never,
       { isJoanaActive: jest.fn().mockResolvedValue(true) } as never,
       openai as never,
     );
@@ -118,6 +120,7 @@ describe('JoanaService.acceptVoiceNote', () => {
     const service = new JoanaService(
       {} as never,
       wa as never,
+      { sendText: jest.fn() } as never,
       { isJoanaActive: jest.fn().mockResolvedValue(false) } as never,
       { transcribeAudio: jest.fn() } as never,
     );

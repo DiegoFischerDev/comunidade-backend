@@ -1,8 +1,11 @@
 import {
   Controller,
+  forwardRef,
   Get,
   Headers,
   HttpCode,
+  Inject,
+  Logger,
   Post,
   Query,
   Req,
@@ -11,11 +14,18 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Public } from '../auth/public.decorator';
+import { ChatbotRouterService } from '../chatbots/chatbot-router.service';
 import { InstagramService } from './instagram.service';
 
 @Controller('instagram')
 export class InstagramController {
-  constructor(private readonly instagram: InstagramService) {}
+  private readonly logger = new Logger(InstagramController.name);
+
+  constructor(
+    private readonly instagram: InstagramService,
+    @Inject(forwardRef(() => ChatbotRouterService))
+    private readonly router: ChatbotRouterService,
+  ) {}
 
   /**
    * Verificação do webhook Meta (hub.challenge).
@@ -58,6 +68,24 @@ export class InstagramController {
     if (!result.ok) {
       throw new UnauthorizedException('Invalid Instagram webhook signature');
     }
-    return { received: true, count: result.received };
+
+    for (const msg of result.messages) {
+      try {
+        await this.router.bufferInbound({
+          channel: 'instagram',
+          instagramUserId: msg.instagramUserId,
+          text: msg.text,
+          externalMessageId: msg.externalMessageId,
+        });
+      } catch (err: unknown) {
+        this.logger.warn(
+          `IG buffer ${msg.instagramUserId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    return { received: true, count: result.messages.length };
   }
 }

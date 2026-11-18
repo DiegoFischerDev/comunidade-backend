@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { ChatbotChannel, Prisma } from '@prisma/client';
+import { ConversationOutboundService } from '../channels/conversation-outbound.service';
 import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
@@ -40,6 +41,7 @@ export class GenericContextEngine {
   constructor(
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
+    private readonly outbound: ConversationOutboundService,
     private readonly chatbots: ChatbotService,
     private readonly crm: ChatbotCrmService,
   ) {}
@@ -57,6 +59,10 @@ export class GenericContextEngine {
       await this.dropPaused(id);
       return;
     }
+    if (!row.whatsappDigits) {
+      await this.release(id);
+      return;
+    }
 
     const slug = isChatbotSlug(row.chatbot.slug) ? row.chatbot.slug : null;
     if (!slug) {
@@ -64,7 +70,10 @@ export class GenericContextEngine {
       return;
     }
 
-    const lead = await this.crm.findActiveLead(row.chatbotId!, row.whatsappDigits);
+    const lead = await this.crm.findActiveLead(
+      row.chatbotId!,
+      row.whatsappDigits,
+    );
     if (lead && !lead.botEnabled) {
       await this.dropPaused(id);
       return;
@@ -72,10 +81,7 @@ export class GenericContextEngine {
 
     if (row.pendingOutbound) {
       const outbound = row.pendingOutbound;
-      await this.wa.sendText(row.whatsappDigits, outbound, {
-        preferredInstance: row.instance || undefined,
-        requireDelivery: true,
-      });
+      await this.outbound.sendText(row, outbound, { requireDelivery: true });
       await this.prisma.joanaConversation.update({
         where: { id },
         data: { pendingOutbound: null, processing: false },
@@ -97,7 +103,10 @@ export class GenericContextEngine {
     let welcomeSummary = '';
     if (!welcomeSent) {
       try {
-        if (bot.welcomeSteps.length > 0) {
+        if (
+          bot.welcomeSteps.length > 0 &&
+          row.activeChannel === ChatbotChannel.WHATSAPP
+        ) {
           await this.sendWelcomeSteps(
             row.whatsappDigits,
             bot.welcomeSteps,
@@ -105,11 +114,26 @@ export class GenericContextEngine {
           );
           welcomeSummary = welcomeStepsHistorySummary(bot.welcomeSteps);
         } else if (bot.introFallback?.trim()) {
-          await this.wa.sendText(row.whatsappDigits, bot.introFallback.trim(), {
-            preferredInstance: row.instance || undefined,
+          await this.outbound.sendText(row, bot.introFallback.trim(), {
             requireDelivery: true,
           });
           welcomeSummary = bot.introFallback.trim();
+        } else if (
+          bot.welcomeSteps.length > 0 &&
+          row.activeChannel === ChatbotChannel.INSTAGRAM
+        ) {
+          // No IG só texto (sem áudio/PDF da sequência WA).
+          const textSteps = bot.welcomeSteps
+            .filter((s) => s.type === 'TEXT' && (s.textContent || '').trim())
+            .map((s) => (s.textContent || '').trim());
+          const fallback =
+            textSteps.join('\n\n') ||
+            bot.introFallback?.trim() ||
+            `Olá! Sou a ${bot.name}.`;
+          await this.outbound.sendText(row, fallback, {
+            requireDelivery: true,
+          });
+          welcomeSummary = fallback;
         }
         welcomeSent = true;
       } catch (err: unknown) {
@@ -207,10 +231,7 @@ export class GenericContextEngine {
 
     let sent = false;
     try {
-      await this.wa.sendText(row.whatsappDigits, reply, {
-        preferredInstance: row.instance || undefined,
-        requireDelivery: true,
-      });
+      await this.outbound.sendText(row, reply, { requireDelivery: true });
       sent = true;
     } catch (err: unknown) {
       this.logger.warn(

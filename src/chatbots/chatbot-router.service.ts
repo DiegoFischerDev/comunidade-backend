@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ChatbotEngineKind, Prisma } from '@prisma/client';
+import { ChatbotChannel, ChatbotEngineKind, Prisma } from '@prisma/client';
+import {
+  ConversationOutboundService,
+  parseWhatsappDigitsCandidate,
+} from '../channels/conversation-outbound.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JOANA_AUDIO_UNHEARD } from '../joana/joana-audio';
 import { JoanaOpenAiService } from '../joana/joana-openai.service';
@@ -16,6 +20,8 @@ import { GenericContextEngine } from './generic-context.engine';
 
 type BufferItem = { id: string; text: string; at: string };
 
+type InboundChannel = 'whatsapp' | 'instagram';
+
 const STALE_LOCK_MS = 2 * 60 * 1000;
 
 @Injectable()
@@ -25,6 +31,7 @@ export class ChatbotRouterService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
+    private readonly outbound: ConversationOutboundService,
     private readonly chatbots: ChatbotService,
     private readonly crm: ChatbotCrmService,
     private readonly joana: JoanaService,
@@ -33,41 +40,77 @@ export class ChatbotRouterService {
   ) {}
 
   /**
-   * Entrada de texto DM na instância partilhada.
+   * Entrada de texto (WhatsApp DM ou Instagram DM).
    * Sem ficha em nenhum CRM → menu (mesmo com histórico).
    * Com bot atribuído e ficha → engine respectivo.
+   * No IG sem WhatsApp: pede o número antes de criar CRM / Joana.
    */
   async bufferInbound(input: {
-    whatsapp: string;
+    channel?: InboundChannel;
+    whatsapp?: string;
+    instagramUserId?: string;
     text: string;
     instance?: string;
     pushName?: string;
     externalMessageId?: string;
   }): Promise<{ handled: boolean; status: string }> {
+    const channel: InboundChannel =
+      input.channel ||
+      (input.instagramUserId && !input.whatsapp ? 'instagram' : 'whatsapp');
+    const whatsapp = (input.whatsapp || '').trim();
+    const instagramUserId = (input.instagramUserId || '').trim();
     const instance = (input.instance || '').trim();
-    if (instance && instance !== chatbotWhatsappInstance()) {
-      return { handled: false, status: 'ignored_instance' };
+
+    if (channel === 'whatsapp') {
+      if (!whatsapp) return { handled: true, status: 'ignored_empty' };
+      if (instance && instance !== chatbotWhatsappInstance()) {
+        return { handled: false, status: 'ignored_instance' };
+      }
+    } else if (!instagramUserId) {
+      return { handled: true, status: 'ignored_empty' };
     }
 
     const text = input.text.trim();
     if (!text) return { handled: true, status: 'ignored_empty' };
 
-    await this.detachBotIfOutsideCrm(input.whatsapp);
+    if (whatsapp) {
+      await this.detachBotIfOutsideCrm(whatsapp);
+    }
 
-    let existing = await this.prisma.joanaConversation.findUnique({
-      where: { whatsappDigits: input.whatsapp },
-      include: { chatbot: true },
+    let existing = await this.findConversation({
+      whatsapp: whatsapp || undefined,
+      instagramUserId: instagramUserId || undefined,
     });
 
-    if (existing?.paused) {
-      const captured = await this.tryCaptureOutrosSubject({
-        whatsapp: input.whatsapp,
+    // IG com bot escolhido mas sem WhatsApp: tentar ligar o número.
+    if (
+      existing &&
+      !existing.whatsappDigits &&
+      existing.chatbotId &&
+      channel === 'instagram'
+    ) {
+      const linked = await this.tryLinkWhatsappFromText({
+        conversationId: existing.id,
         text,
         pushName: input.pushName,
       });
-      if (captured) return { handled: true, status: 'outros_subject_captured' };
+      if (linked.handled) return linked;
+      existing = await this.prisma.joanaConversation.findUnique({
+        where: { id: existing.id },
+        include: { chatbot: true },
+      });
+    }
 
-      // Pausado sem bot (ex.: detach para menu) não pode engolir mensagens.
+    if (existing?.paused) {
+      if (existing.whatsappDigits) {
+        const captured = await this.tryCaptureOutrosSubject({
+          whatsapp: existing.whatsappDigits,
+          text,
+          pushName: input.pushName,
+        });
+        if (captured) return { handled: true, status: 'outros_subject_captured' };
+      }
+
       if (!existing.chatbotId) {
         await this.prisma.joanaConversation.update({
           where: { id: existing.id },
@@ -79,14 +122,14 @@ export class ChatbotRouterService {
       }
     }
 
-    if (existing?.chatbotId) {
+    if (existing?.chatbotId && existing.whatsappDigits) {
       const lead = await this.crm.findActiveLead(
         existing.chatbotId,
-        input.whatsapp,
+        existing.whatsappDigits,
       );
       if (lead && !lead.botEnabled) {
         const captured = await this.tryCaptureOutrosSubject({
-          whatsapp: input.whatsapp,
+          whatsapp: existing.whatsappDigits,
           text,
           pushName: input.pushName,
         });
@@ -96,10 +139,31 @@ export class ChatbotRouterService {
       if (existing.chatbot?.engineKind === ChatbotEngineKind.HANDOFF_OTHER) {
         return { handled: true, status: 'paused' };
       }
-      // Joana: também respeita crmJoanaEnabled / pausa legado
-      if (existing.chatbot?.engineKind === ChatbotEngineKind.JOANA_QUALIFICATION) {
-        return this.joana.bufferInbound(input);
+      if (
+        existing.chatbot?.engineKind === ChatbotEngineKind.JOANA_QUALIFICATION
+      ) {
+        return this.joana.bufferInbound({
+          whatsapp: existing.whatsappDigits,
+          text,
+          instance: instance || existing.instance || undefined,
+          pushName: input.pushName,
+          externalMessageId: input.externalMessageId,
+        });
       }
+    }
+
+    // Bot escolhido no IG sem WhatsApp: não bufferizar no engine — pedir número.
+    if (existing?.chatbotId && !existing.whatsappDigits) {
+      try {
+        await this.outbound.sendText(
+          existing,
+          this.outbound.askWhatsappMessage(),
+          { requireDelivery: true },
+        );
+      } catch {
+        /* ignore */
+      }
+      return { handled: true, status: 'awaiting_whatsapp' };
     }
 
     const item: BufferItem = {
@@ -111,7 +175,9 @@ export class ChatbotRouterService {
     };
 
     await this.appendBuffer({
-      whatsapp: input.whatsapp,
+      channel,
+      whatsapp: whatsapp || null,
+      instagramUserId: instagramUserId || null,
       instance: instance || null,
       displayName: cleanName(input.pushName),
       item,
@@ -270,7 +336,9 @@ export class ChatbotRouterService {
         continue;
       }
 
-      await this.detachBotIfOutsideCrm(row.whatsappDigits);
+      if (row.whatsappDigits) {
+        await this.detachBotIfOutsideCrm(row.whatsappDigits);
+      }
       const fresh = await this.prisma.joanaConversation.findUnique({
         where: { id: row.id },
         include: { chatbot: true },
@@ -286,6 +354,26 @@ export class ChatbotRouterService {
       try {
         if (!fresh.chatbotId) {
           await this.processMenuTurn(fresh.id);
+        } else if (!fresh.whatsappDigits) {
+          // Bot atribuído no IG — pedir WhatsApp antes do engine/CRM.
+          const ask = this.outbound.askWhatsappMessage();
+          try {
+            await this.outbound.sendText(fresh, ask, {
+              requireDelivery: true,
+            });
+          } catch {
+            /* ignore */
+          }
+          await this.prisma.joanaConversation.update({
+            where: { id: fresh.id },
+            data: {
+              processing: false,
+              buffer: [] as unknown as Prisma.InputJsonValue,
+              history: appendHistory(readHistory(fresh.history), [
+                { role: 'assistant', text: ask },
+              ]) as unknown as Prisma.InputJsonValue,
+            },
+          });
         } else if (
           fresh.chatbot?.engineKind === ChatbotEngineKind.HANDOFF_OTHER
         ) {
@@ -312,7 +400,7 @@ export class ChatbotRouterService {
         }
       } catch (err: unknown) {
         this.logger.warn(
-          `Chatbot flush ${fresh.whatsappDigits}: ${
+          `Chatbot flush ${fresh.whatsappDigits || fresh.instagramUserId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -341,13 +429,12 @@ export class ChatbotRouterService {
 
     if (!row.menuSent) {
       try {
-        await this.wa.sendText(row.whatsappDigits, menuText, {
-          preferredInstance: row.instance || undefined,
+        await this.outbound.sendText(row, menuText, {
           requireDelivery: true,
         });
       } catch (err: unknown) {
         this.logger.warn(
-          `Menu envio ${row.whatsappDigits}: ${
+          `Menu envio ${row.whatsappDigits || row.instagramUserId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -389,13 +476,10 @@ export class ChatbotRouterService {
       const clarify =
         `Não percebi o assunto. Podes dizer por exemplo «relocation», «crédito», «visto», «publicidade» ou «outros», ou o número 1 a 5.\n\n${menuText}`;
       try {
-        await this.wa.sendText(row.whatsappDigits, clarify, {
-          preferredInstance: row.instance || undefined,
-          requireDelivery: true,
-        });
+        await this.outbound.sendText(row, clarify, { requireDelivery: true });
       } catch (err: unknown) {
         this.logger.warn(
-          `Menu reenvio ${row.whatsappDigits}: ${
+          `Menu reenvio ${row.whatsappDigits || row.instagramUserId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -417,6 +501,28 @@ export class ChatbotRouterService {
     const bot = await this.chatbots.requireBySlug(choice);
 
     if (bot.engineKind === ChatbotEngineKind.HANDOFF_OTHER) {
+      if (!row.whatsappDigits) {
+        const ask = this.outbound.askWhatsappMessage();
+        await this.prisma.joanaConversation.update({
+          where: { id },
+          data: {
+            chatbotId: bot.id,
+            welcomeSent: true,
+            buffer: [] as unknown as Prisma.InputJsonValue,
+            history: appendHistory(readHistory(row.history), [
+              { role: 'user', text: combined },
+              { role: 'assistant', text: ask },
+            ]) as unknown as Prisma.InputJsonValue,
+            processing: false,
+          },
+        });
+        try {
+          await this.outbound.sendText(row, ask, { requireDelivery: true });
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       await this.assignOutrosHandoff({
         conversationId: id,
         botId: bot.id,
@@ -426,6 +532,35 @@ export class ChatbotRouterService {
         userText: combined,
         history: readHistory(row.history),
       });
+      return;
+    }
+
+    // Sem WhatsApp (canal IG): atribui bot e pede número antes do CRM/engine.
+    if (!row.whatsappDigits) {
+      const ask = this.outbound.askWhatsappMessage();
+      const handoff = `Perfeito — vou passar-te para a ${bot.name}.\n\n${ask}`;
+      await this.prisma.joanaConversation.update({
+        where: { id },
+        data: {
+          chatbotId: bot.id,
+          welcomeSent: false,
+          buffer: [] as unknown as Prisma.InputJsonValue,
+          history: appendHistory(readHistory(row.history), [
+            { role: 'user', text: combined },
+            { role: 'assistant', text: handoff },
+          ]) as unknown as Prisma.InputJsonValue,
+          processing: false,
+        },
+      });
+      try {
+        await this.outbound.sendText(row, handoff, { requireDelivery: true });
+      } catch (err: unknown) {
+        this.logger.warn(
+          `Menu assign IG ${row.instagramUserId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
       return;
     }
 
@@ -455,13 +590,10 @@ export class ChatbotRouterService {
     });
 
     try {
-      await this.wa.sendText(
-        row.whatsappDigits,
+      await this.outbound.sendText(
+        row,
         `Perfeito — vou passar-te para a ${bot.name}.`,
-        {
-          preferredInstance: row.instance || undefined,
-          requireDelivery: true,
-        },
+        { requireDelivery: true },
       );
     } catch (err: unknown) {
       this.logger.warn(
@@ -474,7 +606,9 @@ export class ChatbotRouterService {
     // Dispara o 1º turno do bot (boas-vindas + resposta) com buffer vazio:
     // injecta um «olá» sintético para o engine arrancar a welcome.
     await this.appendBuffer({
+      channel: row.activeChannel === ChatbotChannel.INSTAGRAM ? 'instagram' : 'whatsapp',
       whatsapp: row.whatsappDigits,
+      instagramUserId: row.instagramUserId,
       instance: row.instance,
       displayName: row.displayName,
       item: {
@@ -521,11 +655,20 @@ export class ChatbotRouterService {
       subjectSummary,
     });
 
+    const row = await this.prisma.joanaConversation.findUnique({
+      where: { id: input.conversationId },
+    });
     try {
-      await this.wa.sendText(input.whatsapp, OUTROS_HANDOFF_MESSAGE, {
-        preferredInstance: input.instance || undefined,
-        requireDelivery: true,
-      });
+      if (row) {
+        await this.outbound.sendText(row, OUTROS_HANDOFF_MESSAGE, {
+          requireDelivery: true,
+        });
+      } else {
+        await this.wa.sendText(input.whatsapp, OUTROS_HANDOFF_MESSAGE, {
+          preferredInstance: input.instance || undefined,
+          requireDelivery: true,
+        });
+      }
     } catch (err: unknown) {
       this.logger.warn(
         `Outros handoff ${input.whatsapp}: ${
@@ -622,20 +765,134 @@ export class ChatbotRouterService {
     );
   }
 
+  private async findConversation(input: {
+    whatsapp?: string;
+    instagramUserId?: string;
+  }) {
+    if (input.instagramUserId) {
+      const byIg = await this.prisma.joanaConversation.findUnique({
+        where: { instagramUserId: input.instagramUserId },
+        include: { chatbot: true },
+      });
+      if (byIg) return byIg;
+    }
+    if (input.whatsapp) {
+      return this.prisma.joanaConversation.findUnique({
+        where: { whatsappDigits: input.whatsapp },
+        include: { chatbot: true },
+      });
+    }
+    return null;
+  }
+
+  private async tryLinkWhatsappFromText(input: {
+    conversationId: string;
+    text: string;
+    pushName?: string;
+  }): Promise<{ handled: boolean; status: string }> {
+    const digits = parseWhatsappDigitsCandidate(input.text);
+    if (!digits) {
+      return { handled: false, status: 'not_whatsapp' };
+    }
+
+    const conflict = await this.prisma.joanaConversation.findUnique({
+      where: { whatsappDigits: digits },
+      select: { id: true },
+    });
+    if (conflict && conflict.id !== input.conversationId) {
+      const row = await this.prisma.joanaConversation.findUnique({
+        where: { id: input.conversationId },
+      });
+      if (row) {
+        try {
+          await this.outbound.sendText(
+            row,
+            'Esse WhatsApp já está ligado a outra conversa. Confirma o número ou usa outro.',
+            { requireDelivery: true },
+          );
+        } catch {
+          /* ignore */
+        }
+      }
+      return { handled: true, status: 'whatsapp_conflict' };
+    }
+
+    const row = await this.prisma.joanaConversation.update({
+      where: { id: input.conversationId },
+      data: {
+        whatsappDigits: digits,
+        displayName: cleanName(input.pushName) || undefined,
+      },
+      include: { chatbot: true },
+    });
+
+    if (row.chatbotId) {
+      await this.crm.ensureLeadOnMenuAssign({
+        chatbotId: row.chatbotId,
+        whatsappDigits: digits,
+        displayName: row.displayName,
+        botEnabled: row.chatbot?.engineKind !== ChatbotEngineKind.HANDOFF_OTHER,
+      });
+    }
+
+    try {
+      await this.outbound.sendText(
+        row,
+        `Obrigado! Guardei o WhatsApp ${digits}. Já podes continuar a conversa.`,
+        { requireDelivery: true },
+      );
+    } catch {
+      /* ignore */
+    }
+
+    // Arrancar o bot com um olá sintético.
+    if (
+      row.chatbotId &&
+      row.chatbot?.engineKind !== ChatbotEngineKind.HANDOFF_OTHER
+    ) {
+      await this.appendBuffer({
+        channel:
+          row.activeChannel === ChatbotChannel.INSTAGRAM
+            ? 'instagram'
+            : 'whatsapp',
+        whatsapp: digits,
+        instagramUserId: row.instagramUserId,
+        instance: row.instance,
+        displayName: row.displayName,
+        item: {
+          id: `wa-linked-${Date.now()}`,
+          text: 'Olá',
+          at: new Date().toISOString(),
+        },
+      });
+    }
+
+    return { handled: true, status: 'whatsapp_linked' };
+  }
+
   private async appendBuffer(input: {
-    whatsapp: string;
+    channel: InboundChannel;
+    whatsapp: string | null;
+    instagramUserId: string | null;
     instance: string | null;
     displayName: string | null;
     item: BufferItem;
   }) {
-    const existing = await this.prisma.joanaConversation.findUnique({
-      where: { whatsappDigits: input.whatsapp },
+    const existing = await this.findConversation({
+      whatsapp: input.whatsapp || undefined,
+      instagramUserId: input.instagramUserId || undefined,
     });
+
     if (!existing) {
       try {
         await this.prisma.joanaConversation.create({
           data: {
             whatsappDigits: input.whatsapp,
+            instagramUserId: input.instagramUserId,
+            activeChannel:
+              input.channel === 'instagram'
+                ? ChatbotChannel.INSTAGRAM
+                : ChatbotChannel.WHATSAPP,
             instance: input.instance,
             displayName: input.displayName,
             buffer: [input.item] as unknown as Prisma.InputJsonValue,
@@ -657,8 +914,9 @@ export class ChatbotRouterService {
 
     const row =
       existing ??
-      (await this.prisma.joanaConversation.findUnique({
-        where: { whatsappDigits: input.whatsapp },
+      (await this.findConversation({
+        whatsapp: input.whatsapp || undefined,
+        instagramUserId: input.instagramUserId || undefined,
       }));
     if (!row) return;
 
@@ -666,7 +924,9 @@ export class ChatbotRouterService {
       const current =
         attempt === 0
           ? row
-          : await this.prisma.joanaConversation.findUnique({ where: { id: row.id } });
+          : await this.prisma.joanaConversation.findUnique({
+              where: { id: row.id },
+            });
       if (!current) return;
       const buffer = readBuffer(current.buffer);
       if (buffer.some((item) => item.id === input.item.id)) return;
@@ -678,6 +938,12 @@ export class ChatbotRouterService {
           lastInboundAt: new Date(),
           instance: input.instance || current.instance,
           displayName: current.displayName || input.displayName,
+          activeChannel:
+            input.channel === 'instagram'
+              ? ChatbotChannel.INSTAGRAM
+              : current.activeChannel,
+          instagramUserId: current.instagramUserId || input.instagramUserId,
+          whatsappDigits: current.whatsappDigits || input.whatsapp,
         },
       });
       if (saved.count === 1) return;

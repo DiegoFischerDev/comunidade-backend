@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { Prisma, RafaCallCrmStatus } from '@prisma/client';
+import { ChatbotChannel, Prisma, RafaCallCrmStatus } from '@prisma/client';
+import { ConversationOutboundService } from '../channels/conversation-outbound.service';
 import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
@@ -50,6 +51,7 @@ export class JoanaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
+    private readonly outbound: ConversationOutboundService,
     private readonly crm: RafacallCrmService,
     private readonly openai: JoanaOpenAiService,
   ) {}
@@ -356,7 +358,10 @@ export class JoanaService {
 
     try {
       const row = await this.prisma.joanaConversation.findUnique({ where: { id } });
-      if (!row) return;
+      if (!row?.whatsappDigits) {
+        await this.release(id);
+        return;
+      }
 
       if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
         await this.dropBecausePaused(id);
@@ -365,10 +370,7 @@ export class JoanaService {
 
       if (row.pendingOutbound) {
         const outbound = row.pendingOutbound;
-        await this.wa.sendText(row.whatsappDigits, outbound, {
-          preferredInstance: row.instance || undefined,
-          requireDelivery: true,
-        });
+        await this.outbound.sendText(row, outbound, { requireDelivery: true });
         await this.prisma.joanaConversation.update({
           where: { id },
           data: { pendingOutbound: null, processing: false },
@@ -399,13 +401,25 @@ export class JoanaService {
       let welcomeSummary = '';
       if (!welcomeSent && lead.kind === 'none' && welcomeSteps.length > 0) {
         try {
-          await this.sendWelcomeSteps(
-            row.whatsappDigits,
-            welcomeSteps,
-            row.instance,
-          );
+          if (row.activeChannel === ChatbotChannel.INSTAGRAM) {
+            const textOnly = welcomeSteps
+              .filter((s) => s.type === 'TEXT' && (s.textContent || '').trim())
+              .map((s) => (s.textContent || '').trim());
+            const body =
+              textOnly.join('\n\n') ||
+              ensureJoanaIntro('', true).trim() ||
+              'Olá! Sou a Joana.';
+            await this.outbound.sendText(row, body, { requireDelivery: true });
+            welcomeSummary = body;
+          } else {
+            await this.sendWelcomeSteps(
+              row.whatsappDigits,
+              welcomeSteps,
+              row.instance,
+            );
+            welcomeSummary = welcomeStepsHistorySummary(welcomeSteps);
+          }
           welcomeSent = true;
-          welcomeSummary = welcomeStepsHistorySummary(welcomeSteps);
         } catch (err: unknown) {
           this.logger.warn(
             `Joana boas-vindas ${row.whatsappDigits}: ${
@@ -767,10 +781,19 @@ export class JoanaService {
     let outboundSaved: string | null = null;
     let sent = false;
     try {
-      await this.wa.sendText(input.whatsapp, input.outbound, {
-        preferredInstance: input.instance || undefined,
-        requireDelivery: true,
+      const conv = await this.prisma.joanaConversation.findUnique({
+        where: { id: input.id },
       });
+      if (conv) {
+        await this.outbound.sendText(conv, input.outbound, {
+          requireDelivery: true,
+        });
+      } else {
+        await this.wa.sendText(input.whatsapp, input.outbound, {
+          preferredInstance: input.instance || undefined,
+          requireDelivery: true,
+        });
+      }
       sent = true;
     } catch (err: unknown) {
       this.logger.warn(

@@ -124,15 +124,18 @@ export class InstagramService {
   }
 
   /**
-   * Processa o body raw do POST webhook. Responde rápido; o multi-bot liga-se depois.
+   * Valida assinatura e devolve DMs de texto. O controller encaminha ao router.
    */
   async handleWebhookRaw(
     rawBody: Buffer,
     signatureHeader: string | undefined,
-  ): Promise<{ ok: boolean; received: number }> {
+  ): Promise<{
+    ok: boolean;
+    messages: InstagramInboundMessage[];
+  }> {
     if (!this.isValidSignature(rawBody, signatureHeader)) {
       this.logger.warn('Assinatura Instagram webhook inválida');
-      return { ok: false, received: 0 };
+      return { ok: false, messages: [] };
     }
 
     let payload: InstagramWebhookPayload;
@@ -140,7 +143,7 @@ export class InstagramService {
       payload = JSON.parse(rawBody.toString('utf8')) as InstagramWebhookPayload;
     } catch {
       this.logger.warn('Body Instagram webhook não é JSON válido');
-      return { ok: false, received: 0 };
+      return { ok: false, messages: [] };
     }
 
     const messages = this.parseInboundMessages(payload);
@@ -148,10 +151,9 @@ export class InstagramService {
       this.logger.log(
         `IG DM de ${msg.instagramUserId}: ${msg.text.slice(0, 80)}`,
       );
-      // Próximo passo: resolver contactId + ChatbotRouter (sem duplicar engines).
     }
 
-    return { ok: true, received: messages.length };
+    return { ok: true, messages };
   }
 
   /**
