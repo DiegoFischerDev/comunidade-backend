@@ -2,12 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { decodeWhatsappAudio, whatsappAudioFileName } from './joana-audio';
 import { JOANA_DEFAULT_CONTEXT } from './joana-context';
 import {
-  JOANA_TYPOLOGIES,
   type JoanaProposal,
-  type JoanaTypology,
   canonicalImmigration,
   parseDesiredRent,
-  parseJoanaTypology,
+  formatJoanaTypologiesKey,
+  parseJoanaTypologies,
 } from './joana-turn';
 
 @Injectable()
@@ -111,7 +110,7 @@ export class JoanaOpenAiService {
       'A data de imigração é o único campo com confirmação: quando a pessoa der uma data (ou imediato), preenche immigration no JSON. Não digas que gravaste. O sistema pergunta se confirma. confirmation só é "yes" ou "no" quando a pessoa responde a essa confirmação de data; senão null. Se em vez de sim/não ela der outra data, preenche immigration com a nova e deixa confirmation null.',
       'Não comente que a informação foi guardada, registrada ou atualizada. Não invente preço nem horário.',
       'Devolva só JSON com as chaves: reply, interested, confirmation, name, immigration, hasVisa, cities, typology, desiredRent, hasPet.',
-      'name, immigration, hasVisa, cities, typology, desiredRent, hasPet: omita a chave se a pessoa não falou desse dado nesta mensagem. Se falou, preenche mesmo que a ficha já tenha outro valor. immigration é YYYY-MM-DD, "IMEDIATO", ou "" para apagar. hasVisa é true se a pessoa já tem visto e false se disser que ainda não tem, mesmo que a ficha já esteja assim. typology é uma de: QUARTO, T0, T1, T2, T3, T4, T5. desiredRent é o aluguel mensal do imóvel em euros inteiros, ou "" para apagar. Não uses o preço do serviço da Rafa. hasPet é true ou false.',
+      'name, immigration, hasVisa, cities, typology, desiredRent, hasPet: omita a chave se a pessoa não falou desse dado nesta mensagem. Se falou, preenche mesmo que a ficha já tenha outro valor. immigration é YYYY-MM-DD, "IMEDIATO", ou "" para apagar. hasVisa é true se a pessoa já tem visto e false se disser que ainda não tem, mesmo que a ficha já esteja assim. typology é uma ou várias de: QUARTO, T0, T1, T2, T3, T4, T5 — se a pessoa aceitar mais de uma (ex.: "T2 ou T3"), junta numa string com vírgula ou "ou" (ex.: "T2,T3" ou "T2 ou T3"). desiredRent é o aluguel mensal do imóvel em euros inteiros, ou "" para apagar. Não uses o preço do serviço da Rafa. hasPet é true ou false.',
       'cities pode juntar várias cidades numa frase.',
       today,
     ].join('\n');
@@ -390,11 +389,13 @@ export function parseJoanaModelJson(content: string): {
   }
   if (typeof parsed.cities === 'string') proposal.cities = parsed.cities;
   if (typeof parsed.typology === 'string') {
-    const typology = parseJoanaTypology(parsed.typology);
-    if (typology && (JOANA_TYPOLOGIES as readonly string[]).includes(typology)) {
-      proposal.typology = typology as JoanaTypology;
-    } else if (!parsed.typology.trim()) {
+    if (!parsed.typology.trim()) {
       proposal.typology = '';
+    } else {
+      const typologies = parseJoanaTypologies(parsed.typology);
+      if (typologies.length > 0) {
+        proposal.typology = formatJoanaTypologiesKey(typologies);
+      }
     }
   }
   const desiredRent = parseDesiredRent(parsed.desiredRent);

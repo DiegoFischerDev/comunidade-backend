@@ -107,6 +107,7 @@ export class RafacallController {
       deviceId: string;
       startsAtUtcIso: string;
       tz: string;
+      bookingId?: string | null;
     },
   ) {
     return this.bookingService.bookPublic(body);

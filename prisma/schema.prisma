@@ -396,9 +396,9 @@ model RafaCallBooking {
    */
   crmImmigrationImmediate  Boolean               @default(false) @map("crm_immigration_immediate")
   /**
-   * Tipologia de imóvel pretendida (pipeline CRM).
+   * Tipologias de imóvel pretendidas (pipeline CRM). Pode ser várias (ex.: T2 e T3).
    */
-  crmPropertyTypology    RafaCallCrmPropertyTypology? @map("crm_property_typology")
+  crmPropertyTypology    RafaCallCrmPropertyTypology[] @default([]) @map("crm_property_typology")
   /**
    * Cidade de preferência para imóvel.
    */
@@ -1416,7 +1416,7 @@ model CrmLead {
   crmComments              String?                      @map("crm_comments") @db.Text
   crmExpectedImmigrationAt DateTime?                    @map("crm_expected_immigration_at")
   crmImmigrationImmediate  Boolean                      @default(false) @map("crm_immigration_immediate")
-  crmPropertyTypology      RafaCallCrmPropertyTypology? @map("crm_property_typology")
+  crmPropertyTypology      RafaCallCrmPropertyTypology[] @default([]) @map("crm_property_typology")
   crmPreferredCity         String?                      @map("crm_preferred_city")
   crmHasPet                Boolean?                     @map("crm_has_pet")
   crmDesiredRent           Int?                         @map("crm_desired_rent")

@@ -181,7 +181,11 @@ export class GenericContextEngine {
           ? {
               desiredHouseValue: lead.desiredHouseValue,
               preferredCities: lead.crmPreferredCity,
-              propertyTypology: lead.crmPropertyTypology,
+              propertyTypology: Array.isArray(lead.crmPropertyTypology)
+                ? lead.crmPropertyTypology
+                : lead.crmPropertyTypology
+                  ? [lead.crmPropertyTypology]
+                  : [],
             }
           : emptyBrunaProfile();
         const interpreted = await this.interpretBruna({
@@ -275,7 +279,7 @@ export class GenericContextEngine {
       'desiredHouseValue, preferredCities e propertyTypology: só inclui a chave se a pessoa falou desse dado agora.',
       'desiredHouseValue: euros inteiros do imóvel pretendido (ex.: 220000).',
       'preferredCities: cidade(s) em Portugal, texto curto.',
-      'propertyTypology: um de QUARTO, T0, T1, T2, T3, T4, T5.',
+      'propertyTypology: uma ou várias de QUARTO, T0, T1, T2, T3, T4, T5 (ex.: "T2" ou "T2 ou T3").',
       'Na reply: frases curtas. Reage ao que disseram. Não digas que gravaste dados.',
       'Ordem: valor da casa pretendida → cidades pretendidas → tipologia do imóvel.',
       'Não inventes taxas, spreads, prazos nem condições bancárias. Não digas que és uma IA.',

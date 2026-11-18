@@ -1,5 +1,19 @@
 import { RafaCallCrmPropertyTypology, RafaCallCrmStatus } from '@prisma/client';
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  ValidateIf,
+} from 'class-validator';
+import { normalizeCrmPropertyTypologies } from '../rafacall-crm.constants';
 
 export class UpdateRafacallCrmDto {
   @IsOptional()
@@ -31,8 +45,12 @@ export class UpdateRafacallCrmDto {
 
   @IsOptional()
   @ValidateIf((_, value) => value !== null)
-  @IsEnum(RafaCallCrmPropertyTypology)
-  crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
+  @Transform(({ value }) =>
+    value === null ? [] : normalizeCrmPropertyTypologies(value),
+  )
+  @IsArray()
+  @IsEnum(RafaCallCrmPropertyTypology, { each: true })
+  crmPropertyTypology?: RafaCallCrmPropertyTypology[] | null;
 
   @IsOptional()
   @ValidateIf((_, value) => value !== null)

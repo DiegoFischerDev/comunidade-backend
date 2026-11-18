@@ -44,6 +44,7 @@ export class ChatbotRouterService {
     instagramUserId: string;
     profileName?: string | null;
     profileUsername?: string | null;
+    profilePicUrl?: string | null;
   }): Promise<void> {
     const ig = input.instagramUserId.trim();
     if (!ig) return;
@@ -74,6 +75,7 @@ export class ChatbotRouterService {
         guestName: true,
         instagramHandle: true,
         rafaCallBookingId: true,
+        crmProfileImageUrl: true,
       },
     });
 
@@ -109,6 +111,18 @@ export class ChatbotRouterService {
           });
         }
       }
+    }
+
+    // Avatar: descarrega profile_pic (URL Meta expira) e grava no CRM.
+    if (input.profilePicUrl?.trim() || leads.some((l) => !l.crmProfileImageUrl)) {
+      const existingUrl =
+        leads.map((l) => l.crmProfileImageUrl?.trim() || null).find(Boolean) ||
+        null;
+      this.crm.scheduleEnsureInstagramProfileImage(
+        ig,
+        existingUrl,
+        input.profilePicUrl ?? null,
+      );
     }
   }
 

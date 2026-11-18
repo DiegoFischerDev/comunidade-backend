@@ -12,12 +12,16 @@ export type InstagramInboundMessage = {
   profileName?: string | null;
   /** @username do Instagram (Graph User Profile). */
   profileUsername?: string | null;
+  /** URL temporária da foto (Graph) — expira em poucos dias; descarregar e guardar. */
+  profilePicUrl?: string | null;
   raw: unknown;
 };
 
 export type InstagramUserProfile = {
   name: string | null;
   username: string | null;
+  /** URL CDN Meta; pode ser null e expira em poucos dias. */
+  profilePicUrl: string | null;
 };
 
 export type InstagramWebhookPayload = {

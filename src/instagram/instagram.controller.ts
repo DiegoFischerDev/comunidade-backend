@@ -74,11 +74,12 @@ export class InstagramController {
         const pushName =
           msg.profileName?.trim() ||
           (msg.profileUsername ? `@${msg.profileUsername}` : undefined);
-        if (msg.profileName || msg.profileUsername) {
+        if (msg.profileName || msg.profileUsername || msg.profilePicUrl) {
           await this.router.enrichInstagramSender({
             instagramUserId: msg.instagramUserId,
             profileName: msg.profileName ?? null,
             profileUsername: msg.profileUsername ?? null,
+            profilePicUrl: msg.profilePicUrl ?? null,
           });
         }
         await this.router.bufferInbound({

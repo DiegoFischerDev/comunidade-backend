@@ -570,6 +570,7 @@ export class JoanaService {
                 next.crmStatus,
                 row.whatsappDigits,
                 next.name,
+                next.bookingId,
               );
               if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO) {
                 farGuidanceSent = false;
@@ -643,12 +644,15 @@ export class JoanaService {
     status: RafaCallCrmStatus,
     whatsapp: string | null,
     name: string | null,
+    bookingId: string | null,
   ): string | null {
     if (status === RafaCallCrmStatus.IMIGRACAO_PERTO) {
       let link = '';
       try {
         const base = getFrontendBaseUrl().replace(/\/$/, '');
         const params = new URLSearchParams();
+        // Âncora do cartão CRM — evita duplicar ao agendar (IG sem WA na URL).
+        if (bookingId?.trim()) params.set('booking', bookingId.trim());
         if (whatsapp?.trim()) params.set('whatsapp', whatsapp.trim());
         if (name && !isPlaceholderLeadName(name)) params.set('name', name);
         const qs = params.toString();
@@ -1135,14 +1139,14 @@ function patchToUpdate(patch: JoanaCrmPatch) {
   const data: {
     crmExpectedImmigrationAt?: string | null;
     crmPreferredCity?: string | null;
-    crmPropertyTypology?: JoanaTypology | null;
+    crmPropertyTypology?: JoanaTypology[];
     crmDesiredRent?: number | null;
     crmHasPet?: boolean | null;
     crmHasVisa?: boolean | null;
   } = {};
   if ('immigration' in patch) data.crmExpectedImmigrationAt = patch.immigration ?? null;
   if ('cities' in patch) data.crmPreferredCity = patch.cities ?? null;
-  if ('typology' in patch) data.crmPropertyTypology = patch.typology ?? null;
+  if ('typology' in patch) data.crmPropertyTypology = patch.typology ?? [];
   if ('desiredRent' in patch) data.crmDesiredRent = patch.desiredRent ?? null;
   if ('hasPet' in patch) data.crmHasPet = patch.hasPet ?? null;
   if ('hasVisa' in patch) data.crmHasVisa = patch.hasVisa ?? null;
@@ -1153,16 +1157,21 @@ function profileFromLead(lead: {
   name: string | null;
   immigration: string | null;
   cities: string | null;
-  typology: JoanaTypology | null;
+  typology: JoanaTypology[] | JoanaTypology | null;
   desiredRent: number | null;
   hasVisa: boolean | null;
   hasPet: boolean | null;
 }): JoanaProfile {
+  const typology = Array.isArray(lead.typology)
+    ? lead.typology
+    : lead.typology
+      ? [lead.typology]
+      : [];
   return {
     name: lead.name,
     immigration: lead.immigration,
     cities: lead.cities,
-    typology: lead.typology,
+    typology,
     desiredRent: lead.desiredRent,
     hasVisa: lead.hasVisa,
     hasPet: lead.hasPet,
@@ -1180,9 +1189,12 @@ function describeProfile(
   if (kind === 'none') {
     return 'Ainda não há ficha no CRM. Se esta mensagem não for um sim claro ao serviço, apresenta-te, explica o relocation e pergunta se tem interesse, sem recolher dados. Se for um sim, podes guardar o que ela disse agora. Se for um não claro ao serviço, interested é false: reação curta sem pergunta; o sistema faz o handoff à Rafa.';
   }
-  const typology = profile.typology
-    ? `${profile.typology} (${JOANA_TYPOLOGY_SPEECH[profile.typology]})`
-    : 'ainda não temos';
+  const typology =
+    profile.typology.length > 0
+      ? profile.typology
+          .map((item) => `${item} (${JOANA_TYPOLOGY_SPEECH[item]})`)
+          .join(' ou ')
+      : 'ainda não temos';
   const nextQuestion = missingFieldQuestion(profile);
   const nameLabel =
     profile.name && !isPlaceholderLeadName(profile.name)

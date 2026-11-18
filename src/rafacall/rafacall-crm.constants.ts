@@ -1,4 +1,50 @@
-import { RafaCallBookingStatus, RafaCallCrmStatus } from '@prisma/client';
+import {
+  RafaCallBookingStatus,
+  RafaCallCrmPropertyTypology,
+  RafaCallCrmStatus,
+} from '@prisma/client';
+
+export const RAFA_CALL_CRM_PROPERTY_TYPOLOGY_ORDER: RafaCallCrmPropertyTypology[] = [
+  RafaCallCrmPropertyTypology.QUARTO,
+  RafaCallCrmPropertyTypology.T0,
+  RafaCallCrmPropertyTypology.T1,
+  RafaCallCrmPropertyTypology.T2,
+  RafaCallCrmPropertyTypology.T3,
+  RafaCallCrmPropertyTypology.T4,
+  RafaCallCrmPropertyTypology.T5,
+];
+
+/** Normaliza tipologias: único, ordenado, sem duplicados. */
+export function normalizeCrmPropertyTypologies(
+  value:
+    | RafaCallCrmPropertyTypology
+    | RafaCallCrmPropertyTypology[]
+    | null
+    | undefined,
+): RafaCallCrmPropertyTypology[] {
+  if (value == null) return [];
+  const list = Array.isArray(value) ? value : [value];
+  const set = new Set(list);
+  return RAFA_CALL_CRM_PROPERTY_TYPOLOGY_ORDER.filter((item) => set.has(item));
+}
+
+export function sameCrmPropertyTypologies(
+  left:
+    | RafaCallCrmPropertyTypology
+    | RafaCallCrmPropertyTypology[]
+    | null
+    | undefined,
+  right:
+    | RafaCallCrmPropertyTypology
+    | RafaCallCrmPropertyTypology[]
+    | null
+    | undefined,
+): boolean {
+  return (
+    normalizeCrmPropertyTypologies(left).join(',') ===
+    normalizeCrmPropertyTypologies(right).join(',')
+  );
+}
 
 export const RAFA_CALL_CRM_STATUS_ORDER: RafaCallCrmStatus[] = [
   RafaCallCrmStatus.IMIGRACAO_NULL,

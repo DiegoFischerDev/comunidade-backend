@@ -15,6 +15,7 @@ import {
   inferPersonNameFromMessage,
   isPlaceholderLeadName,
   parseDesiredRent,
+  parseJoanaTypologies,
   shouldOfferSchedulingLink,
   withInferredConfirmation,
   withInferredName,
@@ -25,7 +26,7 @@ const filled: JoanaProfile = {
   name: 'Ana',
   immigration: '2026-12-18',
   cities: 'Porto',
-  typology: 'T1',
+  typology: ['T1'],
   desiredRent: 800,
   hasVisa: true,
   hasPet: false,
@@ -40,6 +41,16 @@ describe('parseDesiredRent', () => {
     expect(parseDesiredRent('')).toBe('');
     expect(parseDesiredRent(undefined)).toBeUndefined();
     expect(parseDesiredRent(150_000)).toBeUndefined();
+  });
+});
+
+describe('parseJoanaTypologies', () => {
+  it('aceita uma ou várias tipologias', () => {
+    expect(parseJoanaTypologies('T2')).toEqual(['T2']);
+    expect(parseJoanaTypologies('T2 ou T3')).toEqual(['T2', 'T3']);
+    expect(parseJoanaTypologies('t2, t3')).toEqual(['T2', 'T3']);
+    expect(parseJoanaTypologies('quero T2 e T3')).toEqual(['T2', 'T3']);
+    expect(parseJoanaTypologies('')).toEqual([]);
   });
 });
 

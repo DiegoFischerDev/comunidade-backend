@@ -15,6 +15,10 @@ import {
   type WeekdayKey,
   type WorkingHoursDays,
 } from './rafacall-working-hours';
+import {
+  isCrmLeadPlaceholderBooking,
+  isCrmPlaceholderSlotTimes,
+} from './rafacall-crm.constants';
 
 type DayAvailability = {
   date: string; // YYYY-MM-DD no tz do utilizador
@@ -990,6 +994,8 @@ export class RafacallBookingService {
     deviceId: string;
     startsAtUtcIso: string;
     tz: string;
+    /** Cartão CRM Joana (placeholder) — agenda em cima deste ID em vez de criar outro. */
+    bookingId?: string | null;
   }) {
     const name = input.name.trim();
     if (!name || name.length < 2) {
@@ -1007,6 +1013,18 @@ export class RafacallBookingService {
     if (!tz) throw new BadRequestException('tz é obrigatório.');
     if (ymdInTz(tz, startsAt) === ymdInTz(tz, new Date())) {
       throw new BadRequestException('Só é possível agendar a partir do dia seguinte.');
+    }
+
+    const anchorBookingId = input.bookingId?.trim() || null;
+    if (anchorBookingId) {
+      return this.bookPublicOntoCrmLead({
+        bookingId: anchorBookingId,
+        name,
+        wa,
+        deviceId,
+        startsAt,
+        tz,
+      });
     }
 
     const existingDevice = await this.getCurrentBookingByDeviceId(deviceId);
@@ -1068,6 +1086,113 @@ export class RafacallBookingService {
     });
 
     return this.serializePublicBooking(created);
+  }
+
+  /**
+   * Agenda a vídeo chamada no cartão CRM já existente (ex.: lead IG Joana).
+   * Preserva tipologia, cidades, visto, etc., e evita duplicar no kanban.
+   */
+  private async bookPublicOntoCrmLead(input: {
+    bookingId: string;
+    name: string;
+    wa: string;
+    deviceId: string;
+    startsAt: Date;
+    tz: string;
+  }) {
+    const existing = await this.prisma.rafaCallBooking.findUnique({
+      where: { id: input.bookingId },
+    });
+    if (!existing || existing.crmExcludedAt) {
+      throw new BadRequestException(
+        'Link de agendamento inválido ou lead removido do CRM.',
+      );
+    }
+    if (existing.status === RafaCallBookingStatus.CANCELLED) {
+      throw new BadRequestException(
+        'Este lead foi cancelado. Pede um link novo à Joana ou à equipa.',
+      );
+    }
+
+    const now = new Date();
+    const alreadyScheduled =
+      existing.status === RafaCallBookingStatus.SCHEDULED &&
+      existing.endsAt > now &&
+      !isCrmPlaceholderSlotTimes(existing);
+    if (alreadyScheduled) {
+      throw new BadRequestException(
+        'Este lead já tem uma vídeo chamada agendada.',
+      );
+    }
+
+    const canAttach =
+      isCrmLeadPlaceholderBooking(existing) ||
+      isCrmPlaceholderSlotTimes(existing);
+    if (!canAttach) {
+      throw new BadRequestException(
+        'Este link de agendamento já não pode ser usado neste lead.',
+      );
+    }
+
+    const existingDevice = await this.getCurrentBookingByDeviceId(input.deviceId);
+    if (existingDevice && existingDevice.id !== input.bookingId) {
+      throw new BadRequestException(
+        'Este dispositivo já tem um agendamento ativo. Usa o link de gestão para alterar ou cancelar.',
+      );
+    }
+
+    const existingWa = await this.getCurrentBookingByWhatsapp(input.wa);
+    if (existingWa && existingWa.id !== input.bookingId) {
+      throw new BadRequestException(
+        'Este número de WhatsApp já tem um agendamento ativo.',
+      );
+    }
+
+    const endsAt = await this.assertSlotAvailableForBooking(
+      input.startsAt,
+      input.bookingId,
+    );
+
+    const updated = await this.prisma.rafaCallBooking.update({
+      where: { id: input.bookingId },
+      data: {
+        guestName: input.name,
+        guestWhatsapp: input.wa,
+        clientDeviceId: input.deviceId,
+        status: RafaCallBookingStatus.SCHEDULED,
+        origin: RafaCallBookingOrigin.PUBLIC_FREE,
+        startsAt: input.startsAt,
+        endsAt,
+        timezone: input.tz,
+        crmExcludedAt: null,
+      },
+    });
+
+    await this.crm.attachWhatsappToCrmBooking({
+      bookingId: updated.id,
+      whatsapp: input.wa,
+      name: input.name,
+    });
+    await this.crm.onScheduledBookingCreated(updated.id);
+
+    void this.sendBookingMessage(
+      {
+        name: input.name,
+        whatsapp: input.wa,
+        bookingId: updated.id,
+        origin: RafaCallBookingOrigin.PUBLIC_FREE,
+      },
+      'booked',
+      { startsAt: input.startsAt, endsAt, timezone: input.tz },
+    ).catch((err) => {
+      this.logger.warn(
+        `Falha ao enviar WhatsApp de confirmação (agendamento CRM ${updated.id}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
+
+    return this.serializePublicBooking(updated);
   }
 
   /** Cria booking manualmente (admin) — sem restrições de dispositivo ou dia seguinte. */
@@ -1217,6 +1342,10 @@ export class RafacallBookingService {
 
     const base = getFrontendBaseUrl().replace(/\/$/, '');
     const params = new URLSearchParams();
+    const crmLead = await this.crm.lookupLeadForJoana(whatsapp);
+    if (crmLead.kind === 'visible' && crmLead.bookingId) {
+      params.set('booking', crmLead.bookingId);
+    }
     params.set('whatsapp', whatsapp);
     if (name) params.set('name', name);
     const link = `${base}/agendar?${params.toString()}`;

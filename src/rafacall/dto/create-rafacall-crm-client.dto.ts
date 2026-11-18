@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsEnum,
   IsNotEmpty,
   IsOptional,
@@ -8,7 +9,9 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { RafaCallCrmPropertyTypology } from '@prisma/client';
+import { normalizeCrmPropertyTypologies } from '../rafacall-crm.constants';
 
 export class CreateRafacallCrmClientDto {
   @IsString()
@@ -33,8 +36,12 @@ export class CreateRafacallCrmClientDto {
 
   @IsOptional()
   @ValidateIf((_, value) => value !== null)
-  @IsEnum(RafaCallCrmPropertyTypology)
-  crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
+  @Transform(({ value }) =>
+    value === null ? [] : normalizeCrmPropertyTypologies(value),
+  )
+  @IsArray()
+  @IsEnum(RafaCallCrmPropertyTypology, { each: true })
+  crmPropertyTypology?: RafaCallCrmPropertyTypology[] | null;
 
   @IsOptional()
   @ValidateIf((_, value) => value !== null)

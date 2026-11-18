@@ -36,7 +36,8 @@ export type JoanaProfile = {
   immigration: string | null;
   hasVisa: boolean | null;
   cities: string | null;
-  typology: JoanaTypology | null;
+  /** Uma ou várias tipologias (ex.: T2 e T3). Vazio = ainda não sabemos. */
+  typology: JoanaTypology[];
   /** Euros inteiros por mês, ou null se ainda não sabemos. */
   desiredRent: number | null;
   hasPet: boolean | null;
@@ -64,7 +65,7 @@ export type PendingConfirmation = {
 export type JoanaCrmPatch = {
   immigration?: string | null;
   cities?: string | null;
-  typology?: JoanaTypology | null;
+  typology?: JoanaTypology[] | null;
   hasVisa?: boolean | null;
   desiredRent?: number | null;
   hasPet?: boolean | null;
@@ -106,10 +107,31 @@ export function emptyJoanaProfile(): JoanaProfile {
     immigration: null,
     hasVisa: null,
     cities: null,
-    typology: null,
+    typology: [],
     desiredRent: null,
     hasPet: null,
   };
+}
+
+export function normalizeJoanaTypologies(
+  list: readonly JoanaTypology[],
+): JoanaTypology[] {
+  const set = new Set(list);
+  return JOANA_TYPOLOGIES.filter((item) => set.has(item));
+}
+
+export function formatJoanaTypologiesKey(list: readonly JoanaTypology[]): string {
+  return normalizeJoanaTypologies(list).join(',');
+}
+
+export function formatJoanaTypologiesSpeech(
+  list: readonly JoanaTypology[],
+): string {
+  const normalized = normalizeJoanaTypologies(list);
+  if (normalized.length === 0) return '';
+  return normalized
+    .map((item) => `${item} (${JOANA_TYPOLOGY_SPEECH[item]})`)
+    .join(' ou ');
 }
 
 export function canonicalImmigration(raw: string | null | undefined): string | null {
@@ -258,7 +280,7 @@ export function nextMissingField(profile: JoanaProfile): JoanaField | null {
   if (!profile.immigration) return 'immigration';
   if (profile.hasVisa === null) return 'visa';
   if (!profile.cities) return 'cities';
-  if (!profile.typology) return 'typology';
+  if (profile.typology.length === 0) return 'typology';
   if (profile.desiredRent == null) return 'rent';
   if (profile.hasPet === null) return 'pet';
   if (!profile.name || isPlaceholderLeadName(profile.name)) return 'name';
@@ -303,6 +325,31 @@ export function parseJoanaTypology(raw: string | null | undefined): JoanaTypolog
   return null;
 }
 
+/**
+ * Aceita uma ou várias tipologias: "T2", "T2,T3", "T2 ou T3", "quero t2 e t3".
+ */
+export function parseJoanaTypologies(
+  raw: string | null | undefined,
+): JoanaTypology[] {
+  if (raw == null) return [];
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+
+  const single = parseJoanaTypology(trimmed);
+  if (single) return [single];
+
+  const upper = trimmed
+    .toUpperCase()
+    .replace(/APENAS\s*QUARTO/gi, 'QUARTO');
+  const found: JoanaTypology[] = [];
+  for (const match of upper.matchAll(/\b(QUARTO|T[0-5])\b/g)) {
+    const typology = parseJoanaTypology(match[1]);
+    if (typology) found.push(typology);
+  }
+
+  return normalizeJoanaTypologies(found);
+}
+
 function sameText(left: string | null, right: string): boolean {
   return (left ?? '').trim().toLowerCase() === right.trim().toLowerCase();
 }
@@ -319,7 +366,9 @@ function currentRaw(profile: JoanaProfile, field: JoanaField): string | null {
     case 'cities':
       return profile.cities;
     case 'typology':
-      return profile.typology;
+      return profile.typology.length > 0
+        ? formatJoanaTypologiesKey(profile.typology)
+        : null;
     case 'rent':
       return profile.desiredRent == null ? null : String(profile.desiredRent);
     case 'pet':
@@ -344,7 +393,8 @@ function proposedRaw(proposal: JoanaProposal, field: JoanaField): string | undef
     case 'typology': {
       if (proposal.typology === undefined) return undefined;
       if (!proposal.typology.trim()) return '';
-      return parseJoanaTypology(proposal.typology) ?? undefined;
+      const list = parseJoanaTypologies(proposal.typology);
+      return list.length > 0 ? formatJoanaTypologiesKey(list) : undefined;
     }
     case 'rent': {
       if (proposal.desiredRent === undefined) return undefined;
@@ -382,9 +432,10 @@ export function confirmationQuestion(field: JoanaField, value: string): string {
         ? `Quer atualizar as cidades pretendidas para ${value}?`
         : 'Quer deixar as cidades pretendidas em branco?';
     case 'typology': {
-      const speech = JOANA_TYPOLOGY_SPEECH[value as JoanaTypology];
+      const list = parseJoanaTypologies(value);
+      const speech = formatJoanaTypologiesSpeech(list);
       return speech
-        ? `Quer atualizar a tipologia para ${value}, ${speech}?`
+        ? `Quer atualizar a tipologia para ${speech}?`
         : 'Quer deixar a tipologia em branco?';
     }
     case 'rent':
@@ -457,7 +508,7 @@ export function missingFieldQuestion(profile: JoanaProfile): string | null {
     case 'cities':
       return 'Quais cidades você está considerando? Pode ser mais de uma, por exemplo Viseu, Aveiro e São Pedro do Sul.';
     case 'typology':
-      return 'Que imóvel você procura? Quarto é só um quarto. T0 é estúdio. T1 é uma casa com um quarto, T2 com dois, T3 com três, T4 com quatro e T5 com cinco.';
+      return 'Que imóvel você procura? Pode ser mais de uma opção, por exemplo T2 ou T3. Quarto é só um quarto. T0 é estúdio. T1 é uma casa com um quarto, T2 com dois, T3 com três, T4 com quatro e T5 com cinco.';
     case 'rent':
       return 'Qual o valor do aluguel pretendido por mês? Pode ser um valor aproximado, em euros.';
     case 'pet':
@@ -598,7 +649,7 @@ function applyValue(profile: JoanaProfile, patch: JoanaCrmPatch, field: JoanaFie
       patch.cities = value || null;
       return;
     case 'typology':
-      profile.typology = (value || null) as JoanaTypology | null;
+      profile.typology = value ? parseJoanaTypologies(value) : [];
       patch.typology = profile.typology;
       return;
     case 'rent': {

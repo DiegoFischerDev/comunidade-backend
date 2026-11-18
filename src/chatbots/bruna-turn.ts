@@ -1,6 +1,8 @@
 import { RafaCallCrmPropertyTypology } from '@prisma/client';
 import {
+  formatJoanaTypologiesKey,
   normalizeCities,
+  parseJoanaTypologies,
   parseJoanaTypology,
   type JoanaTypology,
 } from '../joana/joana-turn';
@@ -11,7 +13,8 @@ export type BrunaProfile = {
   /** Euros inteiros do imóvel pretendido. */
   desiredHouseValue: number | null;
   preferredCities: string | null;
-  propertyTypology: BrunaTypology | null;
+  /** Uma ou várias tipologias. Vazio = ainda não sabemos. */
+  propertyTypology: BrunaTypology[];
 };
 
 export type BrunaProposal = {
@@ -69,6 +72,12 @@ export function parseBrunaTypology(
   return parseJoanaTypology(raw);
 }
 
+export function parseBrunaTypologies(
+  raw: string | null | undefined,
+): BrunaTypology[] {
+  return parseJoanaTypologies(raw);
+}
+
 export function normalizePreferredCities(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const cities = normalizeCities(raw);
@@ -80,7 +89,7 @@ export function emptyBrunaProfile(): BrunaProfile {
   return {
     desiredHouseValue: null,
     preferredCities: null,
-    propertyTypology: null,
+    propertyTypology: [],
   };
 }
 
@@ -103,10 +112,10 @@ export function applyBrunaProposal(
   }
   if (proposal.propertyTypology !== undefined) {
     if (!proposal.propertyTypology.trim()) {
-      next.propertyTypology = null;
+      next.propertyTypology = [];
     } else {
-      const typology = parseBrunaTypology(proposal.propertyTypology);
-      if (typology) next.propertyTypology = typology;
+      const typologies = parseBrunaTypologies(proposal.propertyTypology);
+      if (typologies.length > 0) next.propertyTypology = typologies;
     }
   }
   return next;
@@ -115,7 +124,7 @@ export function applyBrunaProposal(
 export function nextBrunaMissingField(profile: BrunaProfile): BrunaField | null {
   if (profile.desiredHouseValue == null) return 'desiredHouseValue';
   if (!profile.preferredCities?.trim()) return 'preferredCities';
-  if (!profile.propertyTypology) return 'propertyTypology';
+  if (profile.propertyTypology.length === 0) return 'propertyTypology';
   return null;
 }
 
@@ -126,7 +135,7 @@ export function brunaMissingFieldQuestion(field: BrunaField): string {
   if (field === 'preferredCities') {
     return 'Em que cidade ou cidades de Portugal você gostaria de comprar?';
   }
-  return 'Que tipologia procura? T0 é estúdio, T1 tem um quarto, T2 dois, T3 três, e assim por diante.';
+  return 'Que tipologia procura? Pode ser mais de uma, por exemplo T2 ou T3. T0 é estúdio, T1 tem um quarto, T2 dois, T3 três, e assim por diante.';
 }
 
 export function formatHouseValueLabel(value: number): string {
@@ -139,7 +148,10 @@ export function brunaProfileSummary(profile: BrunaProfile): string {
       ? 'ainda não sabemos'
       : formatHouseValueLabel(profile.desiredHouseValue);
   const cities = profile.preferredCities?.trim() || 'ainda não sabemos';
-  const typology = profile.propertyTypology || 'ainda não sabemos';
+  const typology =
+    profile.propertyTypology.length > 0
+      ? formatJoanaTypologiesKey(profile.propertyTypology)
+      : 'ainda não sabemos';
   return `Valor da casa: ${house}. Cidades: ${cities}. Tipologia: ${typology}. Próximo a perguntar: ${
     nextBrunaMissingField(profile) ?? 'nenhum'
   }.`;
@@ -207,8 +219,10 @@ export function parseBrunaModelJson(content: string): {
     ) {
       proposal.propertyTypology = '';
     } else if (typeof parsed.propertyTypology === 'string') {
-      const typology = parseBrunaTypology(parsed.propertyTypology);
-      if (typology) proposal.propertyTypology = typology;
+      const typologies = parseBrunaTypologies(parsed.propertyTypology);
+      if (typologies.length > 0) {
+        proposal.propertyTypology = formatJoanaTypologiesKey(typologies);
+      }
     }
   }
 

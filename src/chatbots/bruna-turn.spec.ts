@@ -31,7 +31,7 @@ describe('bruna qualification order', () => {
 
     profile = applyBrunaProposal(profile, { propertyTypology: 'T2' });
     expect(nextBrunaMissingField(profile)).toBeNull();
-    expect(profile.propertyTypology).toBe('T2');
+    expect(profile.propertyTypology).toEqual(['T2']);
   });
 });
 

@@ -1,9 +1,12 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { Prisma, RafaCallCrmPropertyTypology } from '@prisma/client';
+import { InstagramService } from '../instagram/instagram.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
 import { ChatbotService } from './chatbot.service';
@@ -32,6 +35,8 @@ export class ChatbotCrmService {
     private readonly prisma: PrismaService,
     private readonly chatbots: ChatbotService,
     private readonly rafacallCrm: RafacallCrmService,
+    @Inject(forwardRef(() => InstagramService))
+    private readonly instagram: InstagramService,
   ) {}
 
   async listBoard(slug: string) {
@@ -338,10 +343,17 @@ export class ChatbotCrmService {
           updated.crmProfileImageUrl,
         );
       }
+      if (ig || updated.instagramUserId) {
+        void this.scheduleEnsureInstagramProfileImage(
+          ig || updated.instagramUserId!,
+          updated.crmProfileImageUrl,
+        );
+      }
       await this.ensureJoanaRafaCallCard({
         chatbotId: params.chatbotId,
         crmLeadId: updated.id,
         whatsapp: updated.whatsappDigits,
+        instagramUserId: updated.instagramUserId || ig,
         guestName:
           updated.guestName ||
           cleanName(params.displayName) ||
@@ -389,10 +401,17 @@ export class ChatbotCrmService {
           restored.crmProfileImageUrl,
         );
       }
+      if (ig || restored.instagramUserId) {
+        void this.scheduleEnsureInstagramProfileImage(
+          ig || restored.instagramUserId!,
+          restored.crmProfileImageUrl,
+        );
+      }
       await this.ensureJoanaRafaCallCard({
         chatbotId: params.chatbotId,
         crmLeadId: restored.id,
         whatsapp: restored.whatsappDigits,
+        instagramUserId: restored.instagramUserId || ig,
         guestName:
           restored.guestName ||
           cleanName(params.displayName) ||
@@ -427,10 +446,12 @@ export class ChatbotCrmService {
         },
       });
       if (whatsapp) void this.scheduleEnsureProfileImage(whatsapp, null);
+      if (ig) void this.scheduleEnsureInstagramProfileImage(ig, null);
       await this.ensureJoanaRafaCallCard({
         chatbotId: params.chatbotId,
         crmLeadId: created.id,
         whatsapp,
+        instagramUserId: ig,
         guestName: created.guestName || fallbackName,
       });
       return created;
@@ -447,8 +468,15 @@ export class ChatbotCrmService {
             chatbotId: params.chatbotId,
             crmLeadId: again.id,
             whatsapp: again.whatsappDigits,
+            instagramUserId: again.instagramUserId || ig,
             guestName: again.guestName || fallbackName,
           });
+          if (again.instagramUserId || ig) {
+            void this.scheduleEnsureInstagramProfileImage(
+              again.instagramUserId || ig!,
+              again.crmProfileImageUrl,
+            );
+          }
         }
         return again;
       }
@@ -465,6 +493,7 @@ export class ChatbotCrmService {
     chatbotId: string;
     crmLeadId: string;
     whatsapp: string | null;
+    instagramUserId?: string | null;
     guestName: string;
   }): Promise<void> {
     const bot = await this.prisma.chatbot.findUnique({
@@ -475,15 +504,32 @@ export class ChatbotCrmService {
 
     const lead = await this.prisma.crmLead.findUnique({
       where: { id: params.crmLeadId },
-      select: { id: true, rafaCallBookingId: true, guestName: true },
+      select: {
+        id: true,
+        rafaCallBookingId: true,
+        guestName: true,
+        instagramUserId: true,
+        crmProfileImageUrl: true,
+      },
     });
     if (!lead) return;
+
+    const ig = (params.instagramUserId || lead.instagramUserId || '').trim() || null;
+
     if (lead.rafaCallBookingId) {
       const existing = await this.prisma.rafaCallBooking.findFirst({
         where: { id: lead.rafaCallBookingId, crmExcludedAt: null },
         select: { id: true },
       });
-      if (existing) return;
+      if (existing) {
+        if (ig) {
+          void this.scheduleEnsureInstagramProfileImage(
+            ig,
+            lead.crmProfileImageUrl,
+          );
+        }
+        return;
+      }
     }
 
     if (params.whatsapp) {
@@ -493,6 +539,12 @@ export class ChatbotCrmService {
           where: { id: lead.id },
           data: { rafaCallBookingId: visible.bookingId },
         });
+        if (ig) {
+          void this.scheduleEnsureInstagramProfileImage(
+            ig,
+            lead.crmProfileImageUrl,
+          );
+        }
         return;
       }
     }
@@ -506,6 +558,12 @@ export class ChatbotCrmService {
         where: { id: lead.id },
         data: { rafaCallBookingId: created.id },
       });
+      if (ig) {
+        void this.scheduleEnsureInstagramProfileImage(
+          ig,
+          lead.crmProfileImageUrl,
+        );
+      }
     } catch (err: unknown) {
       if (
         err instanceof BadRequestException &&
@@ -518,6 +576,12 @@ export class ChatbotCrmService {
             where: { id: lead.id },
             data: { rafaCallBookingId: again.bookingId },
           });
+          if (ig) {
+            void this.scheduleEnsureInstagramProfileImage(
+              ig,
+              lead.crmProfileImageUrl,
+            );
+          }
         }
         return;
       }
@@ -588,7 +652,7 @@ export class ChatbotCrmService {
       subjectSummary?: string | null;
       desiredHouseValue?: number | null;
       preferredCities?: string | null;
-      propertyTypology?: RafaCallCrmPropertyTypology | null;
+      propertyTypology?: RafaCallCrmPropertyTypology[] | null;
     },
   ) {
     const bot = await this.chatbots.requireBySlug(slug);
@@ -673,7 +737,7 @@ export class ChatbotCrmService {
       }
     }
     if (input.propertyTypology !== undefined) {
-      data.crmPropertyTypology = input.propertyTypology;
+      data.crmPropertyTypology = input.propertyTypology ?? [];
     }
     if (input.botEnabled !== undefined) {
       data.botEnabled = input.botEnabled;
@@ -848,20 +912,61 @@ export class ChatbotCrmService {
     });
   }
 
+  /**
+   * Descarrega a foto IG (Graph) e grava em storage + CrmLead/booking.
+   * Se já houver `remoteUrl` (webhook), evita nova chamada à Graph.
+   */
+  scheduleEnsureInstagramProfileImage(
+    instagramUserId: string,
+    existingUrl?: string | null,
+    remoteUrl?: string | null,
+  ) {
+    const ig = instagramUserId.trim();
+    if (!ig) return;
+    void (async () => {
+      try {
+        let picUrl = remoteUrl?.trim() || null;
+        if (!picUrl && !existingUrl?.trim()) {
+          const profile = await this.instagram.fetchUserProfile(ig);
+          picUrl = profile?.profilePicUrl ?? null;
+        }
+        await this.rafacallCrm.ensureCrmProfileImageFromInstagram(ig, {
+          remoteUrl: picUrl,
+          existingUrl: existingUrl ?? null,
+        });
+      } catch {
+        /* best-effort */
+      }
+    })();
+  }
+
   private scheduleMissingProfileImageBackfill(
     leads: Array<{
       whatsappDigits: string | null;
+      instagramUserId?: string | null;
       crmProfileImageUrl: string | null;
     }>,
   ) {
-    const missing = leads
+    const missingWa = leads
       .filter(
         (lead) =>
           Boolean(lead.whatsappDigits) && !lead.crmProfileImageUrl?.trim(),
       )
       .slice(0, CRM_AVATAR_BOARD_BACKFILL_LIMIT);
-    for (const lead of missing) {
+    for (const lead of missingWa) {
       this.scheduleEnsureProfileImage(lead.whatsappDigits!, null);
+    }
+
+    const missingIg = leads
+      .filter(
+        (lead) =>
+          Boolean(lead.instagramUserId?.trim()) &&
+          !lead.crmProfileImageUrl?.trim() &&
+          !lead.whatsappDigits,
+      )
+      .slice(0, CRM_AVATAR_BOARD_BACKFILL_LIMIT);
+    for (const lead of missingIg) {
+      this.scheduleEnsureInstagramProfileImage(lead.instagramUserId!, null);
     }
   }
 
@@ -898,7 +1003,7 @@ export class ChatbotCrmService {
       subjectSummary?: string | null;
       desiredHouseValue?: number | null;
       crmPreferredCity?: string | null;
-      crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
+      crmPropertyTypology?: RafaCallCrmPropertyTypology[];
       botEnabled: boolean;
       crmComments: string | null;
       crmProfileImageUrl: string | null;
@@ -934,7 +1039,7 @@ export class ChatbotCrmService {
       subjectSummary?: string | null;
       desiredHouseValue?: number | null;
       crmPreferredCity?: string | null;
-      crmPropertyTypology?: RafaCallCrmPropertyTypology | null;
+      crmPropertyTypology?: RafaCallCrmPropertyTypology[];
       botEnabled: boolean;
       crmComments: string | null;
       crmProfileImageUrl: string | null;
@@ -963,7 +1068,7 @@ export class ChatbotCrmService {
       subjectSummary: lead.subjectSummary ?? null,
       desiredHouseValue: lead.desiredHouseValue ?? null,
       preferredCities: lead.crmPreferredCity ?? null,
-      propertyTypology: lead.crmPropertyTypology ?? null,
+      propertyTypology: lead.crmPropertyTypology ?? [],
       botEnabled: lead.botEnabled,
       crmComments: lead.crmComments,
       crmProfileImageUrl: lead.crmProfileImageUrl,

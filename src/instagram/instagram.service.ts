@@ -159,6 +159,7 @@ export class InstagramService {
       if (profile) {
         msg.profileName = profile.name;
         msg.profileUsername = profile.username;
+        msg.profilePicUrl = profile.profilePicUrl;
       }
       this.logger.log(
         `IG DM de ${msg.profileUsername || msg.instagramUserId}: ${msg.text.slice(0, 80)}`,
@@ -195,7 +196,7 @@ export class InstagramService {
     const apiVersion = process.env.META_GRAPH_API_VERSION?.trim() || 'v21.0';
     const url =
       `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(igsid)}` +
-      `?fields=name,username&access_token=${encodeURIComponent(token)}`;
+      `?fields=name,username,profile_pic&access_token=${encodeURIComponent(token)}`;
 
     try {
       const res = await fetch(url);
@@ -210,6 +211,7 @@ export class InstagramService {
       const parsed = JSON.parse(body) as {
         name?: unknown;
         username?: unknown;
+        profile_pic?: unknown;
       };
       const name =
         typeof parsed.name === 'string' && parsed.name.trim()
@@ -219,7 +221,12 @@ export class InstagramService {
         typeof parsed.username === 'string' && parsed.username.trim()
           ? parsed.username.trim().replace(/^@+/, '').slice(0, 119)
           : null;
-      const profile = { name, username };
+      const profilePicUrl =
+        typeof parsed.profile_pic === 'string' &&
+        /^https?:\/\//i.test(parsed.profile_pic.trim())
+          ? parsed.profile_pic.trim()
+          : null;
+      const profile = { name, username, profilePicUrl };
       this.profileCache.set(igsid, { at: Date.now(), profile });
       return profile;
     } catch (err: unknown) {
