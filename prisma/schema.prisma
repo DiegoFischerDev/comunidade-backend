@@ -1390,6 +1390,8 @@ model CrmLead {
   companyName              String?                      @map("company_name") @db.VarChar(160)
   /// @ do Instagram. null = ainda não perguntado; "" = sem Instagram / não aplicável.
   instagramHandle          String?                      @map("instagram_handle") @db.VarChar(120)
+  /// Objectivo da campanha / parceria (CRM Gabi).
+  campaignObjective        String?                      @map("campaign_objective") @db.VarChar(280)
   /// Resumo curto do assunto (CRM Outros / handoff Rafa).
   subjectSummary           String?                      @map("subject_summary") @db.VarChar(200)
   botEnabled               Boolean                      @default(true) @map("bot_enabled")

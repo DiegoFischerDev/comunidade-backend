@@ -49,6 +49,10 @@ export class UpdateCrmLeadDto {
 
   @IsOptional()
   @IsString()
+  campaignObjective?: string | null;
+
+  @IsOptional()
+  @IsString()
   subjectSummary?: string | null;
 }
 

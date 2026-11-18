@@ -124,6 +124,7 @@ export class GenericContextEngine {
           ? {
               companyName: lead.companyName,
               instagramHandle: lead.instagramHandle,
+              campaignObjective: lead.campaignObjective,
             }
           : emptyGabiProfile();
         const interpreted = await this.interpretGabi({
@@ -133,7 +134,12 @@ export class GenericContextEngine {
           profile,
         });
         const nextProfile = applyGabiProposal(profile, interpreted.proposal);
-        if (lead && (interpreted.proposal.companyName !== undefined || interpreted.proposal.instagramHandle !== undefined)) {
+        if (
+          lead &&
+          (interpreted.proposal.companyName !== undefined ||
+            interpreted.proposal.instagramHandle !== undefined ||
+            interpreted.proposal.campaignObjective !== undefined)
+        ) {
           await this.crm.patchGabiQualification(lead.id, nextProfile);
         }
         reply = composeGabiReply(interpreted.reply, nextProfile);
@@ -200,11 +206,12 @@ export class GenericContextEngine {
       input.context.trim(),
       '',
       'És a Gabi no WhatsApp. A Rafa é mulher — fala no feminino.',
-      'Responde em JSON: {"reply":"...","companyName":"...","instagramHandle":"..."}',
-      'companyName e instagramHandle: só inclui a chave se a pessoa falou desse dado agora.',
+      'Responde em JSON: {"reply":"...","companyName":"...","instagramHandle":"...","campaignObjective":"..."}',
+      'companyName, instagramHandle e campaignObjective: só inclui a chave se a pessoa falou desse dado agora.',
       'instagramHandle: o @ (com ou sem @); se disser que não tem / não aplicável, usa "".',
+      'campaignObjective: resume o objectivo da campanha/parceria em 1 frase curta.',
       'Na reply: frases curtas. Reage ao que disseram. Não digas que gravaste dados.',
-      'Se a ficha ainda não tem nome da empresa, pergunta isso. Depois pergunta se tem Instagram e o @.',
+      'Ordem: nome da empresa → Instagram (@ ou sem) → objectivo da campanha/parceria.',
       'Não inventes preços nem compromissos. Não digas que és uma IA.',
       `Ficha actual: ${gabiProfileSummary(input.profile)}`,
     ].join('\n');

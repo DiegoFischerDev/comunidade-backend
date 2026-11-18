@@ -9,6 +9,7 @@ import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
 import { ChatbotService } from './chatbot.service';
 import { isChatbotSlug, type ChatbotSlug } from './chatbot.constants';
 import {
+  normalizeCampaignObjective,
   normalizeCompanyName,
   normalizeInstagramHandle,
   type GabiProfile,
@@ -394,6 +395,7 @@ export class ChatbotCrmService {
       data: {
         companyName: profile.companyName,
         instagramHandle: profile.instagramHandle,
+        campaignObjective: profile.campaignObjective,
         ...(profile.companyName?.trim()
           ? { guestName: profile.companyName.trim() }
           : {}),
@@ -411,6 +413,7 @@ export class ChatbotCrmService {
       crmComments?: string | null;
       companyName?: string | null;
       instagramHandle?: string | null;
+      campaignObjective?: string | null;
       subjectSummary?: string | null;
     },
   ) {
@@ -453,6 +456,20 @@ export class ChatbotCrmService {
           throw new BadRequestException('Instagram inválido.');
         }
         data.instagramHandle = handle;
+      }
+    }
+    if (input.campaignObjective !== undefined) {
+      if (
+        input.campaignObjective === null ||
+        input.campaignObjective.trim() === ''
+      ) {
+        data.campaignObjective = null;
+      } else {
+        const objective = normalizeCampaignObjective(input.campaignObjective);
+        if (!objective) {
+          throw new BadRequestException('Objectivo da campanha inválido.');
+        }
+        data.campaignObjective = objective;
       }
     }
     if (input.subjectSummary !== undefined) {
@@ -600,6 +617,7 @@ export class ChatbotCrmService {
       guestName: string | null;
       companyName?: string | null;
       instagramHandle?: string | null;
+      campaignObjective?: string | null;
       subjectSummary?: string | null;
       botEnabled: boolean;
       crmComments: string | null;
@@ -617,6 +635,7 @@ export class ChatbotCrmService {
       guestName: lead.guestName,
       companyName: lead.companyName ?? null,
       instagramHandle: lead.instagramHandle ?? null,
+      campaignObjective: lead.campaignObjective ?? null,
       subjectSummary: lead.subjectSummary ?? null,
       botEnabled: lead.botEnabled,
       crmComments: lead.crmComments,

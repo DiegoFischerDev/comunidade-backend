@@ -2,18 +2,25 @@ export type GabiProfile = {
   companyName: string | null;
   /** null = ainda não sabemos; "" = sem Instagram; valor = handle com @ */
   instagramHandle: string | null;
+  /** null = ainda não sabemos; valor = objectivo da campanha */
+  campaignObjective: string | null;
 };
 
 export type GabiProposal = {
   companyName?: string;
   /** handle com ou sem @; "" se disse que não tem / não aplicável */
   instagramHandle?: string;
+  campaignObjective?: string;
 };
 
-export type GabiField = 'companyName' | 'instagramHandle';
+export type GabiField = 'companyName' | 'instagramHandle' | 'campaignObjective';
 
 export function emptyGabiProfile(): GabiProfile {
-  return { companyName: null, instagramHandle: null };
+  return {
+    companyName: null,
+    instagramHandle: null,
+    campaignObjective: null,
+  };
 }
 
 export function normalizeCompanyName(raw: unknown): string | undefined {
@@ -44,6 +51,13 @@ export function normalizeInstagramHandle(raw: unknown): string | undefined {
   return `@${handle.slice(0, 119)}`;
 }
 
+export function normalizeCampaignObjective(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const text = raw.trim().replace(/\s+/g, ' ');
+  if (text.length < 3) return undefined;
+  return text.slice(0, 280);
+}
+
 export function applyGabiProposal(
   profile: GabiProfile,
   proposal: GabiProposal,
@@ -57,12 +71,17 @@ export function applyGabiProposal(
     const handle = normalizeInstagramHandle(proposal.instagramHandle);
     if (handle !== undefined) next.instagramHandle = handle;
   }
+  if (proposal.campaignObjective !== undefined) {
+    const objective = normalizeCampaignObjective(proposal.campaignObjective);
+    if (objective !== undefined) next.campaignObjective = objective;
+  }
   return next;
 }
 
 export function nextGabiMissingField(profile: GabiProfile): GabiField | null {
   if (!profile.companyName?.trim()) return 'companyName';
   if (profile.instagramHandle === null) return 'instagramHandle';
+  if (!profile.campaignObjective?.trim()) return 'campaignObjective';
   return null;
 }
 
@@ -70,7 +89,10 @@ export function gabiMissingFieldQuestion(field: GabiField): string {
   if (field === 'companyName') {
     return 'Qual é o nome da empresa?';
   }
-  return 'A empresa tem Instagram? Se sim, manda o @. Se não tiver, diz que não.';
+  if (field === 'instagramHandle') {
+    return 'A empresa tem Instagram? Se sim, manda o @. Se não tiver, diz que não.';
+  }
+  return 'Qual é o objetivo da campanha ou parceria?';
 }
 
 export function gabiProfileSummary(profile: GabiProfile): string {
@@ -78,7 +100,8 @@ export function gabiProfileSummary(profile: GabiProfile): string {
   let ig = 'ainda não sabemos';
   if (profile.instagramHandle === '') ig = 'sem Instagram / não aplicável';
   else if (profile.instagramHandle) ig = profile.instagramHandle;
-  return `Empresa: ${company}. Instagram: ${ig}. Próximo a perguntar: ${
+  const objective = profile.campaignObjective?.trim() || 'ainda não sabemos';
+  return `Empresa: ${company}. Instagram: ${ig}. Objetivo: ${objective}. Próximo a perguntar: ${
     nextGabiMissingField(profile) ?? 'nenhum'
   }.`;
 }
@@ -97,7 +120,12 @@ export function composeGabiReply(
 
   const question = gabiMissingFieldQuestion(missing);
   if (!base) return question;
-  if (base.includes(question) || /nome da empresa|instagram|\@/i.test(base)) {
+  if (
+    base.includes(question) ||
+    /nome da empresa|instagram|\@|objetivo|objectivo da campanha|parceria/i.test(
+      base,
+    )
+  ) {
     return base;
   }
   return `${base}\n\n${question}`;
@@ -129,6 +157,10 @@ export function parseGabiModelJson(content: string): {
   if ('instagramHandle' in parsed) {
     const handle = normalizeInstagramHandle(parsed.instagramHandle);
     if (handle !== undefined) proposal.instagramHandle = handle;
+  }
+  if ('campaignObjective' in parsed) {
+    const objective = normalizeCampaignObjective(parsed.campaignObjective);
+    if (objective !== undefined) proposal.campaignObjective = objective;
   }
   return { reply, proposal };
 }
