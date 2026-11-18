@@ -10,8 +10,8 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
-import { joanaWhatsappInstance } from '../joana/joana-context';
-import { JoanaService } from '../joana/joana.service';
+import { chatbotWhatsappInstance } from '../chatbots/chatbot.constants';
+import { ChatbotRouterService } from '../chatbots/chatbot-router.service';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
 import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
@@ -41,7 +41,7 @@ export class WhatsappAutomationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
-    private readonly joana: JoanaService,
+    private readonly chatbots: ChatbotRouterService,
     private readonly crm: RafacallCrmService,
   ) {}
 
@@ -139,13 +139,13 @@ export class WhatsappAutomationsService {
 
     if (dto.kind === 'audio') {
       const instance = (dto.instance || '').trim();
-      if (instance !== joanaWhatsappInstance()) {
+      if (instance !== chatbotWhatsappInstance()) {
         return { ok: true, status: 'ignored_audio' };
       }
       if (!this.claimWebhookDelivery(dto, whatsapp, 'audio')) {
         return { ok: true, status: 'ignored_duplicate_webhook' };
       }
-      const voice = await this.joana.acceptVoiceNote({
+      const voice = await this.chatbots.acceptVoiceNote({
         whatsapp,
         instance,
         pushName: dto.pushName,
@@ -167,7 +167,7 @@ export class WhatsappAutomationsService {
     }
 
     const instance = (dto.instance || '').trim();
-    if (instance === joanaWhatsappInstance()) {
+    if (instance === chatbotWhatsappInstance()) {
       const active = await this.getActiveAutomationsCached();
       const scripted = findExactTrigger(active, text);
       if (scripted) {
@@ -177,7 +177,7 @@ export class WhatsappAutomationsService {
         if (status === 'sent') {
           const assistantText = scriptedStepText(scripted.steps);
           try {
-            await this.joana.noteScriptedExchange({
+            await this.chatbots.noteScriptedExchange({
               whatsapp,
               instance,
               pushName: dto.pushName,
@@ -186,7 +186,7 @@ export class WhatsappAutomationsService {
             });
           } catch (err: unknown) {
             this.logger.warn(
-              `Joana histórico do fluxo ${scripted.id}: ${
+              `Chatbot histórico do fluxo ${scripted.id}: ${
                 err instanceof Error ? err.message : String(err)
               }`,
             );
@@ -196,15 +196,15 @@ export class WhatsappAutomationsService {
       }
     }
 
-    const joana = await this.joana.bufferInbound({
+    const routed = await this.chatbots.bufferInbound({
       whatsapp,
       text,
       instance: dto.instance,
       pushName: dto.pushName,
       externalMessageId: dto.externalMessageId,
     });
-    if (joana.handled) {
-      return { ok: true, status: joana.status };
+    if (routed.handled) {
+      return { ok: true, status: routed.status };
     }
 
     const active = await this.getActiveAutomationsCached();
@@ -226,7 +226,7 @@ export class WhatsappAutomationsService {
   ): Promise<{ ok: true; status: string }> {
     const kind = dto.kind === 'document' ? 'document' : 'image';
     const instance = (dto.instance || '').trim();
-    if (instance !== joanaWhatsappInstance()) {
+    if (instance !== chatbotWhatsappInstance()) {
       return { ok: true, status: 'ignored_media' };
     }
     if (!this.claimWebhookDelivery(dto, whatsapp, kind)) {
@@ -281,7 +281,7 @@ export class WhatsappAutomationsService {
       return { ok: true, status: attachStatus };
     }
 
-    const joana = await this.joana.bufferInbound({
+    const routed = await this.chatbots.bufferInbound({
       whatsapp,
       text: caption,
       instance,
@@ -290,8 +290,8 @@ export class WhatsappAutomationsService {
     });
     return {
       ok: true,
-      status: joana.handled
-        ? `${attachStatus}+${joana.status}`
+      status: routed.handled
+        ? `${attachStatus}+${routed.status}`
         : attachStatus,
     };
   }

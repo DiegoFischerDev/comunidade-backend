@@ -1533,6 +1533,12 @@ export class RafacallCrmService {
       data: { crmJoanaEnabled: enabled },
     });
 
+    // Multi-bot: o mesmo interruptor cobre CrmLead (Bruna/Gabi) e a conversa partilhada.
+    await this.prisma.crmLead.updateMany({
+      where: { whatsappDigits: whatsapp, crmExcludedAt: null },
+      data: { botEnabled: enabled },
+    });
+
     if (enabled) {
       await this.prisma.joanaConversation.updateMany({
         where: { whatsappDigits: whatsapp },

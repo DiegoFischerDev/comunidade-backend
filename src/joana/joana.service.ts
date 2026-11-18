@@ -55,16 +55,28 @@ export class JoanaService {
   ) {}
 
   async getContext(): Promise<{ contextText: string }> {
-    const row = await this.prisma.joanaSettings.findUnique({
+    const bot = await this.prisma.chatbot.findUnique({ where: { slug: 'joana' } });
+    if (bot?.contextText?.trim()) {
+      return { contextText: bot.contextText.trim() };
+    }
+    const legacy = await this.prisma.joanaSettings.findUnique({
       where: { id: 'default' },
     });
-    return { contextText: row?.contextText?.trim() || JOANA_DEFAULT_CONTEXT };
+    return { contextText: legacy?.contextText?.trim() || JOANA_DEFAULT_CONTEXT };
   }
 
   async updateContext(contextText: string): Promise<{ contextText: string }> {
     const text = contextText.trim();
     if (text.length < 20) {
       throw new BadRequestException('O contexto da Joana está curto demais.');
+    }
+    const bot = await this.prisma.chatbot.findUnique({ where: { slug: 'joana' } });
+    if (bot) {
+      const saved = await this.prisma.chatbot.update({
+        where: { id: bot.id },
+        data: { contextText: text },
+      });
+      return { contextText: saved.contextText };
     }
     const saved = await this.prisma.joanaSettings.upsert({
       where: { id: 'default' },
@@ -79,6 +91,10 @@ export class JoanaService {
   }
 
   async getWelcome(): Promise<{ steps: JoanaWelcomeStep[] }> {
+    const bot = await this.prisma.chatbot.findUnique({ where: { slug: 'joana' } });
+    if (bot) {
+      return { steps: parseStoredWelcomeSteps(bot.welcomeSteps) };
+    }
     const row = await this.prisma.joanaSettings.findUnique({
       where: { id: 'default' },
     });
@@ -87,6 +103,14 @@ export class JoanaService {
 
   async updateWelcome(rawSteps: unknown): Promise<{ steps: JoanaWelcomeStep[] }> {
     const steps = normalizeJoanaWelcomeSteps(rawSteps);
+    const bot = await this.prisma.chatbot.findUnique({ where: { slug: 'joana' } });
+    if (bot) {
+      const saved = await this.prisma.chatbot.update({
+        where: { id: bot.id },
+        data: { welcomeSteps: steps as unknown as Prisma.InputJsonValue },
+      });
+      return { steps: parseStoredWelcomeSteps(saved.welcomeSteps) };
+    }
     const existing = await this.prisma.joanaSettings.findUnique({
       where: { id: 'default' },
     });
@@ -100,6 +124,11 @@ export class JoanaService {
       update: { welcomeSteps: steps as unknown as Prisma.InputJsonValue },
     });
     return { steps: parseStoredWelcomeSteps(saved.welcomeSteps) };
+  }
+
+  /** Usado pelo ChatbotRouterService após o menu / no flush multi-bot. */
+  async processConversationPublic(id: string): Promise<void> {
+    return this.processConversation(id);
   }
 
   /**

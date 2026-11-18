@@ -28,7 +28,7 @@ describe('findExactTrigger', () => {
 });
 
 describe('handleInbound nota de voz', () => {
-  const joana = {
+  const chatbots = {
     bufferInbound: jest.fn(),
     noteScriptedExchange: jest.fn(),
     acceptVoiceNote: jest.fn(),
@@ -58,12 +58,12 @@ describe('handleInbound nota de voz', () => {
     return new WhatsappAutomationsService(
       prisma as never,
       wa as never,
-      joana as never,
+      chatbots as never,
       crm as never,
     );
   }
 
-  it('ignora áudio fora da instância da Joana', async () => {
+  it('ignora áudio fora da instância dos chatbots', async () => {
     const result = await service().handleInbound({
       senderNumber: '351912345678',
       text: '',
@@ -72,11 +72,11 @@ describe('handleInbound nota de voz', () => {
       externalMessageId: 'MSG1',
     });
     expect(result.status).toBe('ignored_audio');
-    expect(joana.acceptVoiceNote).not.toHaveBeenCalled();
+    expect(chatbots.acceptVoiceNote).not.toHaveBeenCalled();
   });
 
-  it('entrega a nota à Joana sem procurar gatilho', async () => {
-    joana.acceptVoiceNote.mockResolvedValue({ handled: true, status: 'buffered' });
+  it('entrega a nota ao router sem procurar gatilho', async () => {
+    chatbots.acceptVoiceNote.mockResolvedValue({ handled: true, status: 'buffered' });
     const result = await service().handleInbound({
       senderNumber: '351912345678',
       text: '',
@@ -86,7 +86,7 @@ describe('handleInbound nota de voz', () => {
       pushName: 'Ana',
     });
     expect(result.status).toBe('buffered');
-    expect(joana.acceptVoiceNote).toHaveBeenCalledWith({
+    expect(chatbots.acceptVoiceNote).toHaveBeenCalledWith({
       whatsapp: '351912345678',
       instance: 'comunidade MEO',
       pushName: 'Ana',
@@ -97,7 +97,7 @@ describe('handleInbound nota de voz', () => {
 });
 
 describe('handleInbound imagem/documento CRM', () => {
-  const joana = {
+  const chatbots = {
     bufferInbound: jest.fn(),
     noteScriptedExchange: jest.fn(),
     acceptVoiceNote: jest.fn(),
@@ -127,12 +127,12 @@ describe('handleInbound imagem/documento CRM', () => {
     return new WhatsappAutomationsService(
       prisma as never,
       wa as never,
-      joana as never,
+      chatbots as never,
       crm as never,
     );
   }
 
-  it('ignora imagem fora da instância da Joana', async () => {
+  it('ignora imagem fora da instância dos chatbots', async () => {
     const result = await service().handleInbound({
       senderNumber: '351912345678',
       kind: 'image',
@@ -169,10 +169,10 @@ describe('handleInbound imagem/documento CRM', () => {
       message: { key: { id: 'IMG2' } },
     });
     expect(crm.attachWhatsappInboundFile).toHaveBeenCalled();
-    expect(joana.bufferInbound).not.toHaveBeenCalled();
+    expect(chatbots.bufferInbound).not.toHaveBeenCalled();
   });
 
-  it('anexa documento e bufferiza a legenda na Joana', async () => {
+  it('anexa documento e bufferiza a legenda no router', async () => {
     wa.getMediaBase64.mockResolvedValue({
       base64: Buffer.from('%PDF-1.4').toString('base64'),
       mimetype: 'application/pdf',
@@ -182,7 +182,7 @@ describe('handleInbound imagem/documento CRM', () => {
       ok: true,
       status: 'attached',
     });
-    joana.bufferInbound.mockResolvedValue({ handled: true, status: 'buffered' });
+    chatbots.bufferInbound.mockResolvedValue({ handled: true, status: 'buffered' });
 
     const result = await service().handleInbound({
       senderNumber: '351912345678',
@@ -193,7 +193,7 @@ describe('handleInbound imagem/documento CRM', () => {
     });
 
     expect(result.status).toBe('attached+buffered');
-    expect(joana.bufferInbound).toHaveBeenCalledWith({
+    expect(chatbots.bufferInbound).toHaveBeenCalledWith({
       whatsapp: '351912345678',
       text: 'segue o meu passaporte',
       instance: 'comunidade MEO',

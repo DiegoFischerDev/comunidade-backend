@@ -1,5 +1,5 @@
-import { Module } from '@nestjs/common';
-import { JoanaModule } from '../joana/joana.module';
+import { Module, forwardRef } from '@nestjs/common';
+import { ChatbotsModule } from '../chatbots/chatbots.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RafacallModule } from '../rafacall/rafacall.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
@@ -7,7 +7,12 @@ import { WhatsappAutomationsController } from './whatsapp-automations.controller
 import { WhatsappAutomationsService } from './whatsapp-automations.service';
 
 @Module({
-  imports: [PrismaModule, WhatsAppModule, JoanaModule, RafacallModule],
+  imports: [
+    PrismaModule,
+    WhatsAppModule,
+    forwardRef(() => ChatbotsModule),
+    RafacallModule,
+  ],
   controllers: [WhatsappAutomationsController],
   providers: [WhatsappAutomationsService],
 })
