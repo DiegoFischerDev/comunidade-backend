@@ -1,6 +1,10 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ChatbotChannel, Prisma, RafaCallCrmStatus } from '@prisma/client';
 import { ConversationOutboundService } from '../channels/conversation-outbound.service';
+import {
+  sharedOutboundGuard,
+  whatsappPeer,
+} from '../channels/outbound-guard';
 import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
@@ -208,6 +212,17 @@ export class JoanaService {
     };
     if (!item.text) return { handled: true, status: 'ignored_empty' };
 
+    // Eco das próprias respostas (router já faz claim do messageId).
+    if (
+      sharedOutboundGuard.isAutomatedEcho({
+        peer: whatsappPeer(input.whatsapp),
+        messageId: item.id.startsWith('local-') ? null : item.id,
+        text: item.text,
+      })
+    ) {
+      return { handled: true, status: 'ignored_echo' };
+    }
+
     if (!(await this.crm.isJoanaActive(input.whatsapp))) {
       return { handled: true, status: 'paused' };
     }
@@ -361,14 +376,26 @@ export class JoanaService {
       const contactLabel =
         row.whatsappDigits || `ig:${row.instagramUserId || row.id}`;
 
-      if (row.whatsappDigits) {
+      const isIgChannel =
+        row.activeChannel === ChatbotChannel.INSTAGRAM &&
+        Boolean(row.instagramUserId?.trim());
+
+      // No IG, a ficha/âncora é o IGSID — mesmo que a conversa já tenha WhatsApp.
+      if (isIgChannel) {
+        if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId!))) {
+          await this.dropBecausePaused(id);
+          return;
+        }
+      } else if (row.whatsappDigits) {
         if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
           await this.dropBecausePaused(id);
           return;
         }
-      } else if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId!))) {
-        await this.dropBecausePaused(id);
-        return;
+      } else if (row.instagramUserId) {
+        if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId))) {
+          await this.dropBecausePaused(id);
+          return;
+        }
       }
 
       if (row.pendingOutbound) {
@@ -399,19 +426,24 @@ export class JoanaService {
       const pending = readPending(row.pendingConfirmation);
       const { contextText } = await this.getContext();
       const { steps: welcomeSteps } = await this.getWelcome();
-      let lead = row.whatsappDigits
-        ? await this.crm.lookupLeadForJoana(row.whatsappDigits)
-        : row.instagramUserId
-          ? await this.crm.lookupLeadForJoanaByInstagram(row.instagramUserId)
-          : ({ kind: 'none' } as const);
+      const lookupLead = async () => {
+        if (isIgChannel && row.instagramUserId) {
+          return this.crm.lookupLeadForJoanaByInstagram(row.instagramUserId);
+        }
+        if (row.whatsappDigits) {
+          return this.crm.lookupLeadForJoana(row.whatsappDigits);
+        }
+        if (row.instagramUserId) {
+          return this.crm.lookupLeadForJoanaByInstagram(row.instagramUserId);
+        }
+        return { kind: 'none' } as const;
+      };
+
+      let lead = await lookupLead();
       // Conversas já na Joana sem ficha RafaCall (ex.: IG antes deste fix).
       if (lead.kind === 'none') {
         await this.ensureRafaCallCardForConversation(row);
-        lead = row.whatsappDigits
-          ? await this.crm.lookupLeadForJoana(row.whatsappDigits)
-          : row.instagramUserId
-            ? await this.crm.lookupLeadForJoanaByInstagram(row.instagramUserId)
-            : ({ kind: 'none' } as const);
+        lead = await lookupLead();
       }
       const profile = lead.kind === 'visible' ? profileFromLead(lead) : emptyJoanaProfile();
       const hasScheduledVideoCall =

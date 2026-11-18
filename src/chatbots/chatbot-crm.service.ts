@@ -253,33 +253,7 @@ export class ChatbotCrmService {
         : columns[0]) ?? null;
     if (!column) throw new BadRequestException('Coluna inválida.');
 
-    const excluded = await this.prisma.crmLead.findFirst({
-      where: {
-        chatbotId: bot.id,
-        whatsappDigits: whatsapp,
-        crmExcludedAt: { not: null },
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    if (excluded) {
-      const restored = await this.prisma.crmLead.update({
-        where: { id: excluded.id },
-        data: {
-          crmExcludedAt: null,
-          guestName: name,
-          columnId: column.id,
-          botEnabled: true,
-          crmComments: null,
-        },
-      });
-      void this.scheduleEnsureProfileImage(
-        whatsapp,
-        restored.crmProfileImageUrl,
-      );
-      return this.serializeLeadWithDocuments(restored, column.slug);
-    }
-
+    // Lead excluído fica arquivado: contacto de novo → sempre novo ID.
     const created = await this.prisma.crmLead.create({
       data: {
         chatbotId: bot.id,
@@ -370,58 +344,7 @@ export class ChatbotCrmService {
     });
     if (!firstColumn) return null;
 
-    const excludedWhere = {
-      chatbotId: params.chatbotId,
-      crmExcludedAt: { not: null as null },
-      OR: [
-        ...(whatsapp ? [{ whatsappDigits: whatsapp }] : []),
-        ...(ig ? [{ instagramUserId: ig }] : []),
-      ],
-    };
-    const excluded = await this.prisma.crmLead.findFirst({
-      where: excludedWhere,
-      orderBy: { updatedAt: 'desc' },
-    });
-    if (excluded) {
-      const restored = await this.prisma.crmLead.update({
-        where: { id: excluded.id },
-        data: {
-          crmExcludedAt: null,
-          columnId: firstColumn.id,
-          botEnabled,
-          guestName: excluded.guestName || cleanName(params.displayName),
-          subjectSummary: params.subjectSummary ?? excluded.subjectSummary,
-          ...(whatsapp ? { whatsappDigits: whatsapp } : {}),
-          ...(ig ? { instagramUserId: ig } : {}),
-        },
-      });
-      if (whatsapp || restored.whatsappDigits) {
-        void this.scheduleEnsureProfileImage(
-          whatsapp || restored.whatsappDigits!,
-          restored.crmProfileImageUrl,
-        );
-      }
-      if (ig || restored.instagramUserId) {
-        void this.scheduleEnsureInstagramProfileImage(
-          ig || restored.instagramUserId!,
-          restored.crmProfileImageUrl,
-        );
-      }
-      await this.ensureJoanaRafaCallCard({
-        chatbotId: params.chatbotId,
-        crmLeadId: restored.id,
-        whatsapp: restored.whatsappDigits,
-        instagramUserId: restored.instagramUserId || ig,
-        guestName:
-          restored.guestName ||
-          cleanName(params.displayName) ||
-          (restored.whatsappDigits
-            ? `Lead ${restored.whatsappDigits.slice(-3)}`
-            : `Lead IG ${(ig || '').slice(-4)}`),
-      });
-      return restored;
-    }
-
+    // Excluídos não se restauram: menu → sempre novo CrmLead (novo ID).
     const fallbackName =
       cleanName(params.displayName) ||
       (whatsapp
@@ -801,11 +724,47 @@ export class ChatbotCrmService {
       where: { id: leadId, chatbotId: bot.id, crmExcludedAt: null },
     });
     if (!lead) throw new NotFoundException('Lead não encontrado.');
-    await this.prisma.crmLead.update({
-      where: { id: lead.id },
-      data: { crmExcludedAt: new Date(), botEnabled: false },
+
+    const excludedAt = new Date();
+    const bookingId = lead.rafaCallBookingId;
+    const identity = {
+      whatsappDigits: lead.whatsappDigits,
+      instagramUserId: lead.instagramUserId,
+    };
+
+    // Joana: a ficha visível é o RafaCallBooking — remove do kanban e limpa interesse.
+    if (bookingId) {
+      try {
+        await this.rafacallCrm.removeFromCrm({ bookingId });
+      } catch {
+        /* booking já invisível / apagado — continua soft-exclude local */
+      }
+    }
+
+    const stillActive = await this.prisma.crmLead.findFirst({
+      where: { id: lead.id, crmExcludedAt: null },
+      select: { id: true },
     });
-    await this.pauseLeadConversations(lead, bot.id, true);
+    if (stillActive) {
+      await this.prisma.crmLead.update({
+        where: { id: lead.id },
+        data: {
+          crmExcludedAt: excludedAt,
+          botEnabled: false,
+          rafaCallBookingId: null,
+          // Liberta @@unique([chatbotId, instagramUserId]) para um lead novo.
+          instagramUserId: null,
+        },
+      });
+    } else if (identity.instagramUserId) {
+      await this.prisma.crmLead.updateMany({
+        where: { id: lead.id, instagramUserId: identity.instagramUserId },
+        data: { instagramUserId: null },
+      });
+    }
+
+    // Limpa atribuição do menu (chatbotId) — próximo contacto vê o menu outra vez.
+    await this.resetLeadConversationsToMenu(identity);
     return { ok: true as const };
   }
 
@@ -985,6 +944,41 @@ export class ChatbotCrmService {
       await this.prisma.joanaConversation.updateMany({
         where: { instagramUserId: lead.instagramUserId, chatbotId },
         data: { paused },
+      });
+    }
+  }
+
+  /**
+   * Após excluir lead: tira o interesse (chatbotId) e repõe o menu.
+   * O mesmo WA/IG a voltar a escrever é tratado como contacto novo.
+   */
+  private async resetLeadConversationsToMenu(lead: {
+    whatsappDigits: string | null;
+    instagramUserId: string | null;
+  }) {
+    const menuReset = {
+      chatbotId: null,
+      menuSent: false,
+      welcomeSent: false,
+      paused: false,
+      buffer: [] as Prisma.InputJsonValue,
+      pendingConfirmation: Prisma.JsonNull,
+      pendingOutbound: null,
+      farGuidanceSent: false,
+      schedulingLinkSent: false,
+      processing: false,
+    };
+
+    if (lead.whatsappDigits) {
+      await this.prisma.joanaConversation.updateMany({
+        where: { whatsappDigits: lead.whatsappDigits },
+        data: menuReset,
+      });
+    }
+    if (lead.instagramUserId) {
+      await this.prisma.joanaConversation.updateMany({
+        where: { instagramUserId: lead.instagramUserId },
+        data: menuReset,
       });
     }
   }

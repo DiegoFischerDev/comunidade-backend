@@ -1,7 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ChatbotChannel } from '@prisma/client';
+import { ChatbotChannel, Prisma } from '@prisma/client';
 import { InstagramService } from '../instagram/instagram.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import {
+  instagramPeer,
+  sharedOutboundGuard,
+  whatsappPeer,
+  type OutboundPeer,
+} from './outbound-guard';
 
 export type ConversationOutboundRow = {
   whatsappDigits: string | null;
@@ -16,10 +23,12 @@ const ASK_WHATSAPP_MESSAGE =
 @Injectable()
 export class ConversationOutboundService {
   private readonly logger = new Logger(ConversationOutboundService.name);
+  private readonly outboundGuard = sharedOutboundGuard;
 
   constructor(
     private readonly wa: WhatsAppService,
     private readonly instagram: InstagramService,
+    private readonly prisma: PrismaService,
   ) {}
 
   askWhatsappMessage(): string {
@@ -28,6 +37,7 @@ export class ConversationOutboundService {
 
   /**
    * Envia texto pelo canal activo da conversa (IG ou WhatsApp).
+   * Aplica circuit-breaker e regista fingerprint anti-eco.
    */
   async sendText(
     row: ConversationOutboundRow,
@@ -37,26 +47,98 @@ export class ConversationOutboundService {
     const body = text.trim();
     if (!body) return;
 
-    if (
-      row.activeChannel === ChatbotChannel.INSTAGRAM &&
-      row.instagramUserId
-    ) {
-      await this.instagram.sendText(row.instagramUserId, body);
-      return;
-    }
-
-    const whatsapp = (row.whatsappDigits || '').trim();
-    if (!whatsapp) {
+    const peer = this.resolvePeer(row);
+    if (!peer) {
       this.logger.warn(
         'Outbound sem WhatsApp nem Instagram — mensagem descartada',
       );
       throw new Error('conversation_outbound_no_channel');
     }
 
-    await this.wa.sendText(whatsapp, body, {
+    if (!this.outboundGuard.allowSend(peer)) {
+      this.logger.warn(
+        `Circuit-breaker anti-loop aberto (${peer.channel}); envio bloqueado.`,
+      );
+      if (opts?.requireDelivery) {
+        throw new Error('outbound_circuit_open');
+      }
+      return;
+    }
+
+    if (peer.channel === 'instagram') {
+      this.outboundGuard.rememberText(peer, body);
+      try {
+        await this.instagram.sendText(peer.igsid, body);
+      } catch (err) {
+        this.outboundGuard.forgetText(peer, body);
+        throw err;
+      }
+      const { tripped, count } = this.outboundGuard.recordSuccessfulSend(peer);
+      if (tripped) {
+        this.logger.error(
+          `Circuit-breaker anti-loop IG ${peer.igsid}: ${count} envios na janela — pausando conversa.`,
+        );
+        await this.pausePeerConversation(peer);
+      }
+      return;
+    }
+
+    // WhatsApp: WhatsAppService já regista eco + circuit; aqui só pausamos se tripou.
+    const beforeOpen = this.outboundGuard.isCircuitOpen(peer);
+    await this.wa.sendText(peer.digits, body, {
       preferredInstance: row.instance || undefined,
       requireDelivery: opts?.requireDelivery,
     });
+    if (!beforeOpen && this.outboundGuard.isCircuitOpen(peer)) {
+      this.logger.error(
+        `Circuit-breaker anti-loop WA ${peer.digits}: pausando conversa.`,
+      );
+      await this.pausePeerConversation(peer);
+    }
+  }
+
+  private resolvePeer(row: ConversationOutboundRow): OutboundPeer | null {
+    if (
+      row.activeChannel === ChatbotChannel.INSTAGRAM &&
+      row.instagramUserId?.trim()
+    ) {
+      return instagramPeer(row.instagramUserId);
+    }
+    const whatsapp = (row.whatsappDigits || '').trim();
+    if (whatsapp) return whatsappPeer(whatsapp);
+    if (row.instagramUserId?.trim()) {
+      return instagramPeer(row.instagramUserId);
+    }
+    return null;
+  }
+
+  /** Pausa a conversa do peer (anti-loop). Admin reactiva no CRM. */
+  private async pausePeerConversation(peer: OutboundPeer): Promise<void> {
+    try {
+      const pauseData = {
+        paused: true,
+        buffer: [] as unknown as Prisma.InputJsonValue,
+        pendingOutbound: null,
+        processing: false,
+      };
+      if (peer.channel === 'whatsapp') {
+        await this.prisma.joanaConversation.updateMany({
+          where: { whatsappDigits: peer.digits },
+          data: pauseData,
+        });
+        return;
+      }
+      await this.prisma.joanaConversation.updateMany({
+        where: { instagramUserId: peer.igsid },
+        data: pauseData,
+      });
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Falha ao pausar conversa anti-loop: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 }
 

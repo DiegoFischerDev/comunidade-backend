@@ -1,14 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { isBase64, isURL } from 'class-validator';
 import {
-  AutomatedOutboundRegistry,
-  readEvolutionMessageId,
-} from './automated-outbound';
+  sharedOutboundGuard,
+  whatsappPeer,
+} from '../channels/outbound-guard';
+import { PrismaService } from '../prisma/prisma.service';
+import { readEvolutionMessageId } from './automated-outbound';
 
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
-  private readonly automatedOutbound = new AutomatedOutboundRegistry();
+  private readonly outboundGuard = sharedOutboundGuard;
+
+  constructor(private readonly prisma: PrismaService) {}
 
   private get base(): string {
     return (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
@@ -584,25 +589,32 @@ export class WhatsAppService {
     text?: string | null;
     hasMedia?: boolean;
   }): boolean {
-    return this.automatedOutbound.isAutomatedEcho(input);
+    return this.outboundGuard.isAutomatedEcho({
+      peer: whatsappPeer(input.digits),
+      messageId: input.messageId,
+      text: input.text,
+      hasMedia: input.hasMedia,
+    });
   }
 
   private rememberAutomatedSend(number: string, text: string, media = false): void {
     if (!number || number.includes('@')) return;
-    if (text.trim()) this.automatedOutbound.rememberText(number, text);
-    if (media) this.automatedOutbound.rememberMedia(number);
+    const peer = whatsappPeer(number);
+    if (text.trim()) this.outboundGuard.rememberText(peer, text);
+    if (media) this.outboundGuard.rememberMedia(peer);
   }
 
   private forgetAutomatedSend(number: string, text: string, media = false): void {
     if (!number || number.includes('@')) return;
-    if (text.trim()) this.automatedOutbound.forgetText(number, text);
-    if (media) this.automatedOutbound.forgetMedia(number);
+    const peer = whatsappPeer(number);
+    if (text.trim()) this.outboundGuard.forgetText(peer, text);
+    if (media) this.outboundGuard.forgetMedia(peer);
   }
 
   private async rememberAutomatedResponse(res: Response): Promise<void> {
     const raw = await res.text().catch(() => '');
     const id = readEvolutionMessageId(raw);
-    if (id) this.automatedOutbound.rememberMessageId(id);
+    if (id) this.outboundGuard.rememberMessageId(id);
   }
 
   async sendText(
@@ -626,6 +638,14 @@ export class WhatsAppService {
       return;
     }
 
+    const peer = whatsappPeer(number);
+    if (!this.outboundGuard.allowSend(peer)) {
+      const msg = `Circuit-breaker anti-loop aberto para WA ${number}; envio bloqueado.`;
+      this.logger.warn(msg);
+      if (requireDelivery) throw new Error(msg);
+      return;
+    }
+
     const attempts = this.resolveSendInstances(opts?.preferredInstance);
     let lastError = '';
     this.rememberAutomatedSend(number, text);
@@ -645,6 +665,14 @@ export class WhatsAppService {
           if (res.ok) {
             delivered = true;
             await this.rememberAutomatedResponse(res);
+            const { tripped, count } =
+              this.outboundGuard.recordSuccessfulSend(peer);
+            if (tripped) {
+              this.logger.error(
+                `Circuit-breaker anti-loop WA ${number}: ${count} envios na janela — pausando conversa.`,
+              );
+              await this.pauseConversationForAntiLoop(number);
+            }
             if (i > 0) {
               this.logger.warn(
                 `sendText entregue via instância de reserva: ${instance}`,
@@ -870,6 +898,29 @@ export class WhatsAppService {
       }
     } finally {
       if (!delivered) this.forgetAutomatedSend(number, caption, true);
+    }
+  }
+
+  /** Pausa conversas Joana/chatbot deste WhatsApp quando o circuit anti-loop dispara. */
+  private async pauseConversationForAntiLoop(digits: string): Promise<void> {
+    const wa = digits.replace(/\D/g, '');
+    if (!wa) return;
+    try {
+      await this.prisma.joanaConversation.updateMany({
+        where: { whatsappDigits: wa },
+        data: {
+          paused: true,
+          buffer: [] as unknown as Prisma.InputJsonValue,
+          pendingOutbound: null,
+          processing: false,
+        },
+      });
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Anti-loop pause WA ${wa}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 }

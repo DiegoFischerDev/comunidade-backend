@@ -290,52 +290,7 @@ export class RafacallCrmService {
       at: now,
     });
 
-    if (whatsapp) {
-      const excludedBooking = await this.prisma.rafaCallBooking.findFirst({
-        where: {
-          status: {
-            in: [
-              RafaCallBookingStatus.SCHEDULED,
-              RafaCallBookingStatus.COMPLETED,
-            ],
-          },
-          crmExcludedAt: { not: null },
-          OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
-        },
-        select: BOOKING_CRM_SELECT,
-        orderBy: { updatedAt: 'desc' },
-      });
-
-      if (excludedBooking) {
-        const restored = await this.prisma.rafaCallBooking.update({
-          where: { id: excludedBooking.id },
-          data: {
-            crmExcludedAt: null,
-            ...(excludedBooking.user ? {} : { guestName: name }),
-            crmStatus: initialStatus,
-            crmComments: null,
-            crmExpectedImmigrationAt: immigrationDate,
-            crmImmigrationImmediate: immigrationImmediate,
-            crmPropertyTypology: propertyTypology,
-            crmPreferredCity: preferredCity,
-            crmHasPet: null,
-            crmHasVisa: null,
-            crmDesiredRent: desiredRent,
-            crmJoanaEnabled,
-          },
-          select: BOOKING_CRM_SELECT,
-        });
-
-        const withAvatar = await this.ensureCrmProfileImage(whatsapp, {
-          existingUrl: restored.crmProfileImageUrl,
-        });
-        return this.serializeCrmItemWithPayments({
-          ...restored,
-          crmProfileImageUrl: withAvatar ?? restored.crmProfileImageUrl,
-        });
-      }
-    }
-
+    // Booking excluído fica arquivado: novo contacto → sempre novo ID.
     const { startsAt, endsAt, timezone } = buildCrmPlaceholderSlotTimes(now);
 
     const created = await this.prisma.rafaCallBooking.create({
@@ -822,6 +777,9 @@ export class RafacallCrmService {
       },
       data: { crmExcludedAt: excludedAt },
     });
+
+    // Limpa interesse no chatbot — próximo WA volta ao menu inicial.
+    await this.resetConversationsToMenu({ whatsappDigits: whatsapp });
 
     // Mantém lançamentos financeiros (aparecem no dashboard Financeiro).
     return { ok: true as const };
@@ -2304,25 +2262,53 @@ export class RafacallCrmService {
     });
     if (leads.length === 0) return;
 
+    // Null IGSID no excluído → permite criar CrmLead novo com o mesmo Instagram.
     await this.prisma.crmLead.updateMany({
       where: { id: { in: leads.map((l) => l.id) } },
-      data: { crmExcludedAt: excludedAt, botEnabled: false, rafaCallBookingId: null },
+      data: {
+        crmExcludedAt: excludedAt,
+        botEnabled: false,
+        rafaCallBookingId: null,
+        instagramUserId: null,
+      },
     });
 
-    const igIds = leads
-      .map((l) => l.instagramUserId)
-      .filter((id): id is string => Boolean(id));
-    if (igIds.length > 0) {
+    for (const lead of leads) {
+      await this.resetConversationsToMenu({
+        whatsappDigits: lead.whatsappDigits,
+        instagramUserId: lead.instagramUserId,
+      });
+    }
+  }
+
+  /** Limpa atribuição do menu após excluir lead do CRM. */
+  private async resetConversationsToMenu(identity: {
+    whatsappDigits?: string | null;
+    instagramUserId?: string | null;
+  }): Promise<void> {
+    const menuReset = {
+      chatbotId: null,
+      menuSent: false,
+      welcomeSent: false,
+      paused: false,
+      buffer: [] as Prisma.InputJsonValue,
+      pendingConfirmation: Prisma.JsonNull,
+      pendingOutbound: null,
+      farGuidanceSent: false,
+      schedulingLinkSent: false,
+      processing: false,
+    };
+
+    if (identity.whatsappDigits) {
       await this.prisma.joanaConversation.updateMany({
-        where: { instagramUserId: { in: igIds } },
-        data: {
-          chatbotId: null,
-          menuSent: false,
-          welcomeSent: false,
-          paused: false,
-          buffer: [] as Prisma.InputJsonValue,
-          pendingOutbound: null,
-        },
+        where: { whatsappDigits: identity.whatsappDigits },
+        data: menuReset,
+      });
+    }
+    if (identity.instagramUserId) {
+      await this.prisma.joanaConversation.updateMany({
+        where: { instagramUserId: identity.instagramUserId },
+        data: menuReset,
       });
     }
   }

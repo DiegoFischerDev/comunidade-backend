@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ChatbotChannel, ChatbotEngineKind, Prisma } from '@prisma/client';
 import { ConversationOutboundService } from '../channels/conversation-outbound.service';
+import {
+  instagramPeer,
+  sharedOutboundGuard,
+  whatsappPeer,
+} from '../channels/outbound-guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { JOANA_AUDIO_UNHEARD } from '../joana/joana-audio';
 import { JoanaOpenAiService } from '../joana/joana-openai.service';
@@ -160,6 +165,30 @@ export class ChatbotRouterService {
     const text = input.text.trim();
     if (!text) return { handled: true, status: 'ignored_empty' };
 
+    const messageId = (input.externalMessageId || '').trim();
+    if (!sharedOutboundGuard.claimInboundMessageId(messageId || null)) {
+      return { handled: true, status: 'ignored_duplicate' };
+    }
+
+    const peer = whatsapp
+      ? whatsappPeer(whatsapp)
+      : instagramUserId
+        ? instagramPeer(instagramUserId)
+        : null;
+    if (
+      peer &&
+      sharedOutboundGuard.isAutomatedEcho({
+        peer,
+        messageId: messageId || null,
+        text,
+      })
+    ) {
+      this.logger.log(
+        `Anti-loop: eco outbound ignorado (${peer.channel} ${messageId || 'sem-id'})`,
+      );
+      return { handled: true, status: 'ignored_echo' };
+    }
+
     if (whatsapp) {
       await this.detachBotIfOutsideCrm(whatsapp);
     } else if (instagramUserId) {
@@ -214,7 +243,10 @@ export class ChatbotRouterService {
       if (
         existing.chatbot?.engineKind === ChatbotEngineKind.JOANA_QUALIFICATION
       ) {
-        if (existing.whatsappDigits) {
+        // WhatsApp: buffer da Joana (exige instância Evolution).
+        // Instagram: nunca usar joana.bufferInbound — sem instance Evolution a DM
+        // era descartada (ignored_instance) e o bot ficava mudo.
+        if (existing.whatsappDigits && channel !== 'instagram') {
           return this.joana.bufferInbound({
             whatsapp: existing.whatsappDigits,
             text,
@@ -223,7 +255,7 @@ export class ChatbotRouterService {
             externalMessageId: input.externalMessageId,
           });
         }
-        // Joana no IG sem WhatsApp: buffer na conversa; CRM RafaCall só com número.
+        // IG (com ou sem WA): appendBuffer abaixo → flush → processConversationPublic.
       }
     }
 
