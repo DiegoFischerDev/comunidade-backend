@@ -12,7 +12,15 @@ import {
   type ChatbotSlug,
   isChatbotSlug,
 } from './chatbot.constants';
-import { buildChatbotMenuText, type MenuBot } from './chatbot-menu';
+import {
+  DEFAULT_CHATBOT_MENU_TEXT,
+  buildChatbotMenuText,
+  buildMenuClassifySystemPrompt,
+  parseChatbotMenuChoice,
+  parseChatbotMenuDigitChoice,
+  parseMenuClassifyResponse,
+  type MenuBot,
+} from './chatbot-menu';
 
 export type ChatbotPublic = {
   id: string;
@@ -54,9 +62,100 @@ export class ChatbotService {
       }));
   }
 
-  async getMenuPreview(): Promise<{ text: string; bots: MenuBot[] }> {
+  async getMenuText(): Promise<string> {
+    const row = await this.prisma.chatbotRouterSettings.findUnique({
+      where: { id: 'default' },
+    });
+    const stored = row?.menuText?.trim();
+    if (stored) return stored;
     const bots = await this.listEnabledMenuBots();
-    return { text: buildChatbotMenuText(bots), bots };
+    return bots.length > 0 ? buildChatbotMenuText(bots) : DEFAULT_CHATBOT_MENU_TEXT;
+  }
+
+  async getMenuPreview(): Promise<{ text: string; bots: MenuBot[] }> {
+    const [bots, text] = await Promise.all([
+      this.listEnabledMenuBots(),
+      this.getMenuText(),
+    ]);
+    return { text, bots };
+  }
+
+  async updateMenuText(menuText: string): Promise<{ text: string; bots: MenuBot[] }> {
+    const text = menuText.trim();
+    if (text.length < 20) {
+      throw new BadRequestException('O texto do menu está curto demais.');
+    }
+    await this.prisma.chatbotRouterSettings.upsert({
+      where: { id: 'default' },
+      create: { id: 'default', menuText: text },
+      update: { menuText: text },
+    });
+    const bots = await this.listEnabledMenuBots();
+    return { text, bots };
+  }
+
+  /**
+   * Escolha do menu: dígito 1/2/3 sem LLM; texto livre via OpenAI
+   * (com fallback de palavras-chave se a API falhar).
+   */
+  async resolveMenuChoice(
+    text: string,
+    bots: MenuBot[],
+  ): Promise<ChatbotSlug | null> {
+    const digit = parseChatbotMenuDigitChoice(text, bots);
+    if (digit) return digit;
+
+    try {
+      const classified = await this.classifyMenuChoiceWithOpenAi(text, bots);
+      if (classified) return classified;
+    } catch {
+      // fallback abaixo
+    }
+
+    return parseChatbotMenuChoice(text, bots);
+  }
+
+  private async classifyMenuChoiceWithOpenAi(
+    text: string,
+    bots: MenuBot[],
+  ): Promise<ChatbotSlug | null> {
+    const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY não está configurada.');
+    }
+    const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: buildMenuClassifySystemPrompt(bots) },
+            { role: 'user', content: text.trim().slice(0, 2000) },
+          ],
+        }),
+        signal: controller.signal,
+      });
+      const raw = await res.text();
+      if (!res.ok) {
+        throw new Error(`OpenAI ${res.status}: ${raw.slice(0, 300)}`);
+      }
+      const parsed = JSON.parse(raw) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const content = parsed.choices?.[0]?.message?.content || '';
+      return parseMenuClassifyResponse(content, bots);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async getBySlug(slug: string): Promise<ChatbotPublic> {

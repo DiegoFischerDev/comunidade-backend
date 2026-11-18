@@ -7,10 +7,6 @@ import { JoanaService } from '../joana/joana.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { ChatbotCrmService } from './chatbot-crm.service';
 import { ChatbotService } from './chatbot.service';
-import {
-  buildChatbotMenuText,
-  parseChatbotMenuChoice,
-} from './chatbot-menu';
 import { chatbotDebounceMs, chatbotWhatsappInstance } from './chatbot.constants';
 import { GenericContextEngine } from './generic-context.engine';
 
@@ -279,7 +275,7 @@ export class ChatbotRouterService {
     }
 
     const bots = await this.chatbots.listEnabledMenuBots();
-    const menuText = buildChatbotMenuText(bots);
+    const menuText = await this.chatbots.getMenuText();
     const buffer = readBuffer(row.buffer);
 
     if (!row.menuSent) {
@@ -299,7 +295,7 @@ export class ChatbotRouterService {
       }
 
       // Se já havia texto no buffer (ex. «oi»), guardar no histórico e limpar;
-      // a próxima mensagem deve ser a escolha 1/2/3.
+      // a próxima mensagem é a escolha (número ou texto livre).
       const historyExtra =
         buffer.length > 0
           ? [
@@ -326,18 +322,16 @@ export class ChatbotRouterService {
     }
 
     const combined = buffer.map((item) => item.text).join('\n');
-    const choice = parseChatbotMenuChoice(combined, bots);
+    const choice = await this.chatbots.resolveMenuChoice(combined, bots);
 
     if (!choice) {
+      const clarify =
+        `Não percebi o assunto. Podes dizer por exemplo «relocation», «crédito» ou «publicidade», ou o número 1, 2 ou 3.\n\n${menuText}`;
       try {
-        await this.wa.sendText(
-          row.whatsappDigits,
-          `Não percebi a escolha.\n\n${menuText}`,
-          {
-            preferredInstance: row.instance || undefined,
-            requireDelivery: true,
-          },
-        );
+        await this.wa.sendText(row.whatsappDigits, clarify, {
+          preferredInstance: row.instance || undefined,
+          requireDelivery: true,
+        });
       } catch (err: unknown) {
         this.logger.warn(
           `Menu reenvio ${row.whatsappDigits}: ${
@@ -351,7 +345,7 @@ export class ChatbotRouterService {
           buffer: [] as unknown as Prisma.InputJsonValue,
           history: appendHistory(readHistory(row.history), [
             { role: 'user', text: combined },
-            { role: 'assistant', text: `Não percebi a escolha.\n\n${menuText}` },
+            { role: 'assistant', text: clarify },
           ]) as unknown as Prisma.InputJsonValue,
           processing: false,
         },

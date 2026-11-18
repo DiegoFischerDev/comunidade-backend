@@ -3,6 +3,7 @@ import { Role } from '@prisma/client';
 import { Roles } from '../auth/roles.decorator';
 import { ChatbotService } from './chatbot.service';
 import { UpdateChatbotContextDto } from './dto/update-chatbot-context.dto';
+import { UpdateChatbotMenuDto } from './dto/update-chatbot-menu.dto';
 import { UpdateChatbotWelcomeDto } from './dto/update-chatbot-welcome.dto';
 
 @Controller('chatbots')
@@ -19,6 +20,12 @@ export class ChatbotsController {
   @Roles(Role.ADMIN)
   menu() {
     return this.chatbots.getMenuPreview();
+  }
+
+  @Patch('menu')
+  @Roles(Role.ADMIN)
+  updateMenu(@Body() dto: UpdateChatbotMenuDto) {
+    return this.chatbots.updateMenuText(dto.menuText);
   }
 
   @Get(':slug')

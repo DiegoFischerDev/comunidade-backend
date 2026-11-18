@@ -1299,6 +1299,15 @@ model Chatbot {
   @@map("chatbots")
 }
 
+/// Texto do menu inicial partilhado (id fixo `default`). Editável no admin.
+model ChatbotRouterSettings {
+  id        String   @id
+  menuText  String   @map("menu_text") @db.Text
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("chatbot_router_settings")
+}
+
 /// Legado: texto Joana. Preferir `Chatbot` slug `joana`. Mantido para migração.
 model JoanaSettings {
   id           String   @id
