@@ -108,8 +108,8 @@ export class JoanaOpenAiService {
       'Se a pessoa disser que não tem visto, hasVisa é false. Não peças o próximo dado, não ofereças a videochamada e não escrevas link. A reply fica só numa reação curta, sem pergunta. O sistema avisa que, antes de continuar o relocation, ela precisa se encaixar num visto válido e indica a Clara para assessoria de vistos e passagens aéreas.',
       'Se a ficha já diz que a pessoa não tem visto e ela não falou de visto agora, responde ao que ela perguntou e não continues a qualificação nem ofereças a videochamada.',
       'Não escrevas o link da videochamada. Quando a pessoa tem visto e a data está perto, o sistema acrescenta o link para agendar. Se a ficha diz que a videochamada já está agendada, não ofereças agendar de novo nem digas que vais mandar o link.',
-      'Última informação manda para nome, visto, cidades, tipologia, aluguel e pet: se a pessoa disser um valor novo, preenche esse campo no JSON mesmo que a ficha já tenha outro. Não peças confirmação nesses campos.',
-      'A data de imigração é o único campo com confirmação: quando a pessoa der uma data (ou imediato), preenche immigration no JSON. Não digas que gravaste. O sistema pergunta se confirma. confirmation só é "yes" ou "no" quando a pessoa responde a essa confirmação de data; senão null. Se em vez de sim/não ela der outra data, preenche immigration com a nova e deixa confirmation null.',
+      'Última informação manda para nome, data de imigração, visto, cidades, tipologia, aluguel e pet: se a pessoa disser um valor novo, preenche esse campo no JSON mesmo que a ficha já tenha outro. Não peças confirmação em nenhum campo — o sistema grava na hora.',
+      'Quando a pessoa der uma data de imigração (ou imediato), preenche immigration no JSON. Não digas que gravaste e não peças para confirmar a data. confirmation fica null, excepto se o user indicar confirmação pendente antiga (aí "yes"/"no" ou nova data em immigration).',
       'Não comente que a informação foi guardada, registrada ou atualizada. Não invente preço nem horário.',
       'Devolva só JSON com as chaves: reply, interested, confirmation, name, immigration, hasVisa, cities, typology, desiredRent, hasPet.',
       'name, immigration, hasVisa, cities, typology, desiredRent, hasPet: omita a chave se a pessoa não falou desse dado nesta mensagem. Se falou, preenche mesmo que a ficha já tenha outro valor. immigration é YYYY-MM-DD, "IMEDIATO", ou "" para apagar. hasVisa é true se a pessoa já tem visto e false se disser que ainda não tem, mesmo que a ficha já esteja assim. typology é uma ou várias de: QUARTO, T0, T1, T2, T3, T4, T5 — se a pessoa aceitar mais de uma (ex.: "T2 ou T3"), junta numa string com vírgula ou "ou" (ex.: "T2,T3" ou "T2 ou T3"). desiredRent é o aluguel mensal do imóvel em euros inteiros, ou "" para apagar. Não uses o preço do serviço da Rafa. hasPet é true ou false.',
@@ -121,8 +121,8 @@ export class JoanaOpenAiService {
       today,
       `Ficha atual: ${input.profileSummary}`,
       input.pendingQuestion
-        ? `Confirmação pendente da data de imigração: ${input.pendingQuestion}. Se confirmar, confirmation é "yes". Se recusar, "no". Se der outra data, preenche immigration e confirmation null.`
-        : 'Sem confirmação pendente de data.',
+        ? `Confirmação pendente antiga da data de imigração: ${input.pendingQuestion}. Se confirmar, confirmation é "yes". Se recusar, "no". Se der outra data, preenche immigration e confirmation null. Não peças confirmação nova.`
+        : 'Sem confirmação pendente. Não peças confirmação da data de imigração.',
       input.transcript ? `Histórico:\n${input.transcript}` : 'Sem histórico.',
       `Mensagem agora:\n${input.combinedText}`,
     ].join('\n\n');

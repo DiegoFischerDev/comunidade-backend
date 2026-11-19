@@ -275,7 +275,7 @@ describe('applyJoanaProposal', () => {
     expect(result.append.some((line) => line.includes('Para quando'))).toBe(true);
   });
 
-  it('campo já preenchido (não-data) grava o valor novo sem pedir confirmação', () => {
+  it('campo já preenchido grava o valor novo sem pedir confirmação', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -292,7 +292,7 @@ describe('applyJoanaProposal', () => {
     expect(result.append).toEqual([]);
   });
 
-  it('data nova fica pendente de confirmação e não grava ainda', () => {
+  it('data nova grava na hora e segue para o próximo dado', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -304,15 +304,12 @@ describe('applyJoanaProposal', () => {
         immigration: '2026-05-18',
       },
     });
-    expect(result.crmPatch).toBeNull();
-    expect(result.pending?.field).toBe('immigration');
-    expect(result.pending?.value).toBe('2026-05-18');
-    expect(result.append[0]).toBe(
-      immigrationConfirmationQuestion('2026-05-18', false),
-    );
+    expect(result.crmPatch?.immigration).toBe('2026-05-18');
+    expect(result.pending).toBeNull();
+    expect(result.append[0]).toContain('visto');
   });
 
-  it('última informação manda no nome; data nova pede confirmação', () => {
+  it('última informação manda no nome e na data sem confirmação', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -330,14 +327,11 @@ describe('applyJoanaProposal', () => {
       },
     });
     expect(result.nameToSave).toBe('Paulo');
-    expect(result.crmPatch).toBeNull();
-    expect(result.pending?.value).toBe('2026-05-18');
-    expect(result.append[0]).toBe(
-      immigrationConfirmationQuestion('2026-05-18', true),
-    );
+    expect(result.crmPatch?.immigration).toBe('2026-05-18');
+    expect(result.pending).toBeNull();
   });
 
-  it('sim na confirmação de data grava a data pendente', () => {
+  it('sim numa confirmação de data antiga grava a data pendente', () => {
     const pending = {
       field: 'immigration' as const,
       value: '2026-05-18',
@@ -354,7 +348,7 @@ describe('applyJoanaProposal', () => {
     expect(result.pending).toBeNull();
   });
 
-  it('não na confirmação de data mantém o valor anterior', () => {
+  it('não numa confirmação de data antiga mantém o valor anterior', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -386,7 +380,7 @@ describe('applyJoanaProposal', () => {
     expect(result.pending).toBeNull();
   });
 
-  it('outro dado pode gravar enquanto a confirmação de data fica pendente', () => {
+  it('nova data grava na hora e limpa confirmação antiga pendente', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -396,11 +390,16 @@ describe('applyJoanaProposal', () => {
         value: '2026-05-18',
         question: immigrationConfirmationQuestion('2026-05-18', true),
       },
-      proposal: { interested: null, confirmation: null, cities: 'Braga' },
+      proposal: {
+        interested: null,
+        confirmation: null,
+        immigration: '2026-12-01',
+        cities: 'Braga',
+      },
     });
+    expect(result.crmPatch?.immigration).toBe('2026-12-01');
     expect(result.crmPatch?.cities).toBe('Braga');
-    expect(result.pending?.value).toBe('2026-05-18');
-    expect(result.append[0]).toContain('data prevista de imigração');
+    expect(result.pending).toBeNull();
   });
 
   it('grava que não tem visto, indica a Clara e não segue a qualificação', () => {

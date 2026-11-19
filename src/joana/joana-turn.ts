@@ -407,7 +407,7 @@ function proposedRaw(proposal: JoanaProposal, field: JoanaField): string | undef
   }
 }
 
-/** Confirmação só da data de imigração (único campo que pede sim/não). */
+/** @deprecated Já não se cria confirmação de data; mantido para pendências antigas. */
 export function immigrationConfirmationQuestion(
   value: string,
   hadPrevious: boolean,
@@ -668,8 +668,10 @@ function applyValue(profile: JoanaProfile, patch: JoanaCrmPatch, field: JoanaFie
 
 /**
  * Decide o que gravar e o que acrescentar à resposta.
- * O modelo não grava: só propõe. Nome, visto, cidades, tipologia, aluguel e pet
- * sobrescrevem na hora. A data de imigração só grava depois de um sim.
+ * O modelo não grava: só propõe. Nome, data de imigração, visto, cidades,
+ * tipologia, aluguel e pet sobrescrevem na hora (sem confirmação).
+ * Confirmações de data ainda pendentes (conversas a meio) continuam a
+ * respeitar sim/não até serem resolvidas.
  */
 export function applyJoanaProposal(input: {
   hasLead: boolean;
@@ -718,16 +720,8 @@ export function applyJoanaProposal(input: {
       const clearing = proposed === '';
       if (empty && clearing) continue;
 
-      if (field === 'immigration') {
-        pending = {
-          field: 'immigration',
-          value: proposed,
-          question: immigrationConfirmationQuestion(proposed, !empty),
-        };
-        continue;
-      }
-
       remember(field, proposed);
+      if (field === 'immigration') pending = null;
     }
   }
 
