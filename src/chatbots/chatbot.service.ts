@@ -6,6 +6,7 @@ import {
   normalizeJoanaWelcomeSteps,
   parseStoredWelcomeSteps,
 } from '../joana/joana-welcome';
+import { enrichWelcomeStepsChannelMedia } from '../uploads/channel-media.util';
 import {
   CHATBOT_DEFAULT_CONTEXTS,
   CHATBOT_DEFAULT_INTROS,
@@ -81,6 +82,52 @@ export class ChatbotService {
     return { text, bots };
   }
 
+  async getChannelFlags(): Promise<{
+    whatsappEnabled: boolean;
+    instagramEnabled: boolean;
+  }> {
+    const row = await this.ensureRouterSettings();
+    return {
+      whatsappEnabled: row.whatsappEnabled,
+      instagramEnabled: row.instagramEnabled,
+    };
+  }
+
+  async updateChannelFlags(input: {
+    whatsappEnabled?: boolean;
+    instagramEnabled?: boolean;
+  }): Promise<{ whatsappEnabled: boolean; instagramEnabled: boolean }> {
+    if (
+      input.whatsappEnabled === undefined &&
+      input.instagramEnabled === undefined
+    ) {
+      throw new BadRequestException('Indica pelo menos um canal para atualizar.');
+    }
+    await this.ensureRouterSettings();
+    const saved = await this.prisma.chatbotRouterSettings.update({
+      where: { id: 'default' },
+      data: {
+        ...(input.whatsappEnabled !== undefined
+          ? { whatsappEnabled: input.whatsappEnabled }
+          : {}),
+        ...(input.instagramEnabled !== undefined
+          ? { instagramEnabled: input.instagramEnabled }
+          : {}),
+      },
+      select: { whatsappEnabled: true, instagramEnabled: true },
+    });
+    return saved;
+  }
+
+  async isChannelEnabled(
+    channel: 'whatsapp' | 'instagram',
+  ): Promise<boolean> {
+    const flags = await this.getChannelFlags();
+    return channel === 'instagram'
+      ? flags.instagramEnabled
+      : flags.whatsappEnabled;
+  }
+
   async updateMenuText(menuText: string): Promise<{ text: string; bots: MenuBot[] }> {
     const text = menuText.trim();
     if (text.length < 20) {
@@ -88,11 +135,34 @@ export class ChatbotService {
     }
     await this.prisma.chatbotRouterSettings.upsert({
       where: { id: 'default' },
-      create: { id: 'default', menuText: text },
+      create: {
+        id: 'default',
+        menuText: text,
+        whatsappEnabled: true,
+        instagramEnabled: true,
+      },
       update: { menuText: text },
     });
     const bots = await this.listEnabledMenuBots();
     return { text, bots };
+  }
+
+  private async ensureRouterSettings() {
+    const existing = await this.prisma.chatbotRouterSettings.findUnique({
+      where: { id: 'default' },
+    });
+    if (existing) return existing;
+    const bots = await this.listEnabledMenuBots();
+    const menuText =
+      bots.length > 0 ? buildChatbotMenuText(bots) : DEFAULT_CHATBOT_MENU_TEXT;
+    return this.prisma.chatbotRouterSettings.create({
+      data: {
+        id: 'default',
+        menuText,
+        whatsappEnabled: true,
+        instagramEnabled: true,
+      },
+    });
   }
 
   /**
@@ -238,7 +308,8 @@ export class ChatbotService {
   }
 
   async updateWelcome(slug: string, rawSteps: unknown): Promise<ChatbotPublic> {
-    const steps = normalizeJoanaWelcomeSteps(rawSteps);
+    const normalized = normalizeJoanaWelcomeSteps(rawSteps);
+    const steps = await enrichWelcomeStepsChannelMedia(normalized);
     const existing = await this.requireBySlug(slug);
     const saved = await this.prisma.chatbot.update({
       where: { id: existing.id },

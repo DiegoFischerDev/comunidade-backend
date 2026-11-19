@@ -33,17 +33,46 @@ describe('normalizeJoanaWelcomeSteps', () => {
       textContent: 'Oi, eu sou a Joana.',
       delayMsAfter: 1000,
     });
-    expect(steps[1]?.type).toBe('AUDIO');
+    expect(steps[1]).toMatchObject({
+      type: 'AUDIO',
+      mediaUrl: '/uploads/hello.ogg',
+      mediaUrlWhatsapp: '/uploads/hello.ogg',
+      mediaUrlInstagram: '/uploads/hello.ogg',
+    });
     expect(steps[2]).toMatchObject({
       type: 'IMAGE',
       textContent: 'A Rafa',
       mediaUrl: '/uploads/foto.jpg',
+      mediaUrlWhatsapp: '/uploads/foto.jpg',
+      mediaUrlInstagram: '/uploads/foto.jpg',
     });
     expect(steps[3]).toMatchObject({
       type: 'DOCUMENT',
       textContent: 'Apresentação',
       mediaUrl: '/uploads/apresentacao.pdf',
       mediaMimeType: 'application/pdf',
+      mediaUrlWhatsapp: '/uploads/apresentacao.pdf',
+      mediaUrlInstagram: '/uploads/apresentacao.pdf',
+    });
+  });
+
+  it('preserva variantes por canal quando enviadas', () => {
+    const steps = normalizeJoanaWelcomeSteps([
+      {
+        type: 'AUDIO',
+        mediaUrl: '/uploads/hello.wa.ogg',
+        mediaUrlWhatsapp: '/uploads/hello.wa.ogg',
+        mediaMimeTypeWhatsapp: 'audio/ogg',
+        mediaUrlInstagram: '/uploads/hello.ig.m4a',
+        mediaMimeTypeInstagram: 'audio/mp4',
+      },
+    ]);
+    expect(steps[0]).toMatchObject({
+      type: 'AUDIO',
+      mediaUrlWhatsapp: '/uploads/hello.wa.ogg',
+      mediaUrlInstagram: '/uploads/hello.ig.m4a',
+      mediaMimeTypeWhatsapp: 'audio/ogg',
+      mediaMimeTypeInstagram: 'audio/mp4',
     });
   });
 

@@ -1309,9 +1309,13 @@ model Chatbot {
 
 /// Texto do menu inicial partilhado (id fixo `default`). Editável no admin.
 model ChatbotRouterSettings {
-  id        String   @id
-  menuText  String   @map("menu_text") @db.Text
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id               String   @id
+  menuText         String   @map("menu_text") @db.Text
+  /// Chatbots respondem no WhatsApp (menu + motores).
+  whatsappEnabled  Boolean  @default(true) @map("whatsapp_enabled")
+  /// Chatbots respondem no Instagram Direct.
+  instagramEnabled Boolean  @default(true) @map("instagram_enabled")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("chatbot_router_settings")
 }

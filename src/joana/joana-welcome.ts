@@ -7,11 +7,69 @@ export type JoanaWelcomeStepType = 'TEXT' | 'AUDIO' | 'IMAGE' | 'DOCUMENT';
 export type JoanaWelcomeStep = {
   type: JoanaWelcomeStepType;
   textContent?: string | null;
+  /** URL canónica / fallback (legado). */
   mediaUrl?: string | null;
   mediaMimeType?: string | null;
   mediaFileName?: string | null;
+  /** Variante optimizada para WhatsApp (ex.: Ogg Opus PTT). */
+  mediaUrlWhatsapp?: string | null;
+  mediaMimeTypeWhatsapp?: string | null;
+  /** Variante optimizada para Instagram (ex.: M4A/AAC). */
+  mediaUrlInstagram?: string | null;
+  mediaMimeTypeInstagram?: string | null;
   delayMsAfter: number;
 };
+
+export type WelcomeChannel = 'whatsapp' | 'instagram';
+
+export type WelcomeChannelMedia = {
+  mediaUrl: string;
+  mediaMimeType: string | null;
+  mediaFileName: string | null;
+};
+
+/**
+ * Escolhe a URL/mime do canal. WhatsApp prefere Ogg; Instagram prefere M4A.
+ * Fallback para `mediaUrl` legado.
+ */
+export function pickWelcomeMediaForChannel(
+  step: JoanaWelcomeStep,
+  channel: WelcomeChannel,
+): WelcomeChannelMedia | null {
+  if (step.type === 'TEXT') return null;
+  if (channel === 'instagram') {
+    const mediaUrl = (
+      step.mediaUrlInstagram ||
+      step.mediaUrl ||
+      step.mediaUrlWhatsapp ||
+      ''
+    ).trim();
+    if (!mediaUrl) return null;
+    return {
+      mediaUrl,
+      mediaMimeType:
+        step.mediaMimeTypeInstagram?.trim() ||
+        step.mediaMimeType?.trim() ||
+        null,
+      mediaFileName: step.mediaFileName?.trim() || null,
+    };
+  }
+  const mediaUrl = (
+    step.mediaUrlWhatsapp ||
+    step.mediaUrl ||
+    step.mediaUrlInstagram ||
+    ''
+  ).trim();
+  if (!mediaUrl) return null;
+  return {
+    mediaUrl,
+    mediaMimeType:
+      step.mediaMimeTypeWhatsapp?.trim() ||
+      step.mediaMimeType?.trim() ||
+      null,
+    mediaFileName: step.mediaFileName?.trim() || null,
+  };
+}
 
 const MAX_STEPS = 20;
 
@@ -103,6 +161,15 @@ function normalizeOneStep(raw: unknown, index: number): JoanaWelcomeStep {
       ? Math.max(0, Math.min(30_000, Math.floor(row.delayMsAfter)))
       : 650;
 
+  const optionalUrl = (key: string): string | null => {
+    const v = row[key];
+    return typeof v === 'string' && v.trim() ? v.trim() : null;
+  };
+  const optionalMime = (key: string): string | null => {
+    const v = row[key];
+    return typeof v === 'string' && v.trim() ? v.trim() : null;
+  };
+
   if (type === 'TEXT') {
     const textContent =
       typeof row.textContent === 'string' ? row.textContent.trim() : '';
@@ -115,11 +182,20 @@ function normalizeOneStep(raw: unknown, index: number): JoanaWelcomeStep {
       mediaUrl: null,
       mediaMimeType: null,
       mediaFileName: null,
+      mediaUrlWhatsapp: null,
+      mediaMimeTypeWhatsapp: null,
+      mediaUrlInstagram: null,
+      mediaMimeTypeInstagram: null,
       delayMsAfter,
     };
   }
 
-  const mediaUrl = typeof row.mediaUrl === 'string' ? row.mediaUrl.trim() : '';
+  const mediaUrlWhatsapp = optionalUrl('mediaUrlWhatsapp');
+  const mediaUrlInstagram = optionalUrl('mediaUrlInstagram');
+  const mediaUrlRaw =
+    typeof row.mediaUrl === 'string' ? row.mediaUrl.trim() : '';
+  const mediaUrl =
+    mediaUrlRaw || mediaUrlWhatsapp || mediaUrlInstagram || '';
   if (!mediaUrl) {
     throw new BadRequestException(`Passo ${index + 1}: ficheiro/URL em falta.`);
   }
@@ -127,6 +203,8 @@ function normalizeOneStep(raw: unknown, index: number): JoanaWelcomeStep {
     typeof row.mediaMimeType === 'string' && row.mediaMimeType.trim()
       ? row.mediaMimeType.trim()
       : null;
+  const mediaMimeTypeWhatsapp = optionalMime('mediaMimeTypeWhatsapp');
+  const mediaMimeTypeInstagram = optionalMime('mediaMimeTypeInstagram');
   const mediaFileName =
     typeof row.mediaFileName === 'string' && row.mediaFileName.trim()
       ? row.mediaFileName.trim()
@@ -165,6 +243,16 @@ function normalizeOneStep(raw: unknown, index: number): JoanaWelcomeStep {
       type === 'DOCUMENT'
         ? mediaFileName || mediaUrl.split('/').pop()?.split('?')[0] || 'documento.pdf'
         : mediaFileName,
+    mediaUrlWhatsapp: mediaUrlWhatsapp || mediaUrl,
+    mediaMimeTypeWhatsapp:
+      type === 'DOCUMENT'
+        ? mediaMimeTypeWhatsapp || mediaMimeType || 'application/pdf'
+        : mediaMimeTypeWhatsapp || mediaMimeType,
+    mediaUrlInstagram: mediaUrlInstagram || mediaUrl,
+    mediaMimeTypeInstagram:
+      type === 'DOCUMENT'
+        ? mediaMimeTypeInstagram || mediaMimeType || 'application/pdf'
+        : mediaMimeTypeInstagram || mediaMimeType,
     delayMsAfter,
   };
 }

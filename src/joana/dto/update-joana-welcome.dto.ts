@@ -7,6 +7,10 @@ export type JoanaWelcomeStepInputDto = {
   mediaUrl?: string;
   mediaMimeType?: string;
   mediaFileName?: string;
+  mediaUrlWhatsapp?: string;
+  mediaMimeTypeWhatsapp?: string;
+  mediaUrlInstagram?: string;
+  mediaMimeTypeInstagram?: string;
   caption?: string;
   delayMsAfter?: number;
 };

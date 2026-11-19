@@ -162,6 +162,10 @@ export class ChatbotRouterService {
       return { handled: true, status: 'ignored_empty' };
     }
 
+    if (!(await this.chatbots.isChannelEnabled(channel))) {
+      return { handled: true, status: 'channel_disabled' };
+    }
+
     const text = input.text.trim();
     if (!text) return { handled: true, status: 'ignored_empty' };
 
@@ -294,6 +298,9 @@ export class ChatbotRouterService {
     const instance = (input.instance || '').trim();
     if (instance !== chatbotWhatsappInstance()) {
       return { handled: true, status: 'ignored_audio' };
+    }
+    if (!(await this.chatbots.isChannelEnabled('whatsapp'))) {
+      return { handled: true, status: 'channel_disabled' };
     }
 
     await this.detachBotIfOutsideCrm(input.whatsapp);

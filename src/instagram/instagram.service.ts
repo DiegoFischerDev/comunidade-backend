@@ -1,10 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { execFile } from 'child_process';
 import { createHmac, timingSafeEqual } from 'crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { promisify } from 'util';
 import type {
   InstagramInboundMessage,
   InstagramUserProfile,
   InstagramWebhookPayload,
 } from './instagram.types';
+
+const execFileAsync = promisify(execFile);
 
 @Injectable()
 export class InstagramService {
@@ -15,6 +22,12 @@ export class InstagramService {
     { at: number; profile: InstagramUserProfile | null }
   >();
   private static readonly PROFILE_CACHE_MS = 6 * 60 * 60 * 1000;
+  /** Cache attachment_id Meta por URL (áudio convertido, etc.). */
+  private readonly uploadedAttachmentIds = new Map<
+    string,
+    { id: string; at: number }
+  >();
+  private static readonly ATTACHMENT_CACHE_MS = 24 * 60 * 60 * 1000;
 
   /** Verify token configurado no painel Meta (hub.verify_token). */
   getWebhookVerifyToken(): string {
@@ -27,6 +40,10 @@ export class InstagramService {
 
   getPageAccessToken(): string {
     return process.env.INSTAGRAM_PAGE_ACCESS_TOKEN?.trim() ?? '';
+  }
+
+  getPageId(): string {
+    return process.env.INSTAGRAM_PAGE_ID?.trim() ?? '';
   }
 
   getConfiguredIgBusinessAccountId(): string {
@@ -247,7 +264,7 @@ export class InstagramService {
 
   /**
    * Envia anexo (imagem / áudio / PDF / vídeo) por URL pública.
-   * A Meta descarrega a URL — tem de ser https acessível.
+   * Áudio OGG/Opus (WhatsApp) é convertido para M4A — a Meta IG não aceita ogg em `audio`.
    */
   async sendAttachment(params: {
     recipientIgUserId: string;
@@ -259,6 +276,18 @@ export class InstagramService {
     if (!mediaUrl || !/^https?:\/\//i.test(mediaUrl)) {
       throw new Error('Instagram sendAttachment: mediaUrl http(s) inválida');
     }
+
+    if (params.type === 'audio' && isInstagramUnsupportedAudioUrl(mediaUrl)) {
+      const attachmentId = await this.uploadConvertedAudioAttachment(mediaUrl);
+      await this.postMessage(params.recipientIgUserId, {
+        attachment: {
+          type: 'audio',
+          payload: { attachment_id: attachmentId },
+        },
+      });
+      return;
+    }
+
     await this.postMessage(params.recipientIgUserId, {
       attachment: {
         type: params.type,
@@ -268,6 +297,111 @@ export class InstagramService {
         },
       },
     });
+  }
+
+  private async uploadConvertedAudioAttachment(
+    sourceUrl: string,
+  ): Promise<string> {
+    const cached = this.uploadedAttachmentIds.get(sourceUrl);
+    if (
+      cached &&
+      Date.now() - cached.at < InstagramService.ATTACHMENT_CACHE_MS
+    ) {
+      return cached.id;
+    }
+
+    const m4a = await this.convertRemoteAudioToM4a(sourceUrl);
+    const attachmentId = await this.uploadMessageAttachment({
+      type: 'audio',
+      fileName: 'audio.m4a',
+      mimeType: 'audio/mp4',
+      bytes: m4a,
+    });
+    this.uploadedAttachmentIds.set(sourceUrl, {
+      id: attachmentId,
+      at: Date.now(),
+    });
+    return attachmentId;
+  }
+
+  private async convertRemoteAudioToM4a(sourceUrl: string): Promise<Buffer> {
+    const dir = await mkdtemp(join(tmpdir(), 'ig-audio-'));
+    const inputPath = join(dir, 'input');
+    const outputPath = join(dir, 'output.m4a');
+    try {
+      const res = await fetch(sourceUrl);
+      if (!res.ok) {
+        throw new Error(`download áudio IG falhou (${res.status})`);
+      }
+      await writeFile(inputPath, Buffer.from(await res.arrayBuffer()));
+      await execFileAsync(
+        'ffmpeg',
+        ['-y', '-i', inputPath, '-c:a', 'aac', '-b:a', '128k', outputPath],
+        { timeout: 60_000 },
+      );
+      return await readFile(outputPath);
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async uploadMessageAttachment(input: {
+    type: 'audio' | 'image' | 'file' | 'video';
+    fileName: string;
+    mimeType: string;
+    bytes: Buffer;
+  }): Promise<string> {
+    const token = this.getPageAccessToken();
+    const pageId = this.getPageId() || 'me';
+    if (!token) {
+      throw new Error('INSTAGRAM_PAGE_ACCESS_TOKEN não está definido');
+    }
+    const apiVersion = process.env.META_GRAPH_API_VERSION?.trim() || 'v21.0';
+    const url = `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(pageId)}/message_attachments`;
+
+    const form = new FormData();
+    form.append('platform', 'instagram');
+    form.append(
+      'message',
+      JSON.stringify({
+        attachment: {
+          type: input.type,
+          is_reusable: true,
+        },
+      }),
+    );
+    form.append(
+      'filedata',
+      new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }),
+      input.fileName,
+    );
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    const body = await res.text();
+    if (!res.ok) {
+      this.logger.error(
+        `Falha upload anexo IG (${res.status}): ${body.slice(0, 400)}`,
+      );
+      throw new Error(`Instagram uploadAttachment failed: ${res.status}`);
+    }
+    let parsed: { attachment_id?: unknown };
+    try {
+      parsed = JSON.parse(body) as { attachment_id?: unknown };
+    } catch {
+      throw new Error('Instagram uploadAttachment: resposta inválida');
+    }
+    const id =
+      typeof parsed.attachment_id === 'string'
+        ? parsed.attachment_id.trim()
+        : '';
+    if (!id) {
+      throw new Error('Instagram uploadAttachment: sem attachment_id');
+    }
+    return id;
   }
 
   private async postMessage(
@@ -301,4 +435,15 @@ export class InstagramService {
       throw new Error(`Instagram sendMessage failed: ${res.status}`);
     }
   }
+}
+
+function isInstagramUnsupportedAudioUrl(url: string): boolean {
+  const path = url.split('?')[0]!.toLowerCase();
+  return (
+    path.endsWith('.ogg') ||
+    path.endsWith('.opus') ||
+    path.endsWith('.webm') ||
+    path.includes('audio/ogg') ||
+    path.includes('audio/opus')
+  );
 }

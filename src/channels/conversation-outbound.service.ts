@@ -3,10 +3,13 @@ import { ChatbotChannel, Prisma } from '@prisma/client';
 import { InstagramService } from '../instagram/instagram.service';
 import {
   guessWelcomeImageMime,
+  pickWelcomeMediaForChannel,
   resolveWelcomeMediaUrl,
   type JoanaWelcomeStep,
+  type WelcomeChannel,
 } from '../joana/joana-welcome';
 import { PrismaService } from '../prisma/prisma.service';
+import { enrichWelcomeStepsChannelMedia } from '../uploads/channel-media.util';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import {
   instagramPeer,
@@ -98,6 +101,7 @@ export class ConversationOutboundService {
 
   /**
    * Sequência de boas-vindas (TEXT / AUDIO / IMAGE / DOCUMENT) no canal activo.
+   * Áudio/imagem usam variantes por canal (WA Ogg / IG M4A) quando existem.
    */
   async sendWelcomeSteps(
     row: ConversationOutboundRow,
@@ -109,62 +113,93 @@ export class ConversationOutboundService {
       throw new Error('conversation_outbound_no_channel');
     }
 
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i]!;
-      if (step.type === 'TEXT') {
-        const body = (step.textContent || '').trim();
-        if (body) {
-          await this.sendText(row, body, opts);
+    const channel: WelcomeChannel =
+      peer.channel === 'instagram' ? 'instagram' : 'whatsapp';
+    const prepared = await enrichWelcomeStepsChannelMedia(steps);
+
+    let sentAny = false;
+    let lastError: unknown = null;
+
+    for (let i = 0; i < prepared.length; i++) {
+      const step = prepared[i]!;
+      try {
+        if (step.type === 'TEXT') {
+          const body = (step.textContent || '').trim();
+          if (body) {
+            await this.sendText(row, body, opts);
+            sentAny = true;
+          }
+        } else if (
+          step.type === 'AUDIO' ||
+          step.type === 'IMAGE' ||
+          step.type === 'DOCUMENT'
+        ) {
+          const picked = pickWelcomeMediaForChannel(step, channel);
+          if (!picked) {
+            throw new Error(`Passo ${step.type} sem mediaUrl válida.`);
+          }
+          const abs = resolveWelcomeMediaUrl(picked.mediaUrl);
+          if (!abs) {
+            throw new Error(`Passo ${step.type} sem mediaUrl válida.`);
+          }
+          if (step.type === 'AUDIO') {
+            await this.sendAttachment(row, {
+              kind: 'audio',
+              mediaUrl: abs,
+              mimeType: picked.mediaMimeType || undefined,
+              requireDelivery: opts?.requireDelivery,
+            });
+          } else if (step.type === 'IMAGE') {
+            const mime =
+              picked.mediaMimeType?.trim() ||
+              guessWelcomeImageMime(picked.mediaFileName || abs);
+            const fileName =
+              picked.mediaFileName?.trim() ||
+              abs.split('/').pop()?.split('?')[0] ||
+              'image.jpg';
+            await this.sendAttachment(row, {
+              kind: 'image',
+              mediaUrl: abs,
+              mimeType: mime,
+              fileName,
+              caption: (step.textContent || '').trim(),
+              requireDelivery: opts?.requireDelivery,
+            });
+          } else {
+            const fileName =
+              picked.mediaFileName?.trim() ||
+              abs.split('/').pop()?.split('?')[0] ||
+              'documento.pdf';
+            await this.sendAttachment(row, {
+              kind: 'document',
+              mediaUrl: abs,
+              mimeType: picked.mediaMimeType?.trim() || 'application/pdf',
+              fileName,
+              caption: (step.textContent || '').trim(),
+              requireDelivery: opts?.requireDelivery,
+            });
+          }
+          sentAny = true;
         }
-      } else if (step.type === 'AUDIO') {
-        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
-        if (!abs) throw new Error('Passo AUDIO sem mediaUrl válida.');
-        await this.sendAttachment(row, {
-          kind: 'audio',
-          mediaUrl: abs,
-          requireDelivery: opts?.requireDelivery,
-        });
-      } else if (step.type === 'IMAGE') {
-        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
-        if (!abs) throw new Error('Passo IMAGE sem mediaUrl válida.');
-        const mime =
-          step.mediaMimeType?.trim() ||
-          guessWelcomeImageMime(step.mediaFileName || abs);
-        const fileName =
-          step.mediaFileName?.trim() ||
-          abs.split('/').pop()?.split('?')[0] ||
-          'image.jpg';
-        const caption = (step.textContent || '').trim();
-        await this.sendAttachment(row, {
-          kind: 'image',
-          mediaUrl: abs,
-          mimeType: mime,
-          fileName,
-          caption,
-          requireDelivery: opts?.requireDelivery,
-        });
-      } else if (step.type === 'DOCUMENT') {
-        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
-        if (!abs) throw new Error('Passo DOCUMENT sem mediaUrl válida.');
-        const fileName =
-          step.mediaFileName?.trim() ||
-          abs.split('/').pop()?.split('?')[0] ||
-          'documento.pdf';
-        const caption = (step.textContent || '').trim();
-        await this.sendAttachment(row, {
-          kind: 'document',
-          mediaUrl: abs,
-          mimeType: step.mediaMimeType?.trim() || 'application/pdf',
-          fileName,
-          caption,
-          requireDelivery: opts?.requireDelivery,
-        });
+      } catch (err: unknown) {
+        lastError = err;
+        this.logger.warn(
+          `Boas-vindas passo ${i + 1}/${prepared.length} (${step.type}) falhou: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
       }
 
       const delay = Math.max(0, step.delayMsAfter ?? 650);
-      if (i < steps.length - 1 && delay > 0) {
+      if (i < prepared.length - 1 && delay > 0) {
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
+    }
+
+    if (!sentAny && lastError) {
+      throw lastError instanceof Error
+        ? lastError
+        : new Error(String(lastError));
     }
   }
 

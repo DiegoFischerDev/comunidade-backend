@@ -21,6 +21,7 @@ import {
   joanaWhatsappInstance,
 } from './joana-context';
 import { JoanaOpenAiService } from './joana-openai.service';
+import { enrichWelcomeStepsChannelMedia } from '../uploads/channel-media.util';
 import {
   type JoanaWelcomeStep,
   normalizeJoanaWelcomeSteps,
@@ -112,7 +113,8 @@ export class JoanaService {
   }
 
   async updateWelcome(rawSteps: unknown): Promise<{ steps: JoanaWelcomeStep[] }> {
-    const steps = normalizeJoanaWelcomeSteps(rawSteps);
+    const normalized = normalizeJoanaWelcomeSteps(rawSteps);
+    const steps = await enrichWelcomeStepsChannelMedia(normalized);
     const bot = await this.prisma.chatbot.findUnique({ where: { slug: 'joana' } });
     if (bot) {
       const saved = await this.prisma.chatbot.update({
