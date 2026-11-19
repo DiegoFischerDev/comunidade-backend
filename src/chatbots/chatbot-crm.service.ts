@@ -344,6 +344,11 @@ export class ChatbotCrmService {
     });
     if (!firstColumn) return null;
 
+    // Excluídos que ainda ocupam o IGSID (unique) bloqueiam lead novo → libertar.
+    if (ig) {
+      await this.releaseExcludedInstagramIdentity(params.chatbotId, ig);
+    }
+
     // Excluídos não se restauram: menu → sempre novo CrmLead (novo ID).
     const fallbackName =
       cleanName(params.displayName) ||
@@ -355,19 +360,19 @@ export class ChatbotCrmService {
         ? fallbackName.slice(0, 120)
         : null;
 
+    const createPayload = {
+      chatbotId: params.chatbotId,
+      columnId: firstColumn.id,
+      whatsappDigits: whatsapp,
+      instagramUserId: ig,
+      guestName: fallbackName,
+      instagramHandle: handleFromDisplay,
+      botEnabled,
+      subjectSummary: params.subjectSummary ?? null,
+    };
+
     try {
-      const created = await this.prisma.crmLead.create({
-        data: {
-          chatbotId: params.chatbotId,
-          columnId: firstColumn.id,
-          whatsappDigits: whatsapp,
-          instagramUserId: ig,
-          guestName: fallbackName,
-          instagramHandle: handleFromDisplay,
-          botEnabled,
-          subjectSummary: params.subjectSummary ?? null,
-        },
-      });
+      const created = await this.prisma.crmLead.create({ data: createPayload });
       if (whatsapp) void this.scheduleEnsureProfileImage(whatsapp, null);
       if (ig) void this.scheduleEnsureInstagramProfileImage(ig, null);
       await this.ensureJoanaRafaCallCard({
@@ -380,31 +385,74 @@ export class ChatbotCrmService {
       return created;
     } catch (err: unknown) {
       if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === 'P2002'
+        !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+        err.code !== 'P2002'
       ) {
-        const again = await this.prisma.crmLead.findFirst({
-          where: identityWhere,
-        });
-        if (again) {
+        throw err;
+      }
+
+      // Corrida / IGSID ainda preso: libertar de novo e tentar uma vez.
+      if (ig) {
+        await this.releaseExcludedInstagramIdentity(params.chatbotId, ig);
+        try {
+          const created = await this.prisma.crmLead.create({
+            data: createPayload,
+          });
+          if (whatsapp) void this.scheduleEnsureProfileImage(whatsapp, null);
+          if (ig) void this.scheduleEnsureInstagramProfileImage(ig, null);
           await this.ensureJoanaRafaCallCard({
             chatbotId: params.chatbotId,
-            crmLeadId: again.id,
-            whatsapp: again.whatsappDigits,
-            instagramUserId: again.instagramUserId || ig,
-            guestName: again.guestName || fallbackName,
+            crmLeadId: created.id,
+            whatsapp,
+            instagramUserId: ig,
+            guestName: created.guestName || fallbackName,
           });
-          if (again.instagramUserId || ig) {
-            void this.scheduleEnsureInstagramProfileImage(
-              again.instagramUserId || ig!,
-              again.crmProfileImageUrl,
-            );
+          return created;
+        } catch (retryErr: unknown) {
+          if (
+            !(retryErr instanceof Prisma.PrismaClientKnownRequestError) ||
+            retryErr.code !== 'P2002'
+          ) {
+            throw retryErr;
           }
         }
-        return again;
       }
-      throw err;
+
+      const again = await this.prisma.crmLead.findFirst({
+        where: identityWhere,
+      });
+      if (again) {
+        await this.ensureJoanaRafaCallCard({
+          chatbotId: params.chatbotId,
+          crmLeadId: again.id,
+          whatsapp: again.whatsappDigits,
+          instagramUserId: again.instagramUserId || ig,
+          guestName: again.guestName || fallbackName,
+        });
+        if (again.instagramUserId || ig) {
+          void this.scheduleEnsureInstagramProfileImage(
+            again.instagramUserId || ig!,
+            again.crmProfileImageUrl,
+          );
+        }
+      }
+      return again;
     }
+  }
+
+  /** Liberta @@unique([chatbotId, instagramUserId]) em leads já excluídos. */
+  private async releaseExcludedInstagramIdentity(
+    chatbotId: string,
+    instagramUserId: string,
+  ): Promise<void> {
+    await this.prisma.crmLead.updateMany({
+      where: {
+        chatbotId,
+        instagramUserId,
+        crmExcludedAt: { not: null },
+      },
+      data: { instagramUserId: null },
+    });
   }
 
   /**

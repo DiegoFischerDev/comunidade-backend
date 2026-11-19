@@ -801,6 +801,7 @@ export class JoanaService {
           await this.linkJoanaCrmLeadToBooking(
             input.instagramUserId,
             created.id,
+            decision.nameToSave,
           );
         }
       } catch (err: unknown) {
@@ -848,20 +849,76 @@ export class JoanaService {
   private async linkJoanaCrmLeadToBooking(
     instagramUserId: string,
     bookingId: string,
+    displayName?: string | null,
   ): Promise<void> {
+    const ig = instagramUserId.trim();
+    if (!ig) return;
     const bot = await this.prisma.chatbot.findUnique({
       where: { slug: 'joana' },
       select: { id: true },
     });
     if (!bot) return;
-    await this.prisma.crmLead.updateMany({
+
+    const linked = await this.prisma.crmLead.updateMany({
       where: {
         chatbotId: bot.id,
-        instagramUserId,
+        instagramUserId: ig,
         crmExcludedAt: null,
       },
       data: { rafaCallBookingId: bookingId },
     });
+    if (linked.count > 0) return;
+
+    // Sem CrmLead activo (ex.: IGSID preso em excluído) — libertar e criar lock.
+    await this.prisma.crmLead.updateMany({
+      where: {
+        chatbotId: bot.id,
+        instagramUserId: ig,
+        crmExcludedAt: { not: null },
+      },
+      data: { instagramUserId: null },
+    });
+
+    const firstColumn = await this.prisma.crmColumn.findFirst({
+      where: { chatbotId: bot.id },
+      orderBy: { sortOrder: 'asc' },
+      select: { id: true },
+    });
+    if (!firstColumn) return;
+
+    const guestName =
+      (displayName && displayName.trim().length >= 2
+        ? displayName.trim().slice(0, 80)
+        : null) || `Lead IG ${ig.slice(-4)}`;
+
+    try {
+      await this.prisma.crmLead.create({
+        data: {
+          chatbotId: bot.id,
+          columnId: firstColumn.id,
+          instagramUserId: ig,
+          rafaCallBookingId: bookingId,
+          guestName,
+          botEnabled: true,
+        },
+      });
+    } catch (err: unknown) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        await this.prisma.crmLead.updateMany({
+          where: {
+            chatbotId: bot.id,
+            instagramUserId: ig,
+            crmExcludedAt: null,
+          },
+          data: { rafaCallBookingId: bookingId },
+        });
+        return;
+      }
+      throw err;
+    }
   }
 
   private async ensureRafaCallCardForConversation(row: {
@@ -882,13 +939,26 @@ export class JoanaService {
         whatsapp: row.whatsappDigits,
       });
       if (row.instagramUserId) {
-        await this.linkJoanaCrmLeadToBooking(row.instagramUserId, created.id);
+        await this.linkJoanaCrmLeadToBooking(
+          row.instagramUserId,
+          created.id,
+          row.displayName,
+        );
       }
     } catch (err: unknown) {
       if (!isCrmMessage(err, 'Este cliente já está no CRM.')) {
         this.logger.warn(
           `Joana ensure CRM: ${err instanceof Error ? err.message : String(err)}`,
         );
+      } else if (row.instagramUserId && row.whatsappDigits) {
+        const again = await this.crm.lookupLeadForJoana(row.whatsappDigits);
+        if (again.kind === 'visible') {
+          await this.linkJoanaCrmLeadToBooking(
+            row.instagramUserId,
+            again.bookingId,
+            row.displayName,
+          );
+        }
       }
     }
   }
