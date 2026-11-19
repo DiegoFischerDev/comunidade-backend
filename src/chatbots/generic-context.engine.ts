@@ -5,7 +5,10 @@ import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
 import { welcomeStepsHistorySummary } from '../joana/joana-welcome';
 import { ChatbotService } from './chatbot.service';
-import { isChatbotSlug } from './chatbot.constants';
+import {
+  CHATBOT_WHATSAPP_REPLY_STYLE,
+  isChatbotSlug,
+} from './chatbot.constants';
 import { ChatbotCrmService } from './chatbot-crm.service';
 import {
   applyBrunaProposal,
@@ -93,9 +96,9 @@ export class GenericContextEngine {
     const history = readHistory(row.history);
     const bot = await this.chatbots.getBySlug(slug);
 
-    let welcomeSent = row.welcomeSent;
-    let welcomeSummary = '';
-    if (!welcomeSent) {
+    // 1ª interação do bot = só boas-vindas; OpenAI só na mensagem seguinte.
+    if (!row.welcomeSent) {
+      let welcomeSummary = '';
       try {
         if (bot.welcomeSteps.length > 0) {
           await this.outbound.sendWelcomeSteps(row, bot.welcomeSteps, {
@@ -108,7 +111,6 @@ export class GenericContextEngine {
           });
           welcomeSummary = bot.introFallback.trim();
         }
-        welcomeSent = true;
       } catch (err: unknown) {
         this.logger.warn(
           `${bot.name} boas-vindas ${row.whatsappDigits || row.instagramUserId}: ${
@@ -116,11 +118,20 @@ export class GenericContextEngine {
           }`,
         );
       }
+
+      await this.persistTurn({
+        id,
+        bufferIds: buffer.map((item) => item.id),
+        userText: combined,
+        assistantText: welcomeSummary || '[Boas-vindas enviadas]',
+        history,
+        welcomeSent: true,
+        outbound: null,
+      });
+      return;
     }
 
-    const historyForModel: HistoryItem[] = welcomeSummary
-      ? [...history, { role: 'assistant', text: welcomeSummary }]
-      : history;
+    const historyForModel = history;
 
     let reply = '';
     try {
@@ -224,7 +235,7 @@ export class GenericContextEngine {
       userText: combined,
       assistantText: reply,
       history: historyForModel,
-      welcomeSent,
+      welcomeSent: true,
       outbound: sent ? null : reply,
     });
   }
@@ -246,15 +257,16 @@ export class GenericContextEngine {
     const system = [
       input.context.trim(),
       '',
-      'És a Bruna no WhatsApp. A Rafa é mulher — fala no feminino.',
+      CHATBOT_WHATSAPP_REPLY_STYLE,
+      'Identidade interna: Bruna (crédito/compra). A Rafa é mulher — fala no feminino. Na reply não digas o teu nome.',
       'Responde em JSON: {"reply":"...","desiredHouseValue":250000,"preferredCities":"...","propertyTypology":"T2"}',
       'desiredHouseValue, preferredCities e propertyTypology: só inclui a chave se a pessoa falou desse dado agora.',
       'desiredHouseValue: euros inteiros do imóvel pretendido (ex.: 220000).',
       'preferredCities: cidade(s) em Portugal, texto curto.',
       'propertyTypology: uma ou várias de QUARTO, T0, T1, T2, T3, T4, T5 (ex.: "T2" ou "T2 ou T3").',
-      'Na reply: frases curtas. Reage ao que disseram. Não digas que gravaste dados.',
-      'Ordem: valor da casa pretendida → cidades pretendidas → tipologia do imóvel.',
-      'Não inventes taxas, spreads, prazos nem condições bancárias. Não digas que és uma IA.',
+      'Na reply: reage ao que disseram e faz no máximo uma pergunta. Não digas que gravaste dados.',
+      'Ordem: valor da casa pretendida → cidades pretendidas → tipologia do imóvel. Não perguntes de novo o que a ficha já tem.',
+      'Não inventes taxas, spreads, prazos nem condições bancárias.',
       `Ficha actual: ${brunaProfileSummary(input.profile)}`,
     ].join('\n');
 
@@ -278,7 +290,7 @@ export class GenericContextEngine {
         },
         body: JSON.stringify({
           model,
-          temperature: 0.3,
+          temperature: 0.55,
           response_format: { type: 'json_object' },
           messages,
         }),
@@ -311,14 +323,15 @@ export class GenericContextEngine {
     const system = [
       input.context.trim(),
       '',
-      'És a Gabi no WhatsApp. A Rafa é mulher — fala no feminino.',
+      CHATBOT_WHATSAPP_REPLY_STYLE,
+      'Identidade interna: Gabi (publicidade/parcerias). A Rafa é mulher — fala no feminino. Na reply não digas o teu nome.',
       'Responde em JSON: {"reply":"...","companyName":"...","instagramHandle":"...","campaignObjective":"..."}',
       'companyName, instagramHandle e campaignObjective: só inclui a chave se a pessoa falou desse dado agora.',
       'instagramHandle: o @ (com ou sem @); se disser que não tem / não aplicável, usa "".',
       'campaignObjective: resume o objectivo da campanha/parceria em 1 frase curta.',
-      'Na reply: frases curtas. Reage ao que disseram. Não digas que gravaste dados.',
-      'Ordem: nome da empresa → Instagram (@ ou sem) → objectivo da campanha/parceria.',
-      'Não inventes preços nem compromissos. Não digas que és uma IA.',
+      'Na reply: reage ao que disseram e faz no máximo uma pergunta. Não digas que gravaste dados.',
+      'Ordem: nome da empresa → Instagram (@ ou sem) → objectivo da campanha/parceria. Não perguntes de novo o que a ficha já tem.',
+      'Não inventes preços nem compromissos.',
       `Ficha actual: ${gabiProfileSummary(input.profile)}`,
     ].join('\n');
 
@@ -341,7 +354,7 @@ export class GenericContextEngine {
         },
         body: JSON.stringify({
           model,
-          temperature: 0.3,
+          temperature: 0.55,
           response_format: { type: 'json_object' },
           messages,
         }),
@@ -410,9 +423,10 @@ export class GenericContextEngine {
         content: [
           input.context.trim(),
           '',
-          `És a ${input.botName}. Responde numa única mensagem curta de WhatsApp.`,
+          CHATBOT_WHATSAPP_REPLY_STYLE,
+          `Identidade interna: ${input.botName}. Responde numa única mensagem curta de WhatsApp. Na reply não digas o teu nome.`,
           'Não inventes preços, prazos nem compromissos fora do contexto.',
-          'Não digas que gravaste dados nem que és uma IA.',
+          'Não digas que gravaste dados.',
           ...schedulingHints,
         ].join('\n'),
       },
@@ -433,7 +447,7 @@ export class GenericContextEngine {
         },
         body: JSON.stringify({
           model,
-          temperature: 0.4,
+          temperature: 0.55,
           messages,
         }),
         signal: controller.signal,

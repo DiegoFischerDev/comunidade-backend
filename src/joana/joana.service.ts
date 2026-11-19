@@ -30,11 +30,11 @@ import {
 } from './joana-welcome';
 import {
   JOANA_DECLINE_HANDOFF,
+  JOANA_INTRO,
   JOANA_TYPOLOGY_SPEECH,
   applyJoanaProposal,
   composeJoanaReply,
   emptyJoanaProfile,
-  ensureJoanaIntro,
   formatImmigrationLabel,
   isPlaceholderLeadName,
   missingFieldQuestion,
@@ -457,16 +457,21 @@ export class JoanaService {
       const hasScheduledVideoCall =
         lead.kind === 'visible' ? lead.hasScheduledVideoCall : false;
 
-      let welcomeSent = row.welcomeSent;
-      let welcomeSummary = '';
-      // Boas-vindas no 1º turno (WA + IG), mesmo com ficha já criada no menu.
-      if (!welcomeSent && welcomeSteps.length > 0) {
+      // 1ª interação = só boas-vindas (ou intro por omissão); OpenAI na mensagem seguinte.
+      if (!row.welcomeSent) {
+        let welcomeSummary = '';
         try {
-          await this.outbound.sendWelcomeSteps(row, welcomeSteps, {
-            requireDelivery: true,
-          });
-          welcomeSummary = welcomeStepsHistorySummary(welcomeSteps);
-          welcomeSent = true;
+          if (welcomeSteps.length > 0) {
+            await this.outbound.sendWelcomeSteps(row, welcomeSteps, {
+              requireDelivery: true,
+            });
+            welcomeSummary = welcomeStepsHistorySummary(welcomeSteps);
+          } else {
+            await this.outbound.sendText(row, JOANA_INTRO, {
+              requireDelivery: true,
+            });
+            welcomeSummary = JOANA_INTRO;
+          }
         } catch (err: unknown) {
           this.logger.warn(
             `Joana boas-vindas ${contactLabel}: ${
@@ -474,11 +479,18 @@ export class JoanaService {
             }`,
           );
         }
+
+        await this.persistWelcomeOnlyTurn({
+          id,
+          bufferIds: buffer.map((item) => item.id),
+          history,
+          userText: combined,
+          welcomeSummary: welcomeSummary || '[Boas-vindas enviadas]',
+        });
+        return;
       }
 
-      const historyForModel: HistoryItem[] = welcomeSummary
-        ? [...history, { role: 'assistant', text: welcomeSummary }]
-        : history;
+      const historyForModel = history;
 
       let reply = '';
       let proposal = {
@@ -500,15 +512,7 @@ export class JoanaService {
         });
         reply = interpreted.reply;
         proposal = interpreted.proposal;
-        const needsIntro =
-          lead.kind === 'none' &&
-          !welcomeSent &&
-          proposal.interested !== false &&
-          !history.some(
-            (item) => item.role === 'assistant' && /joana/i.test(item.text),
-          );
-        reply = ensureJoanaIntro(reply, needsIntro);
-        if (needsIntro) welcomeSent = true;
+        // Boas-vindas já foram enviadas no 1º turno; não prefixar intro de novo.
       } catch (err: unknown) {
         this.logger.warn(
           `Joana OpenAI ${contactLabel}: ${err instanceof Error ? err.message : String(err)}`,
@@ -519,13 +523,11 @@ export class JoanaService {
           bufferIds: buffer.map((item) => item.id),
           history,
           userText: combined,
-          assistantText: welcomeSummary
-            ? `${welcomeSummary}\n\n${reply}`
-            : reply,
+          assistantText: reply,
           pending,
           farGuidanceSent: row.farGuidanceSent,
           schedulingLinkSent: row.schedulingLinkSent,
-          welcomeSent,
+          welcomeSent: true,
           outbound: reply,
           whatsapp: row.whatsappDigits,
           instagramUserId: row.instagramUserId,
@@ -642,19 +644,16 @@ export class JoanaService {
       const composed = composeReply(reply, append, saved);
       if (composed.includes('/agendar')) schedulingLinkSent = true;
       else if (offerSchedulingLink) schedulingLinkSent = false;
-      const assistantText = welcomeSummary
-        ? `${welcomeSummary}\n\n${composed}`
-        : composed;
       const sent = await this.finishTurn({
         id,
         bufferIds: buffer.map((item) => item.id),
         history,
         userText: combined,
-        assistantText,
+        assistantText: composed,
         pending: decision.pending,
         farGuidanceSent,
         schedulingLinkSent,
-        welcomeSent,
+        welcomeSent: true,
         outbound: composed,
         whatsapp: row.whatsappDigits,
         instagramUserId: row.instagramUserId,
@@ -951,6 +950,44 @@ export class JoanaService {
     }
   }
 
+  /** Persiste o turno de boas-vindas sem enviar outra mensagem nem chamar a OpenAI. */
+  private async persistWelcomeOnlyTurn(input: {
+    id: string;
+    bufferIds: string[];
+    history: HistoryItem[];
+    userText: string;
+    welcomeSummary: string;
+  }): Promise<void> {
+    const turn: HistoryItem[] = [
+      { role: 'user', text: input.userText },
+      { role: 'assistant', text: input.welcomeSummary },
+    ];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await this.prisma.joanaConversation.findUnique({
+        where: { id: input.id },
+      });
+      if (!current) return;
+      const remaining = readBuffer(current.buffer).filter(
+        (item) => !input.bufferIds.includes(item.id),
+      );
+      const history = appendHistoryTurn(
+        historyBase(readHistory(current.history), input.history),
+        turn,
+      );
+      const saved = await this.prisma.joanaConversation.updateMany({
+        where: { id: input.id, updatedAt: current.updatedAt },
+        data: {
+          welcomeSent: true,
+          processing: false,
+          pendingOutbound: null,
+          history: history as unknown as Prisma.InputJsonValue,
+          buffer: remaining as unknown as Prisma.InputJsonValue,
+        },
+      });
+      if (saved.count === 1) return;
+    }
+  }
+
   private async finishTurn(input: {
     id: string;
     bufferIds: string[];
@@ -1214,7 +1251,7 @@ function describeProfile(
     return 'Este número foi retirado do CRM. Não recolhas dados novos nem prometas repor a ficha.';
   }
   if (kind === 'none') {
-    return 'Ainda não há ficha no CRM. Se esta mensagem não for um sim claro ao serviço, apresenta-te, explica o relocation e pergunta se tem interesse, sem recolher dados. Se for um sim, podes guardar o que ela disse agora. Se for um não claro ao serviço, interested é false: reação curta sem pergunta; o sistema faz o handoff à Rafa.';
+    return 'Ainda não há ficha no CRM. Se esta mensagem não for um sim claro ao serviço, explica o relocation em frases curtas (sem dizer o teu nome) e pergunta se tem interesse, sem recolher dados. Se for um sim, podes guardar o que ela disse agora. Se for um não claro ao serviço, interested é false: reação curta sem pergunta; o sistema faz o handoff à Rafa.';
   }
   const typology =
     profile.typology.length > 0
@@ -1252,7 +1289,7 @@ function composeReply(reply: string, append: string[], saved = false): string {
   return composeJoanaReply(
     reply,
     append,
-    'Oi, eu sou a Joana, atendente virtual da Rafa. A Rafa ajuda na busca do imóvel em Portugal, nas visitas por videochamada e na negociação com os proprietários.',
+    JOANA_INTRO,
     saved,
   );
 }

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { CHATBOT_WHATSAPP_REPLY_STYLE } from '../chatbots/chatbot.constants';
 import { decodeWhatsappAudio, whatsappAudioFileName } from './joana-audio';
 import { JOANA_DEFAULT_CONTEXT } from './joana-context';
 import {
@@ -98,11 +99,12 @@ export class JoanaOpenAiService {
     const system = [
       input.context.trim() || JOANA_DEFAULT_CONTEXT,
       '',
+      CHATBOT_WHATSAPP_REPLY_STYLE,
       'Você responde no WhatsApp. A Rafa é mulher. Trata sempre no feminino: a Rafa, ela, dela. Nunca escrevas "o Rafa", "ele" ou "dele" para falar da Rafa.',
-      'Se ainda não há ficha no CRM e a pessoa ainda não disse que quer o serviço, apresenta-te como Joana e explica em duas ou três frases o que é o relocation: assessoria para alugar ou comprar imóvel em Portugal, com busca, visitas por videochamada, análise dos documentos e negociação com os proprietários. Termina perguntando se a pessoa tem interesse. Não peças data, visto, cidade, tipologia, aluguel, pet nem nome. Não preenchas esses campos.',
+      'Se ainda não há ficha no CRM e a pessoa ainda não disse que quer o serviço, e as boas-vindas/apresentação ainda não estão no histórico: em 1–2 frases curtas explica o relocation (assessoria para alugar ou comprar imóvel em Portugal) e pergunta se tem interesse — sem dizer o teu nome. Se o histórico já tem boas-vindas ou essa explicação, não repitas — só reage e pergunta o interesse se ainda não perguntaste. Não peças data, visto, cidade, tipologia, aluguel, pet nem nome. Não preenchas esses campos.',
       'interested só é true quando a pessoa diz com clareza que quer o serviço (sim, tenho interesse, quero, pode seguir). Dizer oi, perguntar o preço ou mencionar cidade, data ou visto não é interesse. false se recusar o serviço (não, sem interesse, não quero). null se ainda não deu para saber. Quando interested for true nesta mensagem, preenche os campos que ela disse agora.',
       'Se a pessoa recusar o serviço (interested false) e ainda não há ficha, a reply fica só numa reação curta e simpática, sem pergunta e sem oferecer relocation de novo. Não peças dados. O sistema pergunta como pode ajudar e diz que a Rafa vai responder assim que puder.',
-      'Fale como uma pessoa no WhatsApp: frases curtas e próximas. Quando a pessoa contar algo, reaja ao que ela disse e faça uma única pergunta sobre o próximo dado que ainda falta na ficha, nesta ordem: data de imigração, visto, cidades, tipologia, valor do aluguel pretendido, pet, nome. Nunca perguntes de novo data, visto, cidades, tipologia, aluguel, pet ou nome se a ficha já tiver esse valor (não for "ainda não temos" / "ainda não sabemos") e ela não acabou de mudar esse dado. Se a ficha indicar "Próximo a perguntar", pergunta só isso. Se disser que não falta nenhum dado de qualificação, não faças pergunta de qualificação. Não perguntes de novo se tem interesse. Não perguntes o que ela acabou de dizer. Não digas que a Rafa pode ajudar — excepto na recusa do serviço, em que o sistema já faz o handoff.',
+      'Quando a pessoa contar algo, reaja em poucas palavras e faça uma única pergunta sobre o próximo dado que ainda falta na ficha, nesta ordem: data de imigração, visto, cidades, tipologia, valor do aluguel pretendido, pet, nome. Nunca perguntes de novo data, visto, cidades, tipologia, aluguel, pet ou nome se a ficha já tiver esse valor (não for "ainda não temos" / "ainda não sabemos") e ela não acabou de mudar esse dado. Se a ficha indicar "Próximo a perguntar", pergunta só isso. Se disser que não falta nenhum dado de qualificação, não faças pergunta de qualificação. Não perguntes de novo se tem interesse. Não digas que a Rafa pode ajudar — excepto na recusa do serviço, em que o sistema já faz o handoff.',
       'Se a pessoa disser que não tem visto, hasVisa é false. Não peças o próximo dado, não ofereças a videochamada e não escrevas link. A reply fica só numa reação curta, sem pergunta. O sistema avisa que, antes de continuar o relocation, ela precisa se encaixar num visto válido e indica a Clara para assessoria de vistos e passagens aéreas.',
       'Se a ficha já diz que a pessoa não tem visto e ela não falou de visto agora, responde ao que ela perguntou e não continues a qualificação nem ofereças a videochamada.',
       'Não escrevas o link da videochamada. Quando a pessoa tem visto e a data está perto, o sistema acrescenta o link para agendar. Se a ficha diz que a videochamada já está agendada, não ofereças agendar de novo nem digas que vais mandar o link.',
@@ -137,7 +139,7 @@ export class JoanaOpenAiService {
         },
         body: JSON.stringify({
           model: this.model,
-          temperature: 0.4,
+          temperature: 0.55,
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: system },

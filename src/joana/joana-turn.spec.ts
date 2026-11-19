@@ -619,15 +619,20 @@ describe('composeJoanaReply', () => {
 });
 
 describe('ensureJoanaIntro', () => {
-  it('apresenta a Joana quando a resposta ainda não a menciona', () => {
+  it('acrescenta a intro quando a resposta ainda não fala do relocation', () => {
     expect(ensureJoanaIntro('O preço em Viseu é €650.', true)).toBe(
       `${JOANA_INTRO}\n\nO preço em Viseu é €650.`,
     );
   });
 
-  it('não repete a apresentação se a resposta ou a conversa já a trouxeram', () => {
-    expect(ensureJoanaIntro('Oi, eu sou a Joana. Você tem interesse?', true)).toBe(
-      'Oi, eu sou a Joana. Você tem interesse?',
+  it('não repete a apresentação se a resposta já fala do serviço ou needsIntro é false', () => {
+    expect(
+      ensureJoanaIntro(
+        'O relocation ajuda a encontrar imóvel em Portugal. Você tem interesse?',
+        true,
+      ),
+    ).toBe(
+      'O relocation ajuda a encontrar imóvel em Portugal. Você tem interesse?',
     );
     expect(ensureJoanaIntro('Para quando você pretende vir?', false)).toBe(
       'Para quando você pretende vir?',

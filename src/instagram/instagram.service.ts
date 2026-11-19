@@ -1,10 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'child_process';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { existsSync } from 'fs';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { promisify } from 'util';
+import { toAbsoluteMediaUrl } from '../common/public-media-url';
+import {
+  localPathFromUploadUrl,
+  uploadsDir,
+} from '../uploads/channel-media.util';
 import type {
   InstagramInboundMessage,
   InstagramUserProfile,
@@ -22,8 +28,13 @@ export class InstagramService {
     { at: number; profile: InstagramUserProfile | null }
   >();
   private static readonly PROFILE_CACHE_MS = 6 * 60 * 60 * 1000;
-  /** Cache attachment_id Meta por URL (áudio convertido, etc.). */
-  private readonly uploadedAttachmentIds = new Map<
+  /** Cache URL pública M4A gerada a partir de OGG/etc. */
+  private readonly publicM4aBySource = new Map<
+    string,
+    { url: string; at: number }
+  >();
+  /** Cache attachment_id Meta (`type:url`) para reutilizar no Direct. */
+  private readonly metaAttachmentByKey = new Map<
     string,
     { id: string; at: number }
   >();
@@ -263,8 +274,10 @@ export class InstagramService {
   }
 
   /**
-   * Envia anexo (imagem / áudio / PDF / vídeo) por URL pública.
-   * Áudio OGG/Opus (WhatsApp) é convertido para M4A — a Meta IG não aceita ogg em `audio`.
+   * Envia anexo no Direct.
+   * Áudio e PDF: upload para a Meta → envio por `attachment_id` (bolha nativa no chat).
+   * Imagem/vídeo: URL directa (preview no chat).
+   * Áudio OGG/Opus → M4A público antes do upload (IG não aceita ogg).
    */
   async sendAttachment(params: {
     recipientIgUserId: string;
@@ -272,19 +285,43 @@ export class InstagramService {
     mediaUrl: string;
     isReusable?: boolean;
   }): Promise<void> {
-    const mediaUrl = params.mediaUrl.trim();
+    let mediaUrl = params.mediaUrl.trim();
     if (!mediaUrl || !/^https?:\/\//i.test(mediaUrl)) {
       throw new Error('Instagram sendAttachment: mediaUrl http(s) inválida');
     }
 
     if (params.type === 'audio' && isInstagramUnsupportedAudioUrl(mediaUrl)) {
-      const attachmentId = await this.uploadConvertedAudioAttachment(mediaUrl);
-      await this.postMessage(params.recipientIgUserId, {
-        attachment: {
-          type: 'audio',
-          payload: { attachment_id: attachmentId },
-        },
+      mediaUrl = await this.ensurePublicM4aUrl(mediaUrl);
+      this.logger.log(`IG áudio convertido para URL pública: ${mediaUrl}`);
+    }
+
+    // Áudio + PDF: ficheiro nativo no chat (evita o IG abrir o browser com a URL).
+    if (params.type === 'audio' || params.type === 'file') {
+      const attachmentId = await this.uploadAttachmentFromPublicUrl({
+        type: params.type,
+        mediaUrl,
       });
+      try {
+        await this.postMessage(params.recipientIgUserId, {
+          attachment: {
+            type: params.type,
+            payload: { attachment_id: attachmentId },
+          },
+        });
+      } catch (err: unknown) {
+        // Algumas contas IG pedem MEDIA_SHARE + attachment_id após o upload.
+        this.logger.warn(
+          `IG send ${params.type} via type nativo falhou; a tentar MEDIA_SHARE: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        await this.postMessage(params.recipientIgUserId, {
+          attachment: {
+            type: 'MEDIA_SHARE',
+            payload: { attachment_id: attachmentId },
+          },
+        });
+      }
       return;
     }
 
@@ -293,16 +330,22 @@ export class InstagramService {
         type: params.type,
         payload: {
           url: mediaUrl,
-          is_reusable: params.isReusable !== false,
+          is_reusable: params.isReusable === false ? 'false' : 'true',
         },
       },
     });
   }
 
-  private async uploadConvertedAudioAttachment(
-    sourceUrl: string,
-  ): Promise<string> {
-    const cached = this.uploadedAttachmentIds.get(sourceUrl);
+  /**
+   * Sobe media para a Meta via URL pública e devolve `attachment_id`.
+   * Usa JSON (não multipart) — o campo `is_reusable` vai em `payload` como string.
+   */
+  private async uploadAttachmentFromPublicUrl(input: {
+    type: 'audio' | 'image' | 'file' | 'video';
+    mediaUrl: string;
+  }): Promise<string> {
+    const cacheKey = `${input.type}:${input.mediaUrl}`;
+    const cached = this.metaAttachmentByKey.get(cacheKey);
     if (
       cached &&
       Date.now() - cached.at < InstagramService.ATTACHMENT_CACHE_MS
@@ -310,47 +353,6 @@ export class InstagramService {
       return cached.id;
     }
 
-    const m4a = await this.convertRemoteAudioToM4a(sourceUrl);
-    const attachmentId = await this.uploadMessageAttachment({
-      type: 'audio',
-      fileName: 'audio.m4a',
-      mimeType: 'audio/mp4',
-      bytes: m4a,
-    });
-    this.uploadedAttachmentIds.set(sourceUrl, {
-      id: attachmentId,
-      at: Date.now(),
-    });
-    return attachmentId;
-  }
-
-  private async convertRemoteAudioToM4a(sourceUrl: string): Promise<Buffer> {
-    const dir = await mkdtemp(join(tmpdir(), 'ig-audio-'));
-    const inputPath = join(dir, 'input');
-    const outputPath = join(dir, 'output.m4a');
-    try {
-      const res = await fetch(sourceUrl);
-      if (!res.ok) {
-        throw new Error(`download áudio IG falhou (${res.status})`);
-      }
-      await writeFile(inputPath, Buffer.from(await res.arrayBuffer()));
-      await execFileAsync(
-        'ffmpeg',
-        ['-y', '-i', inputPath, '-c:a', 'aac', '-b:a', '128k', outputPath],
-        { timeout: 60_000 },
-      );
-      return await readFile(outputPath);
-    } finally {
-      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  }
-
-  private async uploadMessageAttachment(input: {
-    type: 'audio' | 'image' | 'file' | 'video';
-    fileName: string;
-    mimeType: string;
-    bytes: Buffer;
-  }): Promise<string> {
     const token = this.getPageAccessToken();
     const pageId = this.getPageId() || 'me';
     if (!token) {
@@ -359,27 +361,24 @@ export class InstagramService {
     const apiVersion = process.env.META_GRAPH_API_VERSION?.trim() || 'v21.0';
     const url = `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(pageId)}/message_attachments`;
 
-    const form = new FormData();
-    form.append('platform', 'instagram');
-    form.append(
-      'message',
-      JSON.stringify({
-        attachment: {
-          type: input.type,
-          is_reusable: true,
-        },
-      }),
-    );
-    form.append(
-      'filedata',
-      new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }),
-      input.fileName,
-    );
-
     const res = await fetch(url, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: form,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        platform: 'instagram',
+        message: {
+          attachment: {
+            type: input.type,
+            payload: {
+              url: input.mediaUrl,
+              is_reusable: 'true',
+            },
+          },
+        },
+      }),
     });
     const body = await res.text();
     if (!res.ok) {
@@ -401,7 +400,89 @@ export class InstagramService {
     if (!id) {
       throw new Error('Instagram uploadAttachment: sem attachment_id');
     }
+    this.metaAttachmentByKey.set(cacheKey, { id, at: Date.now() });
+    this.logger.log(
+      `IG attachment_id obtido (${input.type}): ${id.slice(0, 12)}…`,
+    );
     return id;
+  }
+
+  /**
+   * Converte áudio remoto/local para M4A em `uploads/` e devolve URL http(s) pública.
+   */
+  private async ensurePublicM4aUrl(sourceUrl: string): Promise<string> {
+    const cached = this.publicM4aBySource.get(sourceUrl);
+    if (
+      cached &&
+      Date.now() - cached.at < InstagramService.ATTACHMENT_CACHE_MS
+    ) {
+      return cached.url;
+    }
+
+    await mkdir(uploadsDir(), { recursive: true });
+
+    const localSource = resolveLocalUploadPath(sourceUrl);
+    let outName: string;
+    let outPath: string;
+
+    if (localSource) {
+      const base = basename(localSource);
+      const stem = base.includes('.')
+        ? base.slice(0, base.lastIndexOf('.'))
+        : base;
+      outName = `${stem}.ig.m4a`;
+      outPath = join(uploadsDir(), outName);
+      if (!existsSync(outPath)) {
+        await execFileAsync(
+          'ffmpeg',
+          [
+            '-y',
+            '-i',
+            localSource,
+            '-c:a',
+            'aac',
+            '-b:a',
+            '128k',
+            '-vn',
+            outPath,
+          ],
+          { timeout: 90_000 },
+        );
+      }
+    } else {
+      outName = `${Date.now()}-ig-audio.m4a`;
+      outPath = join(uploadsDir(), outName);
+      const m4a = await this.convertRemoteAudioToM4a(sourceUrl);
+      await writeFile(outPath, m4a);
+    }
+
+    const publicUrl = toAbsoluteMediaUrl(`/uploads/${outName}`);
+    this.publicM4aBySource.set(sourceUrl, {
+      url: publicUrl,
+      at: Date.now(),
+    });
+    return publicUrl;
+  }
+
+  private async convertRemoteAudioToM4a(sourceUrl: string): Promise<Buffer> {
+    const dir = await mkdtemp(join(tmpdir(), 'ig-audio-'));
+    const inputPath = join(dir, 'input');
+    const outputPath = join(dir, 'output.m4a');
+    try {
+      const res = await fetch(sourceUrl);
+      if (!res.ok) {
+        throw new Error(`download áudio IG falhou (${res.status})`);
+      }
+      await writeFile(inputPath, Buffer.from(await res.arrayBuffer()));
+      await execFileAsync(
+        'ffmpeg',
+        ['-y', '-i', inputPath, '-c:a', 'aac', '-b:a', '128k', '-vn', outputPath],
+        { timeout: 60_000 },
+      );
+      return await readFile(outputPath);
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   private async postMessage(
@@ -446,4 +527,22 @@ function isInstagramUnsupportedAudioUrl(url: string): boolean {
     path.includes('audio/ogg') ||
     path.includes('audio/opus')
   );
+}
+
+/** Se a URL aponta para o nosso `/uploads/…`, devolve o caminho local. */
+function resolveLocalUploadPath(absOrRelativeUrl: string): string | null {
+  const raw = absOrRelativeUrl.trim();
+  if (!raw) return null;
+  if (raw.startsWith('/uploads/')) {
+    const local = localPathFromUploadUrl(raw);
+    return local && existsSync(local) ? local : null;
+  }
+  try {
+    const u = new URL(raw);
+    if (!u.pathname.startsWith('/uploads/')) return null;
+    const local = localPathFromUploadUrl(u.pathname);
+    return local && existsSync(local) ? local : null;
+  } catch {
+    return null;
+  }
 }

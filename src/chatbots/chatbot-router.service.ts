@@ -10,6 +10,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { JOANA_AUDIO_UNHEARD } from '../joana/joana-audio';
 import { JoanaOpenAiService } from '../joana/joana-openai.service';
 import { JoanaService } from '../joana/joana.service';
+import { JOANA_INTRO } from '../joana/joana-turn';
+import { welcomeStepsHistorySummary } from '../joana/joana-welcome';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { ChatbotCrmService } from './chatbot-crm.service';
 import { ChatbotService } from './chatbot.service';
@@ -621,68 +623,61 @@ export class ChatbotRouterService {
       displayName: row.displayName,
     });
 
-    await this.prisma.joanaConversation.update({
-      where: { id },
-      data: {
-        chatbotId: bot.id,
-        welcomeSent: false,
-        buffer: [] as unknown as Prisma.InputJsonValue,
-        history: appendHistory(readHistory(row.history), [
-          { role: 'user', text: combined },
-          {
-            role: 'assistant',
-            text: `Perfeito — vou passar-te para a ${bot.name}.`,
-          },
-        ]) as unknown as Prisma.InputJsonValue,
-        processing: false,
-      },
-    });
+    const publicBot = await this.chatbots.getBySlug(choice);
+    const contactLabel =
+      row.whatsappDigits || row.instagramUserId || id;
 
+    // 1ª interação do bot = só a sequência de boas-vindas (sem OpenAI).
+    // A próxima mensagem real do lead é que entra na análise.
+    let welcomeSummary = '';
+    let welcomeSent = false;
     try {
-      await this.outbound.sendText(
-        row,
-        `Perfeito — vou passar-te para a ${bot.name}.`,
-        { requireDelivery: true },
-      );
+      if (publicBot.welcomeSteps.length > 0) {
+        await this.outbound.sendWelcomeSteps(row, publicBot.welcomeSteps, {
+          requireDelivery: true,
+        });
+        welcomeSummary = welcomeStepsHistorySummary(publicBot.welcomeSteps);
+        welcomeSent = true;
+      } else {
+        const fallback =
+          publicBot.introFallback?.trim() ||
+          (choice === 'joana' ? JOANA_INTRO : '');
+        if (fallback) {
+          await this.outbound.sendText(row, fallback, {
+            requireDelivery: true,
+          });
+          welcomeSummary = fallback;
+          welcomeSent = true;
+        }
+      }
     } catch (err: unknown) {
       this.logger.warn(
-        `Menu assign ${row.whatsappDigits}: ${
+        `Menu assign / boas-vindas ${contactLabel}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
     }
 
-    // Dispara o 1º turno do bot (boas-vindas + resposta) com buffer vazio:
-    // injecta um «olá» sintético para o engine arrancar a welcome.
-    await this.appendBuffer({
-      channel: row.activeChannel === ChatbotChannel.INSTAGRAM ? 'instagram' : 'whatsapp',
-      whatsapp: row.whatsappDigits,
-      instagramUserId: row.instagramUserId,
-      instance: row.instance,
-      displayName: row.displayName,
-      item: {
-        id: `menu-start-${Date.now()}`,
-        text: 'Olá',
-        at: new Date().toISOString(),
+    const historyExtra: HistoryItem[] = [
+      { role: 'user', text: combined },
+    ];
+    if (welcomeSummary) {
+      historyExtra.push({ role: 'assistant', text: welcomeSummary });
+    }
+
+    await this.prisma.joanaConversation.update({
+      where: { id },
+      data: {
+        chatbotId: bot.id,
+        welcomeSent,
+        buffer: [] as unknown as Prisma.InputJsonValue,
+        history: appendHistory(
+          readHistory(row.history),
+          historyExtra,
+        ) as unknown as Prisma.InputJsonValue,
+        processing: false,
       },
     });
-
-    // Processar de imediato (sem esperar debounce)
-    const claimed = await this.prisma.joanaConversation.updateMany({
-      where: { id, processing: false },
-      data: { processing: true, processingStartedAt: new Date() },
-    });
-    if (claimed.count !== 1) return;
-
-    if (bot.engineKind === ChatbotEngineKind.JOANA_QUALIFICATION) {
-      await this.prisma.joanaConversation.update({
-        where: { id },
-        data: { processing: false },
-      });
-      await this.joana.processConversationPublic(id);
-    } else {
-      await this.generic.processConversation(id);
-    }
   }
 
   private async assignOutrosHandoff(input: {

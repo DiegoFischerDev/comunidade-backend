@@ -476,9 +476,9 @@ export function withInferredConfirmation(input: {
   return input.proposal;
 }
 
-/** Apresentação usada quando ainda não há ficha e a Joana ainda não se apresentou. */
+/** Apresentação usada quando ainda não há ficha / boas-vindas vazias (sem nome nem «atendente virtual»). */
 export const JOANA_INTRO =
-  'Oi, eu sou a Joana, atendente virtual da Rafa. O relocation é uma assessoria para alugar ou comprar imóvel em Portugal. A Rafa ajuda na busca do imóvel, nas visitas por videochamada, na análise dos documentos e na negociação com os proprietários.';
+  'Oi! 😊 O relocation é uma assessoria para alugar ou comprar imóvel em Portugal. A Rafa ajuda na busca do imóvel, nas visitas por videochamada, na análise dos documentos e na negociação com os proprietários.';
 
 export const JOANA_INTEREST_QUESTION = 'Você tem interesse nesse serviço?';
 
@@ -490,11 +490,13 @@ export const JOANA_NO_VISA_GUIDANCE =
 export const JOANA_DECLINE_HANDOFF =
   'Sem problemas. Como posso te ajudar então? A Rafa vai te responder assim que puder.';
 
-/** Garante a apresentação quando o modelo não se apresentou. */
+/** Garante a apresentação quando o modelo não a trouxe (sem forçar nome). */
 export function ensureJoanaIntro(reply: string, needsIntro: boolean): string {
   const text = reply.trim();
-  if (!needsIntro || /joana/i.test(text)) return text;
-  return text ? `${JOANA_INTRO}\n\n${text}` : JOANA_INTRO;
+  if (!needsIntro) return text;
+  if (!text) return JOANA_INTRO;
+  if (text.includes(JOANA_INTRO) || /relocation/i.test(text)) return text;
+  return `${JOANA_INTRO}\n\n${text}`;
 }
 
 export const JOANA_NAME_QUESTION = 'Como posso te chamar?';

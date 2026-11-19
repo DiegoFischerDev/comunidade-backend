@@ -9,7 +9,7 @@ export type MenuBot = {
 
 export const DEFAULT_CHATBOT_MENU_TEXT = `Oiê! 🥰 Seja muito bem-vindo(a)!
 
-Sou a assistente virtual da Rafa e estou aqui pra te ajudar! 💛
+Aqui da equipa da Rafa — estou aqui pra te ajudar! 💛
 
 Me conta, sobre qual assunto você gostaria de conversar?
 
@@ -36,7 +36,7 @@ export function buildChatbotMenuText(bots: MenuBot[]): string {
   const lines = [
     'Oiê! 🥰 Seja muito bem-vindo(a)!',
     '',
-    'Sou a assistente virtual da Rafa e estou aqui pra te ajudar! 💛',
+    'Aqui da equipa da Rafa — estou aqui pra te ajudar! 💛',
     '',
     'Me conta, sobre qual assunto você gostaria de conversar?',
     '',
