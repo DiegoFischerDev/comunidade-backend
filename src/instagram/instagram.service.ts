@@ -242,9 +242,45 @@ export class InstagramService {
    * Requer INSTAGRAM_PAGE_ACCESS_TOKEN.
    */
   async sendText(recipientIgUserId: string, text: string): Promise<void> {
+    await this.postMessage(recipientIgUserId, { text });
+  }
+
+  /**
+   * Envia anexo (imagem / áudio / PDF / vídeo) por URL pública.
+   * A Meta descarrega a URL — tem de ser https acessível.
+   */
+  async sendAttachment(params: {
+    recipientIgUserId: string;
+    type: 'image' | 'audio' | 'file' | 'video';
+    mediaUrl: string;
+    isReusable?: boolean;
+  }): Promise<void> {
+    const mediaUrl = params.mediaUrl.trim();
+    if (!mediaUrl || !/^https?:\/\//i.test(mediaUrl)) {
+      throw new Error('Instagram sendAttachment: mediaUrl http(s) inválida');
+    }
+    await this.postMessage(params.recipientIgUserId, {
+      attachment: {
+        type: params.type,
+        payload: {
+          url: mediaUrl,
+          is_reusable: params.isReusable !== false,
+        },
+      },
+    });
+  }
+
+  private async postMessage(
+    recipientIgUserId: string,
+    message: Record<string, unknown>,
+  ): Promise<void> {
     const token = this.getPageAccessToken();
     if (!token) {
       throw new Error('INSTAGRAM_PAGE_ACCESS_TOKEN não está definido');
+    }
+    const igsid = recipientIgUserId.trim();
+    if (!igsid) {
+      throw new Error('Instagram: recipient IGSID em falta');
     }
     const apiVersion = process.env.META_GRAPH_API_VERSION?.trim() || 'v21.0';
     const url = `https://graph.facebook.com/${apiVersion}/me/messages`;
@@ -255,14 +291,14 @@ export class InstagramService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        recipient: { id: recipientIgUserId },
-        message: { text },
+        recipient: { id: igsid },
+        message,
       }),
     });
     if (!res.ok) {
       const body = await res.text();
       this.logger.error(`Falha ao enviar DM IG (${res.status}): ${body}`);
-      throw new Error(`Instagram sendText failed: ${res.status}`);
+      throw new Error(`Instagram sendMessage failed: ${res.status}`);
     }
   }
 }

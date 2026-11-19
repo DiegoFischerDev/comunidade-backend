@@ -1,14 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ChatbotChannel, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { ConversationOutboundService } from '../channels/conversation-outbound.service';
-import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  type JoanaWelcomeStep,
-  welcomeStepsHistorySummary,
-} from '../joana/joana-welcome';
-import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { welcomeStepsHistorySummary } from '../joana/joana-welcome';
 import { ChatbotService } from './chatbot.service';
 import { isChatbotSlug } from './chatbot.constants';
 import { ChatbotCrmService } from './chatbot-crm.service';
@@ -40,7 +35,6 @@ export class GenericContextEngine {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly wa: WhatsAppService,
     private readonly outbound: ConversationOutboundService,
     private readonly chatbots: ChatbotService,
     private readonly crm: ChatbotCrmService,
@@ -103,43 +97,21 @@ export class GenericContextEngine {
     let welcomeSummary = '';
     if (!welcomeSent) {
       try {
-        if (
-          bot.welcomeSteps.length > 0 &&
-          row.activeChannel === ChatbotChannel.WHATSAPP &&
-          row.whatsappDigits
-        ) {
-          await this.sendWelcomeSteps(
-            row.whatsappDigits,
-            bot.welcomeSteps,
-            row.instance,
-          );
+        if (bot.welcomeSteps.length > 0) {
+          await this.outbound.sendWelcomeSteps(row, bot.welcomeSteps, {
+            requireDelivery: true,
+          });
           welcomeSummary = welcomeStepsHistorySummary(bot.welcomeSteps);
         } else if (bot.introFallback?.trim()) {
           await this.outbound.sendText(row, bot.introFallback.trim(), {
             requireDelivery: true,
           });
           welcomeSummary = bot.introFallback.trim();
-        } else if (
-          bot.welcomeSteps.length > 0 &&
-          row.activeChannel === ChatbotChannel.INSTAGRAM
-        ) {
-          // No IG só texto (sem áudio/PDF da sequência WA).
-          const textSteps = bot.welcomeSteps
-            .filter((s) => s.type === 'TEXT' && (s.textContent || '').trim())
-            .map((s) => (s.textContent || '').trim());
-          const fallback =
-            textSteps.join('\n\n') ||
-            bot.introFallback?.trim() ||
-            `Olá! Sou a ${bot.name}.`;
-          await this.outbound.sendText(row, fallback, {
-            requireDelivery: true,
-          });
-          welcomeSummary = fallback;
         }
         welcomeSent = true;
       } catch (err: unknown) {
         this.logger.warn(
-          `${bot.name} boas-vindas ${row.whatsappDigits}: ${
+          `${bot.name} boas-vindas ${row.whatsappDigits || row.instagramUserId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -479,64 +451,6 @@ export class GenericContextEngine {
     }
   }
 
-  private async sendWelcomeSteps(
-    whatsapp: string,
-    steps: JoanaWelcomeStep[],
-    instance: string | null,
-  ) {
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i]!;
-      if (step.type === 'TEXT') {
-        const body = (step.textContent || '').trim();
-        if (body) {
-          await this.wa.sendText(whatsapp, body, {
-            preferredInstance: instance || undefined,
-            requireDelivery: true,
-          });
-        }
-      } else if (step.type === 'AUDIO') {
-        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
-        if (!abs) throw new Error('Passo AUDIO sem mediaUrl válida.');
-        await this.wa.sendWhatsAppAudio({
-          to: whatsapp,
-          mediaUrl: abs,
-          preferredInstance: instance || undefined,
-          requireDelivery: true,
-        });
-      } else if (step.type === 'IMAGE') {
-        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
-        if (!abs) throw new Error('Passo IMAGE sem mediaUrl válida.');
-        await this.wa.sendMedia({
-          to: whatsapp,
-          caption: (step.textContent || '').trim(),
-          mediaUrl: abs,
-          mimeType: step.mediaMimeType?.trim() || 'image/jpeg',
-          fileName: step.mediaFileName?.trim() || 'image.jpg',
-          mediaType: 'image',
-          preferredInstance: instance || undefined,
-          requireDelivery: true,
-        });
-      } else if (step.type === 'DOCUMENT') {
-        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
-        if (!abs) throw new Error('Passo DOCUMENT sem mediaUrl válida.');
-        await this.wa.sendMedia({
-          to: whatsapp,
-          caption: (step.textContent || '').trim(),
-          mediaUrl: abs,
-          mimeType: step.mediaMimeType?.trim() || 'application/pdf',
-          fileName: step.mediaFileName?.trim() || 'documento.pdf',
-          mediaType: 'document',
-          preferredInstance: instance || undefined,
-          requireDelivery: true,
-        });
-      }
-      const delay = Math.max(0, step.delayMsAfter ?? 650);
-      if (i < steps.length - 1 && delay > 0) {
-        await sleep(delay);
-      }
-    }
-  }
-
   private async persistTurn(input: {
     id: string;
     bufferIds: string[];
@@ -633,17 +547,3 @@ function appendHistory(base: HistoryItem[], turn: HistoryItem[]): HistoryItem[] 
   return [...base, ...turn].slice(-HISTORY_LIMIT);
 }
 
-function resolveWelcomeMediaUrl(stored: string): string {
-  const u = stored.trim();
-  if (!u) return '';
-  if (u.startsWith('https://') || u.startsWith('http://')) return u;
-  if (u.startsWith('/brand/')) {
-    const front = getFrontendBaseUrl().replace(/\/$/, '');
-    return `${front}${u}`;
-  }
-  return toAbsoluteMediaUrl(u);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}

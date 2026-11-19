@@ -10,7 +10,6 @@ import {
   sharedOutboundGuard,
   whatsappPeer,
 } from '../channels/outbound-guard';
-import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
@@ -458,26 +457,13 @@ export class JoanaService {
 
       let welcomeSent = row.welcomeSent;
       let welcomeSummary = '';
-      if (!welcomeSent && lead.kind === 'none' && welcomeSteps.length > 0) {
+      // Boas-vindas no 1º turno (WA + IG), mesmo com ficha já criada no menu.
+      if (!welcomeSent && welcomeSteps.length > 0) {
         try {
-          if (row.activeChannel === ChatbotChannel.INSTAGRAM) {
-            const textOnly = welcomeSteps
-              .filter((s) => s.type === 'TEXT' && (s.textContent || '').trim())
-              .map((s) => (s.textContent || '').trim());
-            const body =
-              textOnly.join('\n\n') ||
-              ensureJoanaIntro('', true).trim() ||
-              'Olá! Sou a Joana.';
-            await this.outbound.sendText(row, body, { requireDelivery: true });
-            welcomeSummary = body;
-          } else if (row.whatsappDigits) {
-            await this.sendWelcomeSteps(
-              row.whatsappDigits,
-              welcomeSteps,
-              row.instance,
-            );
-            welcomeSummary = welcomeStepsHistorySummary(welcomeSteps);
-          }
+          await this.outbound.sendWelcomeSteps(row, welcomeSteps, {
+            requireDelivery: true,
+          });
+          welcomeSummary = welcomeStepsHistorySummary(welcomeSteps);
           welcomeSent = true;
         } catch (err: unknown) {
           this.logger.warn(
@@ -963,76 +949,6 @@ export class JoanaService {
     }
   }
 
-  private async sendWelcomeSteps(
-    to: string,
-    steps: JoanaWelcomeStep[],
-    preferredInstance: string | null,
-  ): Promise<void> {
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i]!;
-      if (step.type === 'TEXT') {
-        const body = (step.textContent || '').trim();
-        if (body) {
-          await this.wa.sendText(to, body, {
-            preferredInstance: preferredInstance || undefined,
-            requireDelivery: true,
-          });
-        }
-      } else if (step.type === 'AUDIO') {
-        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
-        if (!abs) throw new Error('Passo AUDIO sem mediaUrl válida.');
-        await this.wa.sendWhatsAppAudio({
-          to,
-          mediaUrl: abs,
-          preferredInstance: preferredInstance || undefined,
-          requireDelivery: true,
-        });
-      } else if (step.type === 'IMAGE') {
-        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
-        if (!abs) throw new Error('Passo IMAGE sem mediaUrl válida.');
-        const mime =
-          step.mediaMimeType?.trim() ||
-          guessWelcomeImageMime(step.mediaFileName || abs);
-        const fileName =
-          step.mediaFileName?.trim() ||
-          abs.split('/').pop()?.split('?')[0] ||
-          'image.jpg';
-        await this.wa.sendMedia({
-          to,
-          caption: (step.textContent || '').trim(),
-          mediaUrl: abs,
-          mimeType: mime,
-          fileName,
-          mediaType: 'image',
-          preferredInstance: preferredInstance || undefined,
-          requireDelivery: true,
-        });
-      } else if (step.type === 'DOCUMENT') {
-        const abs = resolveWelcomeMediaUrl(step.mediaUrl || '');
-        if (!abs) throw new Error('Passo DOCUMENT sem mediaUrl válida.');
-        const fileName =
-          step.mediaFileName?.trim() ||
-          abs.split('/').pop()?.split('?')[0] ||
-          'documento.pdf';
-        await this.wa.sendMedia({
-          to,
-          caption: (step.textContent || '').trim(),
-          mediaUrl: abs,
-          mimeType: step.mediaMimeType?.trim() || 'application/pdf',
-          fileName,
-          mediaType: 'document',
-          preferredInstance: preferredInstance || undefined,
-          requireDelivery: true,
-        });
-      }
-
-      const delay = Math.max(0, step.delayMsAfter ?? 650);
-      if (i < steps.length - 1 && delay > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-
   private async finishTurn(input: {
     id: string;
     bufferIds: string[];
@@ -1242,25 +1158,6 @@ export class JoanaService {
 
 function isCrmMessage(err: unknown, text: string): boolean {
   return err instanceof BadRequestException && err.message === text;
-}
-
-function resolveWelcomeMediaUrl(stored: string): string {
-  const u = stored.trim();
-  if (!u) return '';
-  if (u.startsWith('https://') || u.startsWith('http://')) return u;
-  if (u.startsWith('/brand/')) {
-    const front = getFrontendBaseUrl().replace(/\/$/, '');
-    return `${front}${u}`;
-  }
-  return toAbsoluteMediaUrl(u);
-}
-
-function guessWelcomeImageMime(nameOrUrl: string): string {
-  const lower = nameOrUrl.split('?')[0]!.toLowerCase();
-  if (lower.endsWith('.png')) return 'image/png';
-  if (lower.endsWith('.webp')) return 'image/webp';
-  if (lower.endsWith('.gif')) return 'image/gif';
-  return 'image/jpeg';
 }
 
 function patchToUpdate(patch: JoanaCrmPatch) {

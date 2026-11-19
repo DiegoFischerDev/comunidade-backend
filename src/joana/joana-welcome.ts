@@ -1,4 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
+import { toAbsoluteMediaUrl } from '../common/public-media-url';
+import { getFrontendBaseUrl } from '../config/frontend-base-url';
 
 export type JoanaWelcomeStepType = 'TEXT' | 'AUDIO' | 'IMAGE' | 'DOCUMENT';
 
@@ -34,7 +36,7 @@ export function parseStoredWelcomeSteps(raw: unknown): JoanaWelcomeStep[] {
   }
 }
 
-/** Texto para histórico / LLM: só os passos de texto (media fica só no WhatsApp). */
+/** Texto para histórico / LLM: passos de texto (media sai no canal). */
 export function welcomeStepsHistorySummary(steps: JoanaWelcomeStep[]): string {
   const texts = steps
     .filter((step) => step.type === 'TEXT')
@@ -42,7 +44,27 @@ export function welcomeStepsHistorySummary(steps: JoanaWelcomeStep[]): string {
     .filter(Boolean);
   if (texts.length > 0) return texts.join('\n\n');
   if (steps.length === 0) return '';
-  return '[Boas-vindas da Joana enviadas com áudio/imagem/documento]';
+  return '[Boas-vindas enviadas com áudio/imagem/documento]';
+}
+
+/** URL absoluta para Evolution / Meta (descarregam o ficheiro). */
+export function resolveWelcomeMediaUrl(stored: string): string {
+  const u = stored.trim();
+  if (!u) return '';
+  if (u.startsWith('https://') || u.startsWith('http://')) return u;
+  if (u.startsWith('/brand/')) {
+    const front = getFrontendBaseUrl().replace(/\/$/, '');
+    return `${front}${u}`;
+  }
+  return toAbsoluteMediaUrl(u);
+}
+
+export function guessWelcomeImageMime(nameOrUrl: string): string {
+  const lower = nameOrUrl.split('?')[0]!.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
 }
 
 export function isWelcomePdfMedia(input: {
