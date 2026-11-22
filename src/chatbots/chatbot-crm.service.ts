@@ -878,6 +878,8 @@ export class ChatbotCrmService {
       } catch {
         /* booking já invisível / apagado — continua soft-exclude local */
       }
+    } else {
+      await this.rafacallCrm.purgeLeadChatAndDocuments(identity);
     }
 
     const stillActive = await this.prisma.crmLead.findFirst({
@@ -1102,6 +1104,7 @@ export class ChatbotCrmService {
       welcomeSent: false,
       paused: false,
       buffer: [] as Prisma.InputJsonValue,
+      history: [] as Prisma.InputJsonValue,
       pendingConfirmation: Prisma.JsonNull,
       pendingOutbound: null,
       farGuidanceSent: false,

@@ -3,7 +3,6 @@ import type { PrismaService } from '../prisma/prisma.service';
 
 export const CRM_REQUEST_SUMMARY_MAX_CHARS = 2000;
 const CRM_REQUEST_SUMMARY_MAX_LINES = 4;
-const CRM_REQUEST_SUMMARY_MAX_LINE_CHARS = 140;
 
 const NO_CONVERSATION_MESSAGE = 'Este lead ainda não tem conversa para resumir.';
 
@@ -122,12 +121,7 @@ function compactSummaryLines(content: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.replace(/^[-*•\d.)\s]+/, '').trim())
     .filter(Boolean)
-    .slice(0, CRM_REQUEST_SUMMARY_MAX_LINES)
-    .map((line) =>
-      line.length > CRM_REQUEST_SUMMARY_MAX_LINE_CHARS
-        ? `${line.slice(0, CRM_REQUEST_SUMMARY_MAX_LINE_CHARS - 1).trimEnd()}…`
-        : line,
-    );
+    .slice(0, CRM_REQUEST_SUMMARY_MAX_LINES);
 }
 
 /** Pede à OpenAI só contexto extra além do JSON do lead. Lança Error se a chave falhar ou a resposta vier vazia. */
@@ -147,7 +141,8 @@ export async function summarizeLeadRequestText(
     'NÃO repitas cidade, tipologia, aluguel, pet, visto (sim/não), data de imigração, empresa, objectivo, assunto ou valor da casa se esses dados já aparecerem na secção «Dados já guardados».',
     'Foca em contexto humano e nuances: família, estágio do visto, dúvidas, incertezas, motivações, restrições, histórico.',
     'Estilo: frases curtas e factuais. Sem prosa longa, sem saudações, sem títulos, sem marcadores.',
-    `No máximo ${CRM_REQUEST_SUMMARY_MAX_LINES} frases/linhas. Cada linha com no máximo ${CRM_REQUEST_SUMMARY_MAX_LINE_CHARS} caracteres.`,
+    `No máximo ${CRM_REQUEST_SUMMARY_MAX_LINES} frases/linhas.`,
+    'Nunca uses reticências (…) nem cortes a meio da frase. Escreve sempre frases completas.',
     'Exemplos do estilo correcto:',
     '"Já iniciou retirada de visto, mas não concluiu. Vem junto com marido e filho de 13 anos. Não tem certeza da cidade que quer morar ainda. Vem com visto de estudante"',
     '"Quer trazer dois cães e precisa de imóvel que aceite pets grandes. Está à espera de resposta do consulado."',
@@ -178,7 +173,7 @@ export async function summarizeLeadRequestText(
       body: JSON.stringify({
         model,
         temperature: 0.1,
-        max_tokens: 180,
+        max_tokens: 320,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: userContent },

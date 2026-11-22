@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  PayloadTooLargeException,
 } from '@nestjs/common';
 import {
   ChannelMessageAuthor,
@@ -10,7 +12,15 @@ import {
   ChatbotChannel,
   Prisma,
 } from '@prisma/client';
+import { mkdir, unlink, writeFile } from 'fs/promises';
+import { join } from 'path';
+import { randomBytes } from 'crypto';
+import { toAbsoluteMediaUrl } from '../common/public-media-url';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  prepareChannelMediaFromLocalFile,
+  uploadsDir,
+} from '../uploads/channel-media.util';
 import {
   ChannelMessageLogService,
   type ChannelMessageView,
@@ -23,6 +33,8 @@ import {
 } from './scheduling-link';
 
 const PAGE_SIZE = 200;
+const CHAT_AUDIO_MAX_BYTES = 5 * 1024 * 1024;
+const CHAT_AUDIO_BODY = 'Nota de voz';
 
 export type ChannelChatIdentity = {
   whatsappDigits: string | null;
@@ -33,6 +45,8 @@ export type ChannelChatIdentity = {
 
 @Injectable()
 export class CrmChannelChatService {
+  private readonly logger = new Logger(CrmChannelChatService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly outbound: ConversationOutboundService,
@@ -72,6 +86,60 @@ export class CrmChannelChatService {
   ) {
     const identity = await this.identityFromLead(slug, leadId);
     return this.send({ identity, ...input });
+  }
+
+  async sendAudioForBooking(
+    bookingId: string,
+    channelRaw: string,
+    file: Express.Multer.File | undefined,
+  ) {
+    const identity = await this.identityFromBooking(bookingId);
+    return this.sendAudio({
+      identity,
+      channel: this.parseChannel(channelRaw),
+      file,
+    });
+  }
+
+  async sendAudioForLead(
+    slug: string,
+    leadId: string,
+    channelRaw: string,
+    file: Express.Multer.File | undefined,
+  ) {
+    const identity = await this.identityFromLead(slug, leadId);
+    return this.sendAudio({
+      identity,
+      channel: this.parseChannel(channelRaw),
+      file,
+    });
+  }
+
+  /**
+   * Apaga `channel_messages` das conversas do lead e os ficheiros de `mediaUrl`.
+   * Não apaga a row `joana_conversations` (só o histórico de chat).
+   */
+  async purgeMessagesForIdentity(identity: {
+    whatsappDigits?: string | null;
+    instagramUserId?: string | null;
+  }): Promise<void> {
+    const conversationIds = await this.findConversationIds(identity);
+    if (conversationIds.length === 0) return;
+
+    const withMedia = await this.prisma.channelMessage.findMany({
+      where: {
+        conversationId: { in: conversationIds },
+        mediaUrl: { not: null },
+      },
+      select: { mediaUrl: true },
+    });
+    for (const row of withMedia) {
+      await this.deleteUploadUrlAndVariants(row.mediaUrl);
+    }
+
+    await this.prisma.channelMessage.deleteMany({
+      where: { conversationId: { in: conversationIds } },
+    });
   }
 
   private parseChannel(raw: string): ChatbotChannel {
@@ -233,6 +301,142 @@ export class CrmChannelChatService {
     return { message, botPaused: true };
   }
 
+  async sendAudio(input: {
+    identity: ChannelChatIdentity;
+    channel: ChatbotChannel;
+    file: Express.Multer.File | undefined;
+  }): Promise<{ message: ChannelMessageView; botPaused: true }> {
+    const channel = this.assertOpenChannel(input.channel);
+    this.assertIdentity(channel, input.identity);
+
+    const file = input.file;
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Grava um áudio antes de enviar.');
+    }
+    if (file.size > CHAT_AUDIO_MAX_BYTES) {
+      throw new PayloadTooLargeException('O áudio é demasiado grande (máx. 5 MB).');
+    }
+    const mime = (file.mimetype || '').toLowerCase();
+    if (mime && !mime.startsWith('audio/') && mime !== 'video/webm') {
+      throw new BadRequestException('O ficheiro tem de ser áudio.');
+    }
+
+    const conversation = await this.ensureConversation(channel, input.identity);
+    await this.pauseLead(input.identity, conversation.id);
+
+    const ext = guessAudioExt(file.originalname, mime);
+    const stem = `crm-chat-${Date.now()}-${randomBytes(4).toString('hex')}`;
+    const fileName = `${stem}${ext}`;
+    await mkdir(uploadsDir(), { recursive: true });
+    const absolutePath = join(uploadsDir(), fileName);
+    await writeFile(absolutePath, file.buffer);
+
+    let prepared;
+    try {
+      prepared = await prepareChannelMediaFromLocalFile({
+        absolutePath,
+        originalName: file.originalname || fileName,
+        mimeType: mime || 'audio/webm',
+      });
+    } catch (err: unknown) {
+      await safeUnlink(absolutePath);
+      this.logger.warn(
+        `Falha a preparar áudio CRM: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw new BadRequestException('Não foi possível processar o áudio.');
+    }
+
+    const relativeUrl =
+      channel === ChatbotChannel.INSTAGRAM
+        ? prepared.mediaUrlInstagram
+        : prepared.mediaUrlWhatsapp;
+    const absoluteUrl = toAbsoluteMediaUrl(relativeUrl);
+    const playbackUrl =
+      prepared.mediaUrlInstagram || prepared.mediaUrlWhatsapp || relativeUrl;
+
+    const outboundRow = {
+      whatsappDigits: conversation.whatsappDigits,
+      instagramUserId: conversation.instagramUserId,
+      activeChannel: channel,
+      instance: conversation.instance,
+    };
+
+    try {
+      await this.outbound.sendAttachment(outboundRow, {
+        kind: 'audio',
+        mediaUrl: absoluteUrl,
+        mimeType:
+          channel === ChatbotChannel.INSTAGRAM
+            ? prepared.mediaMimeTypeInstagram
+            : prepared.mediaMimeTypeWhatsapp,
+        fileName: prepared.mediaFileName,
+        requireDelivery: true,
+      });
+    } catch (err: unknown) {
+      throw new BadRequestException(humanizeSendError(err));
+    }
+
+    const message = await this.messages.record({
+      conversationId: conversation.id,
+      channel,
+      direction: ChannelMessageDirection.OUTBOUND,
+      author: ChannelMessageAuthor.ADMIN,
+      kind: ChannelMessageKind.AUDIO,
+      body: CHAT_AUDIO_BODY,
+      mediaUrl: playbackUrl,
+      mirrorHistory: 'assistant',
+    });
+    if (!message) {
+      throw new BadRequestException('O áudio saiu, mas não foi possível guardá-lo no histórico.');
+    }
+    return { message, botPaused: true };
+  }
+
+  private async findConversationIds(identity: {
+    whatsappDigits?: string | null;
+    instagramUserId?: string | null;
+  }): Promise<string[]> {
+    const or: Prisma.JoanaConversationWhereInput[] = [];
+    const whatsapp = (identity.whatsappDigits || '').replace(/\D/g, '');
+    const ig = (identity.instagramUserId || '').trim();
+    if (whatsapp.length >= 8) or.push({ whatsappDigits: whatsapp });
+    if (ig) or.push({ instagramUserId: ig });
+    if (or.length === 0) return [];
+    const rows = await this.prisma.joanaConversation.findMany({
+      where: { OR: or },
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
+  }
+
+  private async deleteUploadUrlAndVariants(mediaUrl: string | null | undefined): Promise<void> {
+    const raw = (mediaUrl || '').trim();
+    if (!raw) return;
+    const pathOnly = raw.startsWith('http')
+      ? (() => {
+          try {
+            return new URL(raw).pathname;
+          } catch {
+            return raw;
+          }
+        })()
+      : raw;
+    if (!pathOnly.startsWith('/uploads/')) return;
+    const rel = pathOnly.replace(/^\/uploads\//, '');
+    if (!rel || rel.includes('..')) return;
+
+    const candidates = new Set<string>([rel]);
+    const stem = rel.replace(/\.(wa\.ogg|ig\.m4a|webm|ogg|opus|m4a|mp3|mp4)$/i, '');
+    if (stem && stem !== rel) {
+      for (const suffix of ['.wa.ogg', '.ig.m4a', '.webm', '.ogg', '.opus', '.m4a', '.mp3']) {
+        candidates.add(`${stem}${suffix}`);
+      }
+    }
+    for (const name of candidates) {
+      await safeUnlink(join(uploadsDir(), name));
+    }
+  }
+
   private assertOpenChannel(channel: ChatbotChannel): ChatbotChannel {
     if (channel === ChatbotChannel.FACEBOOK) {
       throw new BadRequestException('O chat de Facebook ainda não está disponível.');
@@ -364,4 +568,30 @@ function humanizeSendError(err: unknown): string {
     return 'Não foi possível enviar no Instagram. A resposta livre só funciona nas 24 horas após a última mensagem da pessoa.';
   }
   return 'Não foi possível enviar a mensagem.';
+}
+
+function guessAudioExt(originalName: string | undefined, mime: string): string {
+  const lower = (originalName || '').toLowerCase();
+  if (lower.endsWith('.ogg') || lower.endsWith('.opus')) return '.ogg';
+  if (lower.endsWith('.m4a')) return '.m4a';
+  if (lower.endsWith('.mp3')) return '.mp3';
+  if (lower.endsWith('.mp4')) return '.mp4';
+  if (lower.endsWith('.webm') || mime.includes('webm')) return '.webm';
+  if (mime.includes('ogg') || mime.includes('opus')) return '.ogg';
+  if (mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')) return '.m4a';
+  return '.webm';
+}
+
+async function safeUnlink(filePath: string): Promise<void> {
+  try {
+    await unlink(filePath);
+  } catch (err: unknown) {
+    const code =
+      err && typeof err === 'object' && 'code' in err
+        ? String((err as { code?: string }).code)
+        : '';
+    if (code !== 'ENOENT') {
+      /* ignore leftover files */
+    }
+  }
 }

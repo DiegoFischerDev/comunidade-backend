@@ -100,6 +100,23 @@ export class AdminChatbotCrmController {
     return this.chat.sendForLead(slug, leadId, dto);
   }
 
+  @Post(':slug/leads/:leadId/messages/audio')
+  @Roles(Role.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 5 * 1024 * 1024 },
+      storage: memoryStorage(),
+    }),
+  )
+  sendLeadAudio(
+    @Param('slug') slug: string,
+    @Param('leadId') leadId: string,
+    @Query('channel') channel: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    return this.chat.sendAudioForLead(slug, leadId, channel, file);
+  }
+
   @Post(':slug/leads/:leadId/summary')
   @Roles(Role.ADMIN)
   generateLeadSummary(@Param('slug') slug: string, @Param('leadId') leadId: string) {

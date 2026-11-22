@@ -168,6 +168,21 @@ export class AdminRafacallController {
     return this.chat.sendForBooking(bookingId.trim(), dto);
   }
 
+  @Post('crm/:bookingId/messages/audio')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 5 * 1024 * 1024 },
+      storage: memoryStorage(),
+    }),
+  )
+  sendCrmAudio(
+    @Param('bookingId') bookingId: string,
+    @Query('channel') channel: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    return this.chat.sendAudioForBooking(bookingId.trim(), channel, file);
+  }
+
   @Post('crm/:bookingId/summary')
   generateCrmSummary(@Param('bookingId') bookingId: string) {
     return this.crm.generateRequestSummary(bookingId.trim());

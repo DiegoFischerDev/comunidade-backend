@@ -19,6 +19,7 @@ export type ChannelMessageView = {
   author: ChannelMessageAuthor;
   kind: ChannelMessageKind;
   body: string;
+  mediaUrl: string | null;
   createdAt: string;
 };
 
@@ -31,6 +32,7 @@ export type RecordChannelMessageInput = {
   author: ChannelMessageAuthor;
   kind?: ChannelMessageKind;
   body: string;
+  mediaUrl?: string | null;
   externalMessageId?: string | null;
   /** Copia o texto para o JSON `history` (contexto do modelo). */
   mirrorHistory?: HistoryRole;
@@ -51,6 +53,7 @@ export class ChannelMessageLogService {
     if (!body || !input.conversationId) return null;
 
     const kind = input.kind ?? ChannelMessageKind.TEXT;
+    const mediaUrl = input.mediaUrl?.trim().slice(0, 512) || null;
     const externalMessageId = input.externalMessageId?.trim() || null;
 
     try {
@@ -59,11 +62,14 @@ export class ChannelMessageLogService {
           where: { externalMessageId },
         });
         if (existing) {
-          const changed = existing.body !== body || existing.kind !== kind;
+          const changed =
+            existing.body !== body ||
+            existing.kind !== kind ||
+            (existing.mediaUrl || null) !== mediaUrl;
           const row = changed
             ? await this.prisma.channelMessage.update({
                 where: { id: existing.id },
-                data: { body, kind },
+                data: { body, kind, mediaUrl },
               })
             : existing;
           if (input.mirrorHistory && body !== AUDIO_PENDING_TEXT) {
@@ -84,6 +90,7 @@ export class ChannelMessageLogService {
           author: input.author,
           kind,
           body,
+          mediaUrl,
           externalMessageId,
         },
       });
@@ -164,6 +171,7 @@ export function serializeMessage(row: {
   author: ChannelMessageAuthor;
   kind: ChannelMessageKind;
   body: string;
+  mediaUrl?: string | null;
   createdAt: Date;
 }): ChannelMessageView {
   return {
@@ -173,6 +181,7 @@ export function serializeMessage(row: {
     author: row.author,
     kind: row.kind,
     body: row.body,
+    mediaUrl: row.mediaUrl?.trim() || null,
     createdAt: row.createdAt.toISOString(),
   };
 }

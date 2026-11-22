@@ -7,6 +7,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { ConversationOutboundService } from '../channels/conversation-outbound.service';
+import { CrmChannelChatService } from '../channels/crm-channel-chat.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
@@ -143,6 +144,8 @@ export class RafacallCrmService {
     private readonly wa: WhatsAppService,
     @Inject(forwardRef(() => ConversationOutboundService))
     private readonly outbound: ConversationOutboundService,
+    @Inject(forwardRef(() => CrmChannelChatService))
+    private readonly channelChat: CrmChannelChatService,
   ) {}
 
   async listCrmBoard() {
@@ -871,6 +874,14 @@ export class RafacallCrmService {
 
     // Lead IG (ou sem número): remove/exclui pelo ID do booking, não pelo WhatsApp.
     if (!whatsapp) {
+      const igBefore = await this.prisma.crmLead.findFirst({
+        where: { rafaCallBookingId: booking.id },
+        select: { instagramUserId: true },
+      });
+      await this.purgeLeadChatAndDocuments({
+        whatsappDigits: null,
+        instagramUserId: igBefore?.instagramUserId ?? closeIdentity?.instagramUserId,
+      });
       await this.excludeCrmLeadsLinkedToBooking(booking.id, excludedAt);
 
       if (
@@ -963,12 +974,56 @@ export class RafacallCrmService {
       data: { crmExcludedAt: excludedAt },
     });
 
+    const linkedIg = await this.prisma.crmLead.findFirst({
+      where: {
+        OR: [
+          { whatsappDigits: whatsapp },
+          { rafaCallBookingId: { in: siblings.map((row) => row.id) } },
+        ],
+        instagramUserId: { not: null },
+      },
+      select: { instagramUserId: true },
+    });
+    await this.purgeLeadChatAndDocuments({
+      whatsappDigits: whatsapp,
+      instagramUserId:
+        linkedIg?.instagramUserId ?? closeIdentity?.instagramUserId ?? null,
+    });
     // Limpa interesse no chatbot — próximo WA volta ao menu inicial.
-    await this.resetConversationsToMenu({ whatsappDigits: whatsapp });
+    await this.resetConversationsToMenu({
+      whatsappDigits: whatsapp,
+      instagramUserId: linkedIg?.instagramUserId ?? null,
+    });
     await this.notifyAttendanceClosed(closeIdentity);
 
     // Mantém lançamentos financeiros (aparecem no dashboard Financeiro).
     return { ok: true as const };
+  }
+
+  /** Anexos CRM + mensagens/áudios do chat. Pagamentos financeiros ficam. */
+  async purgeLeadChatAndDocuments(identity: {
+    whatsappDigits?: string | null;
+    instagramUserId?: string | null;
+  }): Promise<void> {
+    const whatsapp = (identity.whatsappDigits || '').replace(/\D/g, '');
+    if (whatsapp.length >= 8) {
+      const docs = await this.prisma.rafaCallCrmDocument.findMany({
+        where: { whatsappDigits: whatsapp },
+        select: { id: true, fileUrl: true },
+      });
+      for (const doc of docs) {
+        await this.storage.deleteStoredUrl(doc.fileUrl);
+      }
+      if (docs.length > 0) {
+        await this.prisma.rafaCallCrmDocument.deleteMany({
+          where: { whatsappDigits: whatsapp },
+        });
+      }
+    }
+    await this.channelChat.purgeMessagesForIdentity({
+      whatsappDigits: whatsapp.length >= 8 ? whatsapp : null,
+      instagramUserId: identity.instagramUserId,
+    });
   }
 
   /** WhatsApp do booking e Instagram do lead, antes de anular o IGSID. */
@@ -2553,6 +2608,7 @@ export class RafacallCrmService {
       welcomeSent: false,
       paused: false,
       buffer: [] as Prisma.InputJsonValue,
+      history: [] as Prisma.InputJsonValue,
       pendingConfirmation: Prisma.JsonNull,
       pendingOutbound: null,
       farGuidanceSent: false,
