@@ -239,7 +239,10 @@ export class JoanaService {
       return { handled: true, status: 'ignored_echo' };
     }
 
-    if (!(await this.crm.isJoanaActive(input.whatsapp))) {
+    const joanaActive = await this.crm.isJoanaActive(input.whatsapp);
+
+    // Bot Off / pausa: grava + buffer para extracção CRM no flush (sem reply).
+    if (!joanaActive) {
       let row = await this.findWhatsappConversation(input.whatsapp);
       if (!row) {
         try {
@@ -270,6 +273,12 @@ export class JoanaService {
           mirrorHistory: 'user',
         });
       }
+      await this.appendBuffer({
+        whatsapp: input.whatsapp,
+        instance: instance || allowed || null,
+        displayName: cleanName(input.pushName),
+        item,
+      });
       return { handled: true, status: 'paused' };
     }
 
@@ -364,6 +373,18 @@ export class JoanaService {
       externalMessageId: messageId || null,
       mirrorHistory: body === AUDIO_TRANSCRIPT_FAILED ? undefined : 'user',
     });
+    if (body !== AUDIO_TRANSCRIPT_FAILED) {
+      await this.appendBuffer({
+        whatsapp: input.whatsapp,
+        instance: input.instance || null,
+        displayName: null,
+        item: {
+          id: messageId || `voice-${Date.now()}`,
+          text: body,
+          at: new Date().toISOString(),
+        },
+      });
+    }
   }
 
   private async replyUnheard(whatsapp: string, instance: string, reason: string) {
@@ -504,22 +525,15 @@ export class JoanaService {
         row.activeChannel === ChatbotChannel.INSTAGRAM &&
         Boolean(row.instagramUserId?.trim());
 
-      // No IG, a ficha/âncora é o IGSID — mesmo que a conversa já tenha WhatsApp.
-      if (isIgChannel) {
-        if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId!))) {
-          await this.dropBecausePaused(id);
-          return;
-        }
-      } else if (row.whatsappDigits) {
-        if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
-          await this.dropBecausePaused(id);
-          return;
-        }
-      } else if (row.instagramUserId) {
-        if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId))) {
-          await this.dropBecausePaused(id);
-          return;
-        }
+      const botActive = await this.isJoanaBotActiveForRow(row, isIgChannel);
+
+      // Bot Off: não envia pendingOutbound nem boas-vindas — só extracção CRM.
+      if (!botActive && row.pendingOutbound) {
+        await this.prisma.joanaConversation.update({
+          where: { id },
+          data: { pendingOutbound: null, processing: false },
+        });
+        return;
       }
 
       if (row.pendingOutbound) {
@@ -565,10 +579,27 @@ export class JoanaService {
 
       let lead = await lookupLead();
       // Conversas já na Joana sem ficha RafaCall (ex.: IG antes deste fix).
-      if (lead.kind === 'none') {
+      // Em extracção manual não criamos ficha nova só por haver texto no buffer.
+      if (lead.kind === 'none' && botActive) {
         await this.ensureRafaCallCardForConversation(row);
         lead = await lookupLead();
       }
+
+      if (!botActive) {
+        await this.extractCrmWhilePaused({
+          id,
+          row,
+          buffer,
+          combined,
+          history,
+          pending,
+          contextText,
+          lead,
+          contactLabel,
+        });
+        return;
+      }
+
       const profile = lead.kind === 'visible' ? profileFromLead(lead) : emptyJoanaProfile();
       const hasScheduledVideoCall =
         lead.kind === 'visible' ? lead.hasScheduledVideoCall : false;
@@ -652,24 +683,6 @@ export class JoanaService {
         return;
       }
 
-      // No IG (mesmo com WA na ficha) a pausa segue o CrmLead IG — não o check WA.
-      if (isIgChannel) {
-        if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId!))) {
-          await this.dropBecausePaused(id);
-          return;
-        }
-      } else if (row.whatsappDigits) {
-        if (!(await this.crm.isJoanaActive(row.whatsappDigits))) {
-          await this.dropBecausePaused(id);
-          return;
-        }
-      } else if (row.instagramUserId) {
-        if (!(await this.isJoanaActiveOnInstagram(row.instagramUserId))) {
-          await this.dropBecausePaused(id);
-          return;
-        }
-      }
-
       const proposalWithInferences = withInferredName({
         profile,
         proposal: withInferredConfirmation({
@@ -687,6 +700,29 @@ export class JoanaService {
         pending,
         proposal: proposalWithInferences,
       });
+
+      // Admin desligou a meio do turno: grava CRM na mesma, sem enviar reply.
+      if (!(await this.isJoanaBotActiveForRow(row, isIgChannel))) {
+        try {
+          await this.persistDecision({
+            whatsapp: row.whatsappDigits,
+            instagramUserId: row.instagramUserId,
+            lead,
+            decision: { ...decision, pending: null, append: [] },
+          });
+        } catch (err: unknown) {
+          this.logger.warn(
+            `Joana CRM (pausado) ${contactLabel}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        await this.clearBufferAfterExtraction(
+          id,
+          buffer.map((item) => item.id),
+        );
+        return;
+      }
 
       let farGuidanceSent = row.farGuidanceSent;
       let schedulingLinkSent = row.schedulingLinkSent;
@@ -774,6 +810,150 @@ export class JoanaService {
       return 'Como sua viagem ainda está a dois meses ou mais, a Rafa ainda não consegue te acompanhar na busca do imóvel agora. Quando faltarem menos de dois meses, é a hora de começar a procura. Até lá, prepare o passaporte, o visto e compre a passagem. Quando estiver mais perto, me chama de novo.';
     }
     return null;
+  }
+
+  private async isJoanaBotActiveForRow(
+    row: {
+      whatsappDigits: string | null;
+      instagramUserId: string | null;
+    },
+    isIgChannel: boolean,
+  ): Promise<boolean> {
+    if (isIgChannel && row.instagramUserId) {
+      return this.isJoanaActiveOnInstagram(row.instagramUserId);
+    }
+    if (row.whatsappDigits) {
+      return this.crm.isJoanaActive(row.whatsappDigits);
+    }
+    if (row.instagramUserId) {
+      return this.isJoanaActiveOnInstagram(row.instagramUserId);
+    }
+    return false;
+  }
+
+  /**
+   * Atendimento manual (bot Off): OpenAI continua a extrair campos CRM,
+   * sem enviar resposta ao lead.
+   */
+  private async extractCrmWhilePaused(input: {
+    id: string;
+    row: {
+      whatsappDigits: string | null;
+      instagramUserId: string | null;
+    };
+    buffer: BufferItem[];
+    combined: string;
+    history: HistoryItem[];
+    pending: PendingConfirmation | null;
+    contextText: string;
+    lead:
+      | Awaited<ReturnType<RafacallCrmService['lookupLeadForJoana']>>
+      | Awaited<ReturnType<RafacallCrmService['lookupLeadForJoanaByInstagram']>>;
+    contactLabel: string;
+  }): Promise<void> {
+    const bufferIds = input.buffer.map((item) => item.id);
+    if (input.lead.kind !== 'visible') {
+      await this.clearBufferAfterExtraction(input.id, bufferIds);
+      return;
+    }
+
+    const profile = profileFromLead(input.lead);
+    let proposal = {
+      interested: null as boolean | null,
+      confirmation: null as 'yes' | 'no' | null,
+    };
+    try {
+      const interpreted = await this.openai.interpret({
+        context: input.contextText,
+        transcript: input.history
+          .map((item) => `${item.role}: ${item.text}`)
+          .join('\n'),
+        profileSummary: describeProfile(profile, input.lead.kind, {
+          hasScheduledVideoCall: input.lead.hasScheduledVideoCall,
+        }),
+        pendingQuestion:
+          input.pending?.field === 'immigration' ? input.pending.question : null,
+        combinedText: input.combined,
+      });
+      proposal = interpreted.proposal;
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Joana extracção (pausado) ${input.contactLabel}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      await this.clearBufferAfterExtraction(input.id, bufferIds);
+      return;
+    }
+
+    const proposalWithInferences = withInferredName({
+      profile,
+      proposal: withInferredConfirmation({
+        pending: input.pending,
+        proposal,
+        message: input.combined,
+      }),
+      message: input.combined,
+    });
+
+    const decision = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile,
+      pending: input.pending,
+      proposal: proposalWithInferences,
+    });
+
+    try {
+      await this.persistDecision({
+        whatsapp: input.row.whatsappDigits,
+        instagramUserId: input.row.instagramUserId,
+        lead: input.lead,
+        // Sem perguntas pendentes do bot — o admin está a atender.
+        decision: { ...decision, pending: null, append: [], disableJoana: false },
+      });
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Joana CRM extracção ${input.contactLabel}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    await this.clearBufferAfterExtraction(input.id, bufferIds);
+  }
+
+  private async clearBufferAfterExtraction(
+    id: string,
+    bufferIds: string[],
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await this.prisma.joanaConversation.findUnique({
+        where: { id },
+      });
+      if (!current) return;
+      const remaining = readBuffer(current.buffer).filter(
+        (item) => !bufferIds.includes(item.id),
+      );
+      const saved = await this.prisma.joanaConversation.updateMany({
+        where: { id, updatedAt: current.updatedAt },
+        data: {
+          buffer: remaining as unknown as Prisma.InputJsonValue,
+          pendingOutbound: null,
+          processing: false,
+          // Mantém paused: o bot continua Off até o admin religar.
+        },
+      });
+      if (saved.count === 1) return;
+    }
+    await this.prisma.joanaConversation.update({
+      where: { id },
+      data: {
+        buffer: [] as unknown as Prisma.InputJsonValue,
+        pendingOutbound: null,
+        processing: false,
+      },
+    });
   }
 
   private async isJoanaActiveOnInstagram(

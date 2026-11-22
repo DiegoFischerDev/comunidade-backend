@@ -248,9 +248,18 @@ export class ChatbotRouterService {
         }
       }
 
-      // Atendimento manual / bot Off: grava sempre e não retoma a automação.
+      // Atendimento manual / bot Off: grava + buffer para extracção CRM (sem reply).
       if (await this.shouldKeepPausedForManual(existing)) {
         await logLead(existing.id, true);
+        await this.bufferForCrmExtraction({
+          channel,
+          whatsapp: whatsapp || null,
+          instagramUserId: instagramUserId || null,
+          instance: instance || null,
+          displayName: cleanName(input.pushName),
+          text,
+          externalMessageId: messageId,
+        });
         return { handled: true, status: 'paused' };
       }
 
@@ -266,6 +275,15 @@ export class ChatbotRouterService {
         const resumed = await this.tryResumePausedConversation(existing, peer);
         if (!resumed) {
           await logLead(existing.id, true);
+          await this.bufferForCrmExtraction({
+            channel,
+            whatsapp: whatsapp || null,
+            instagramUserId: instagramUserId || null,
+            instance: instance || null,
+            displayName: cleanName(input.pushName),
+            text,
+            externalMessageId: messageId,
+          });
           return { handled: true, status: 'paused' };
         }
         existing = { ...existing, paused: false };
@@ -290,6 +308,15 @@ export class ChatbotRouterService {
           }
         }
         await logLead(existing.id, true);
+        await this.bufferForCrmExtraction({
+          channel,
+          whatsapp: whatsapp || null,
+          instagramUserId: instagramUserId || null,
+          instance: instance || null,
+          displayName: cleanName(input.pushName),
+          text,
+          externalMessageId: messageId,
+        });
         return { handled: true, status: 'paused' };
       }
       if (existing.chatbot?.engineKind === ChatbotEngineKind.HANDOFF_OTHER) {
@@ -633,8 +660,19 @@ export class ChatbotRouterService {
       kind: ChannelMessageKind.AUDIO_TRANSCRIPT,
       body,
       externalMessageId: messageId || null,
-      mirrorHistory: 'user',
+      mirrorHistory: body === AUDIO_TRANSCRIPT_FAILED ? undefined : 'user',
     });
+    if (body !== AUDIO_TRANSCRIPT_FAILED) {
+      await this.bufferForCrmExtraction({
+        channel: 'whatsapp',
+        whatsapp: input.whatsapp,
+        instagramUserId: null,
+        instance: input.instance,
+        displayName: null,
+        text: body,
+        externalMessageId: messageId || `voice-${Date.now()}`,
+      });
+    }
   }
 
   private async replyUnheard(whatsapp: string, instance: string, reason: string) {
@@ -1206,6 +1244,36 @@ export class ChatbotRouterService {
       });
     }
     return null;
+  }
+
+  /**
+   * Com bot Off: mete a mensagem no buffer para o flush extrair campos CRM
+   * (Joana/Bruna/Gabi) sem enviar resposta automática.
+   */
+  private async bufferForCrmExtraction(input: {
+    channel: InboundChannel;
+    whatsapp: string | null;
+    instagramUserId: string | null;
+    instance: string | null;
+    displayName: string | null;
+    text: string;
+    externalMessageId: string;
+  }): Promise<void> {
+    const item: BufferItem = {
+      id:
+        input.externalMessageId.trim() ||
+        `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text: input.text,
+      at: new Date().toISOString(),
+    };
+    await this.appendBuffer({
+      channel: input.channel,
+      whatsapp: input.whatsapp,
+      instagramUserId: input.instagramUserId,
+      instance: input.instance,
+      displayName: input.displayName,
+      item,
+    });
   }
 
   private async appendBuffer(input: {

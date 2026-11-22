@@ -52,10 +52,6 @@ export class GenericContextEngine {
       await this.release(id);
       return;
     }
-    if (row.paused) {
-      await this.dropPaused(id);
-      return;
-    }
     if (!row.whatsappDigits && !row.instagramUserId) {
       await this.release(id);
       return;
@@ -71,8 +67,13 @@ export class GenericContextEngine {
       whatsappDigits: row.whatsappDigits,
       instagramUserId: row.instagramUserId,
     });
-    if (lead && !lead.botEnabled) {
-      await this.dropPaused(id);
+    const extractOnly = row.paused || Boolean(lead && !lead.botEnabled);
+
+    if (extractOnly && row.pendingOutbound) {
+      await this.prisma.joanaConversation.update({
+        where: { id },
+        data: { pendingOutbound: null, processing: false },
+      });
       return;
     }
 
@@ -95,6 +96,21 @@ export class GenericContextEngine {
     const combined = buffer.map((item) => item.text).join('\n');
     const history = readHistory(row.history);
     const bot = await this.chatbots.getBySlug(slug);
+
+    // Bot Off: Bruna/Gabi continuam a extrair campos; sem reply nem boas-vindas.
+    if (extractOnly) {
+      await this.extractQualificationWhilePaused({
+        id,
+        slug,
+        lead,
+        buffer,
+        combined,
+        history,
+        botName: bot.name,
+        context: bot.contextText,
+      });
+      return;
+    }
 
     // 1ª interação do bot = só boas-vindas; OpenAI só na mensagem seguinte.
     if (!row.welcomeSent) {
@@ -493,6 +509,96 @@ export class GenericContextEngine {
       });
       if (saved.count === 1) return;
     }
+  }
+
+  /**
+   * Atendimento manual (bot Off): OpenAI extrai campos Bruna/Gabi sem responder.
+   */
+  private async extractQualificationWhilePaused(input: {
+    id: string;
+    slug: string;
+    lead: Awaited<ReturnType<ChatbotCrmService['findActiveLead']>>;
+    buffer: BufferItem[];
+    combined: string;
+    history: HistoryItem[];
+    botName: string;
+    context: string;
+  }): Promise<void> {
+    const bufferIds = input.buffer.map((item) => item.id);
+    try {
+      if (input.slug === 'gabi' && input.lead) {
+        const profile = {
+          companyName: input.lead.companyName,
+          instagramHandle: input.lead.instagramHandle,
+          campaignObjective: input.lead.campaignObjective,
+        };
+        const interpreted = await this.interpretGabi({
+          context: input.context,
+          history: input.history,
+          userText: input.combined,
+          profile,
+        });
+        const nextProfile = applyGabiProposal(profile, interpreted.proposal);
+        if (
+          interpreted.proposal.companyName !== undefined ||
+          interpreted.proposal.instagramHandle !== undefined ||
+          interpreted.proposal.campaignObjective !== undefined
+        ) {
+          await this.crm.patchGabiQualification(input.lead.id, nextProfile);
+        }
+      } else if (input.slug === 'bruna' && input.lead) {
+        const profile: BrunaProfile = {
+          desiredHouseValue: input.lead.desiredHouseValue,
+          preferredCities: input.lead.crmPreferredCity,
+          propertyTypology: Array.isArray(input.lead.crmPropertyTypology)
+            ? input.lead.crmPropertyTypology
+            : input.lead.crmPropertyTypology
+              ? [input.lead.crmPropertyTypology]
+              : [],
+        };
+        const interpreted = await this.interpretBruna({
+          context: input.context,
+          history: input.history,
+          userText: input.combined,
+          profile,
+        });
+        const nextProfile = applyBrunaProposal(profile, interpreted.proposal);
+        if (
+          interpreted.proposal.desiredHouseValue !== undefined ||
+          interpreted.proposal.preferredCities !== undefined ||
+          interpreted.proposal.propertyTypology !== undefined
+        ) {
+          await this.crm.patchBrunaQualification(input.lead.id, nextProfile);
+        }
+      }
+    } catch (err: unknown) {
+      this.logger.warn(
+        `${input.botName} extracção (pausado) ${input.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    // Limpa o buffer sem inventar reply de assistant (o user já foi espelhado no log).
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await this.prisma.joanaConversation.findUnique({
+        where: { id: input.id },
+      });
+      if (!current) return;
+      const remaining = readBuffer(current.buffer).filter(
+        (item) => !bufferIds.includes(item.id),
+      );
+      const saved = await this.prisma.joanaConversation.updateMany({
+        where: { id: input.id, updatedAt: current.updatedAt },
+        data: {
+          buffer: remaining as unknown as Prisma.InputJsonValue,
+          pendingOutbound: null,
+          processing: false,
+        },
+      });
+      if (saved.count === 1) return;
+    }
+    await this.dropPaused(input.id);
   }
 
   private async dropPaused(id: string) {
