@@ -766,6 +766,15 @@ export class RafacallCrmService {
         whatsappDigits: whatsapp || null,
         instagramUserId: igLead?.instagramUserId ?? null,
         chatbotId: joana?.id ?? null,
+        knownFacts: {
+          preferredCity: booking.crmPreferredCity,
+          propertyTypology: booking.crmPropertyTypology,
+          desiredRent: booking.crmDesiredRent,
+          hasPet: booking.crmHasPet,
+          hasVisa: booking.crmHasVisa,
+          immigrationImmediate: booking.crmImmigrationImmediate,
+          expectedImmigrationAt: booking.crmExpectedImmigrationAt,
+        },
       });
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;

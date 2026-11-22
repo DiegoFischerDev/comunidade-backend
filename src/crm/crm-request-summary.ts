@@ -2,12 +2,28 @@ import { BadRequestException } from '@nestjs/common';
 import type { PrismaService } from '../prisma/prisma.service';
 
 export const CRM_REQUEST_SUMMARY_MAX_CHARS = 2000;
-const CRM_REQUEST_SUMMARY_MAX_LINES = 3;
-const CRM_REQUEST_SUMMARY_MAX_LINE_CHARS = 90;
+const CRM_REQUEST_SUMMARY_MAX_LINES = 4;
+const CRM_REQUEST_SUMMARY_MAX_LINE_CHARS = 140;
 
 const NO_CONVERSATION_MESSAGE = 'Este lead ainda não tem conversa para resumir.';
 
 type HistoryTurn = { role: 'user' | 'assistant'; text: string };
+
+/** Factos já guardados no JSON/CRM do lead — o resumo não deve repeti-los. */
+export type CrmKnownLeadFacts = {
+  preferredCity?: string | null;
+  propertyTypology?: string[] | null;
+  desiredRent?: number | null;
+  hasPet?: boolean | null;
+  hasVisa?: boolean | null;
+  immigrationImmediate?: boolean | null;
+  expectedImmigrationAt?: string | Date | null;
+  companyName?: string | null;
+  campaignObjective?: string | null;
+  subjectSummary?: string | null;
+  desiredHouseValue?: number | null;
+  instagramHandle?: string | null;
+};
 
 export function normalizeCrmRequestSummary(
   value: string | null | undefined,
@@ -67,6 +83,40 @@ export function buildLeadRequestTranscript(historyRaw: unknown, bufferRaw: unkno
   return lines.join('\n').trim().slice(0, 12_000);
 }
 
+function formatKnownLeadFacts(facts?: CrmKnownLeadFacts | null): string {
+  if (!facts) return '';
+  const lines: string[] = [];
+  const city = facts.preferredCity?.trim();
+  if (city) lines.push(`Cidade preferida: ${city}`);
+  const typologies = (facts.propertyTypology ?? []).map((item) => item.trim()).filter(Boolean);
+  if (typologies.length > 0) lines.push(`Tipologia: ${typologies.join(', ')}`);
+  if (facts.desiredRent != null) lines.push(`Aluguel pretendido: ${facts.desiredRent}€`);
+  if (facts.hasPet === true) lines.push('Pet: sim');
+  if (facts.hasPet === false) lines.push('Pet: não');
+  if (facts.hasVisa === true) lines.push('Tem visto: sim');
+  if (facts.hasVisa === false) lines.push('Tem visto: não');
+  if (facts.immigrationImmediate) lines.push('Imigração: imediata');
+  else if (facts.expectedImmigrationAt) {
+    const raw =
+      facts.expectedImmigrationAt instanceof Date
+        ? facts.expectedImmigrationAt.toISOString().slice(0, 10)
+        : String(facts.expectedImmigrationAt).trim();
+    if (raw) lines.push(`Data de imigração: ${raw}`);
+  }
+  const company = facts.companyName?.trim();
+  if (company) lines.push(`Empresa: ${company}`);
+  const objective = facts.campaignObjective?.trim();
+  if (objective) lines.push(`Objectivo da campanha: ${objective}`);
+  const subject = facts.subjectSummary?.trim();
+  if (subject) lines.push(`Assunto: ${subject}`);
+  if (facts.desiredHouseValue != null) {
+    lines.push(`Valor da casa: ${facts.desiredHouseValue}€`);
+  }
+  const ig = facts.instagramHandle?.trim();
+  if (ig) lines.push(`Instagram: ${ig}`);
+  return lines.join('\n');
+}
+
 function compactSummaryLines(content: string): string[] {
   return content
     .split(/\r?\n/)
@@ -80,22 +130,38 @@ function compactSummaryLines(content: string): string[] {
     );
 }
 
-/** Pede à OpenAI um resumo curto em palavras-chave. Lança Error se a chave falhar ou a resposta vier vazia. */
-export async function summarizeLeadRequestText(transcript: string): Promise<string> {
+/** Pede à OpenAI só contexto extra além do JSON do lead. Lança Error se a chave falhar ou a resposta vier vazia. */
+export async function summarizeLeadRequestText(
+  transcript: string,
+  knownFacts?: CrmKnownLeadFacts | null,
+): Promise<string> {
   const apiKey = (process.env.OPENAI_API_KEY || '').trim();
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY não está configurada.');
   }
   const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+  const knownBlock = formatKnownLeadFacts(knownFacts);
   const system = [
-    'És um assistente do CRM. Resume a conversa em português de Portugal.',
-    'Estilo: palavras-chave e frases telegráficas. Sem prosa.',
-    `No máximo ${CRM_REQUEST_SUMMARY_MAX_LINES} linhas. Cada linha com no máximo ${CRM_REQUEST_SUMMARY_MAX_LINE_CHARS} caracteres.`,
-    'Inclui só factos úteis do lead: objectivo, cidade, tipologias, orçamento, visto, pets, data, dúvidas concretas.',
-    'Exemplo de formato: "Alugar T2 Lisboa · até 1200€ · com pet"',
-    'Não uses saudações, títulos, marcadores, aspas nem explicações longas.',
-    'Não repitas o que a assistente disse.',
-    'Se não houver pedido concreto, responde só: "Sem pedido concreto".',
+    'És um assistente do CRM. Escreve em português de Portugal.',
+    'O teu trabalho é extrair da conversa apenas informação EXTRA que ainda NÃO está nos dados estruturados do lead.',
+    'NÃO repitas cidade, tipologia, aluguel, pet, visto (sim/não), data de imigração, empresa, objectivo, assunto ou valor da casa se esses dados já aparecerem na secção «Dados já guardados».',
+    'Foca em contexto humano e nuances: família, estágio do visto, dúvidas, incertezas, motivações, restrições, histórico.',
+    'Estilo: frases curtas e factuais. Sem prosa longa, sem saudações, sem títulos, sem marcadores.',
+    `No máximo ${CRM_REQUEST_SUMMARY_MAX_LINES} frases/linhas. Cada linha com no máximo ${CRM_REQUEST_SUMMARY_MAX_LINE_CHARS} caracteres.`,
+    'Exemplos do estilo correcto:',
+    '"Já iniciou retirada de visto, mas não concluiu. Vem junto com marido e filho de 13 anos. Não tem certeza da cidade que quer morar ainda. Vem com visto de estudante"',
+    '"Quer trazer dois cães e precisa de imóvel que aceite pets grandes. Está à espera de resposta do consulado."',
+    '"Vem só; marido fica no Brasil nos primeiros meses. Prefere zona perto de metro por causa do trabalho."',
+    'Se a conversa não tiver informação extra além dos dados já guardados, responde só: "Sem contexto extra".',
+  ].join('\n');
+
+  const userContent = [
+    knownBlock
+      ? `Dados já guardados no CRM (NÃO repetir):\n${knownBlock}`
+      : 'Dados já guardados no CRM: nenhum campo estruturado preenchido.',
+    '',
+    'Conversa:',
+    transcript,
   ].join('\n');
 
   const controller = new AbortController();
@@ -112,10 +178,10 @@ export async function summarizeLeadRequestText(transcript: string): Promise<stri
       body: JSON.stringify({
         model,
         temperature: 0.1,
-        max_tokens: 120,
+        max_tokens: 180,
         messages: [
           { role: 'system', content: system },
-          { role: 'user', content: transcript },
+          { role: 'user', content: userContent },
         ],
       }),
       signal: controller.signal,
@@ -144,6 +210,7 @@ export async function generateCrmRequestSummary(
     whatsappDigits?: string | null;
     instagramUserId?: string | null;
     chatbotId?: string | null;
+    knownFacts?: CrmKnownLeadFacts | null;
   },
 ): Promise<string> {
   const whatsapp = (identity.whatsappDigits ?? '').replace(/\D/g, '');
@@ -174,5 +241,5 @@ export async function generateCrmRequestSummary(
   if (!transcript) {
     throw new BadRequestException(NO_CONVERSATION_MESSAGE);
   }
-  return summarizeLeadRequestText(transcript);
+  return summarizeLeadRequestText(transcript, identity.knownFacts);
 }

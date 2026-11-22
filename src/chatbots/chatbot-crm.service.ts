@@ -794,6 +794,20 @@ export class ChatbotCrmService {
         whatsappDigits: lead.whatsappDigits,
         instagramUserId: lead.instagramUserId,
         chatbotId: bot.id,
+        knownFacts: {
+          preferredCity: lead.crmPreferredCity,
+          propertyTypology: lead.crmPropertyTypology,
+          desiredRent: lead.crmDesiredRent,
+          hasPet: lead.crmHasPet,
+          hasVisa: lead.crmHasVisa,
+          immigrationImmediate: lead.crmImmigrationImmediate,
+          expectedImmigrationAt: lead.crmExpectedImmigrationAt,
+          companyName: lead.companyName,
+          campaignObjective: lead.campaignObjective,
+          subjectSummary: lead.subjectSummary,
+          desiredHouseValue: lead.desiredHouseValue,
+          instagramHandle: lead.instagramHandle,
+        },
       });
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
