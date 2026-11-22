@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import {
   ChannelMessageAuthor,
@@ -54,54 +55,20 @@ export class ChannelMessageLogService {
 
     const kind = input.kind ?? ChannelMessageKind.TEXT;
     const mediaUrl = input.mediaUrl?.trim().slice(0, 512) || null;
-    const externalMessageId = input.externalMessageId?.trim() || null;
+    const externalMessageId = (input.externalMessageId || '').trim() || null;
+    const payload = {
+      conversationId: input.conversationId,
+      channel: input.channel,
+      direction: input.direction,
+      author: input.author,
+      kind,
+      body,
+      mediaUrl,
+      mirrorHistory: input.mirrorHistory,
+    };
 
     try {
-      if (externalMessageId) {
-        const existing = await this.prisma.channelMessage.findUnique({
-          where: { externalMessageId },
-        });
-        if (existing) {
-          const changed =
-            existing.body !== body ||
-            existing.kind !== kind ||
-            (existing.mediaUrl || null) !== mediaUrl;
-          const row = changed
-            ? await this.prisma.channelMessage.update({
-                where: { id: existing.id },
-                data: { body, kind, mediaUrl },
-              })
-            : existing;
-          if (input.mirrorHistory && body !== AUDIO_PENDING_TEXT) {
-            await this.appendHistory(input.conversationId, input.mirrorHistory, body);
-          }
-          if (input.direction === ChannelMessageDirection.INBOUND) {
-            await this.touchInbound(input.conversationId);
-          }
-          return serializeMessage(row);
-        }
-      }
-
-      const row = await this.prisma.channelMessage.create({
-        data: {
-          conversationId: input.conversationId,
-          channel: input.channel,
-          direction: input.direction,
-          author: input.author,
-          kind,
-          body,
-          mediaUrl,
-          externalMessageId,
-        },
-      });
-
-      if (input.direction === ChannelMessageDirection.INBOUND) {
-        await this.touchInbound(input.conversationId);
-      }
-      if (input.mirrorHistory && body !== AUDIO_PENDING_TEXT) {
-        await this.appendHistory(input.conversationId, input.mirrorHistory, body);
-      }
-      return serializeMessage(row);
+      return await this.writeRecord({ ...payload, externalMessageId });
     } catch (err: unknown) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -111,8 +78,48 @@ export class ChannelMessageLogService {
         const existing = await this.prisma.channelMessage.findUnique({
           where: { externalMessageId },
         });
-        return existing ? serializeMessage(existing) : null;
+        if (existing) return serializeMessage(existing);
       }
+
+      // Mids IG longos + VARCHAR(128) antigo: hash curto, depois sem id.
+      if (externalMessageId && externalMessageId.length > 64) {
+        const hashed = hashExternalMessageId(externalMessageId);
+        this.logger.warn(
+          `Falha ao gravar mid (${externalMessageId.length} chars) em ${input.conversationId}: ${
+            err instanceof Error ? err.message : String(err)
+          } — a tentar hash`,
+        );
+        try {
+          return await this.writeRecord({ ...payload, externalMessageId: hashed });
+        } catch (hashErr: unknown) {
+          if (
+            hashErr instanceof Prisma.PrismaClientKnownRequestError &&
+            hashErr.code === 'P2002'
+          ) {
+            const existing = await this.prisma.channelMessage.findUnique({
+              where: { externalMessageId: hashed },
+            });
+            if (existing) return serializeMessage(existing);
+          }
+        }
+      }
+
+      if (externalMessageId) {
+        this.logger.warn(
+          `Falha ao gravar com externalMessageId em ${input.conversationId} — a tentar sem id`,
+        );
+        try {
+          return await this.writeRecord({ ...payload, externalMessageId: null });
+        } catch (retryErr: unknown) {
+          this.logger.warn(
+            `Falha ao gravar mensagem ${input.conversationId}: ${
+              retryErr instanceof Error ? retryErr.message : String(retryErr)
+            }`,
+          );
+          return null;
+        }
+      }
+
       this.logger.warn(
         `Falha ao gravar mensagem ${input.conversationId}: ${
           err instanceof Error ? err.message : String(err)
@@ -120,6 +127,68 @@ export class ChannelMessageLogService {
       );
       return null;
     }
+  }
+
+  private async writeRecord(input: {
+    conversationId: string;
+    channel: ChatbotChannel;
+    direction: ChannelMessageDirection;
+    author: ChannelMessageAuthor;
+    kind: ChannelMessageKind;
+    body: string;
+    mediaUrl: string | null;
+    externalMessageId: string | null;
+    mirrorHistory?: HistoryRole;
+  }): Promise<ChannelMessageView> {
+    if (input.externalMessageId) {
+      const existing = await this.prisma.channelMessage.findUnique({
+        where: { externalMessageId: input.externalMessageId },
+      });
+      if (existing) {
+        const changed =
+          existing.body !== input.body ||
+          existing.kind !== input.kind ||
+          (existing.mediaUrl || null) !== input.mediaUrl;
+        const row = changed
+          ? await this.prisma.channelMessage.update({
+              where: { id: existing.id },
+              data: {
+                body: input.body,
+                kind: input.kind,
+                mediaUrl: input.mediaUrl,
+              },
+            })
+          : existing;
+        if (input.mirrorHistory && input.body !== AUDIO_PENDING_TEXT) {
+          await this.appendHistory(input.conversationId, input.mirrorHistory, input.body);
+        }
+        if (input.direction === ChannelMessageDirection.INBOUND) {
+          await this.touchInbound(input.conversationId);
+        }
+        return serializeMessage(row);
+      }
+    }
+
+    const row = await this.prisma.channelMessage.create({
+      data: {
+        conversationId: input.conversationId,
+        channel: input.channel,
+        direction: input.direction,
+        author: input.author,
+        kind: input.kind,
+        body: input.body,
+        mediaUrl: input.mediaUrl,
+        externalMessageId: input.externalMessageId,
+      },
+    });
+
+    if (input.direction === ChannelMessageDirection.INBOUND) {
+      await this.touchInbound(input.conversationId);
+    }
+    if (input.mirrorHistory && input.body !== AUDIO_PENDING_TEXT) {
+      await this.appendHistory(input.conversationId, input.mirrorHistory, input.body);
+    }
+    return serializeMessage(row);
   }
 
   /**
@@ -188,6 +257,11 @@ export class ChannelMessageLogService {
       data: { history: next as unknown as Prisma.InputJsonValue },
     });
   }
+}
+
+/** Fallback quando o mid Meta não cabe na coluna (VARCHAR curto pré-migration). */
+function hashExternalMessageId(raw: string): string {
+  return `h:${createHash('sha256').update(raw).digest('hex')}`;
 }
 
 function readHistory(value: unknown): Array<{ role: HistoryRole; text: string }> {

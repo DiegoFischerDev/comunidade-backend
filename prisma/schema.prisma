@@ -1412,7 +1412,8 @@ model ChannelMessage {
   body              String                  @db.Text
   /// Path público `/uploads/…` para `kind = AUDIO` (bytes no disco/R2, não na BD).
   mediaUrl          String?                 @map("media_url") @db.VarChar(512)
-  externalMessageId String?                 @unique @map("external_message_id") @db.VarChar(128)
+  /// Mid Meta / id Evolution — os mids do Instagram passam facilmente de 128 chars.
+  externalMessageId String?                 @unique @map("external_message_id") @db.Text
   createdAt         DateTime                @default(now()) @map("created_at")
 
   @@index([conversationId, createdAt])

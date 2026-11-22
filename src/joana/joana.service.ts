@@ -240,7 +240,24 @@ export class JoanaService {
     }
 
     if (!(await this.crm.isJoanaActive(input.whatsapp))) {
-      const row = await this.findWhatsappConversation(input.whatsapp);
+      let row = await this.findWhatsappConversation(input.whatsapp);
+      if (!row) {
+        try {
+          row = await this.prisma.joanaConversation.create({
+            data: {
+              whatsappDigits: input.whatsapp,
+              activeChannel: ChatbotChannel.WHATSAPP,
+              instance: instance || allowed || null,
+              displayName: cleanName(input.pushName),
+              buffer: [] as unknown as Prisma.InputJsonValue,
+              history: [] as unknown as Prisma.InputJsonValue,
+              paused: true,
+            },
+          });
+        } catch {
+          row = await this.findWhatsappConversation(input.whatsapp);
+        }
+      }
       if (row) {
         await this.messageLog.record({
           conversationId: row.id,
@@ -319,7 +336,23 @@ export class JoanaService {
         );
       }
     }
-    const row = await this.findWhatsappConversation(input.whatsapp);
+    let row = await this.findWhatsappConversation(input.whatsapp);
+    if (!row) {
+      try {
+        row = await this.prisma.joanaConversation.create({
+          data: {
+            whatsappDigits: input.whatsapp,
+            activeChannel: ChatbotChannel.WHATSAPP,
+            instance: input.instance || null,
+            buffer: [] as unknown as Prisma.InputJsonValue,
+            history: [] as unknown as Prisma.InputJsonValue,
+            paused: true,
+          },
+        });
+      } catch {
+        row = await this.findWhatsappConversation(input.whatsapp);
+      }
+    }
     if (!row) return;
     await this.messageLog.record({
       conversationId: row.id,

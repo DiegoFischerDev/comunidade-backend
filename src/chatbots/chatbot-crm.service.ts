@@ -767,7 +767,7 @@ export class ChatbotCrmService {
     }
     if (input.botEnabled !== undefined) {
       data.botEnabled = input.botEnabled;
-      await this.pauseLeadConversations(lead, bot.id, !input.botEnabled);
+      await this.pauseLeadConversations(lead, !input.botEnabled);
     }
 
     let columnSlug = lead.column.slug;
@@ -780,7 +780,7 @@ export class ChatbotCrmService {
       columnSlug = column.slug;
       if (column.pausesBot && input.botEnabled === undefined) {
         data.botEnabled = false;
-        await this.pauseLeadConversations(lead, bot.id, true);
+        await this.pauseLeadConversations(lead, true);
       }
     }
 
@@ -1084,18 +1084,19 @@ export class ChatbotCrmService {
 
   private async pauseLeadConversations(
     lead: { whatsappDigits: string | null; instagramUserId: string | null },
-    chatbotId: string,
     paused: boolean,
   ) {
+    // Pausa todas as conversas deste contacto — não só a do chatbotId —
+    // para o atendimento manual e o webhook partilharem a mesma âncora.
     if (lead.whatsappDigits) {
       await this.prisma.joanaConversation.updateMany({
-        where: { whatsappDigits: lead.whatsappDigits, chatbotId },
+        where: { whatsappDigits: lead.whatsappDigits },
         data: { paused },
       });
     }
     if (lead.instagramUserId) {
       await this.prisma.joanaConversation.updateMany({
-        where: { instagramUserId: lead.instagramUserId, chatbotId },
+        where: { instagramUserId: lead.instagramUserId },
         data: { paused },
       });
     }

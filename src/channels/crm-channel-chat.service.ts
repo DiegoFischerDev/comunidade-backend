@@ -564,13 +564,15 @@ export class CrmChannelChatService {
     }
     const whatsapp = identity.whatsappDigits;
     if (!whatsapp) return null;
+    // Mesma ordem do router: WA activo, senão qualquer conversa com este número
+    // (inclui ficha que nasceu no IG e depois ganhou WhatsApp).
     return (
       (await this.prisma.joanaConversation.findFirst({
         where: { whatsappDigits: whatsapp, activeChannel: ChatbotChannel.WHATSAPP },
         orderBy: { updatedAt: 'desc' },
       })) ??
       this.prisma.joanaConversation.findFirst({
-        where: { whatsappDigits: whatsapp, instagramUserId: null },
+        where: { whatsappDigits: whatsapp },
         orderBy: { updatedAt: 'desc' },
       })
     );

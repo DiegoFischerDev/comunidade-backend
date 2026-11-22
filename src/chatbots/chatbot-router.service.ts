@@ -248,7 +248,14 @@ export class ChatbotRouterService {
         }
       }
 
+      // Atendimento manual / bot Off: grava sempre e não retoma a automação.
+      if (await this.shouldKeepPausedForManual(existing)) {
+        await logLead(existing.id, true);
+        return { handled: true, status: 'paused' };
+      }
+
       if (!existing.chatbotId) {
+        // Pausa órfã (ex. circuit) sem ficha CRM — deixa voltar ao menu.
         await this.prisma.joanaConversation.update({
           where: { id: existing.id },
           data: { paused: false },
@@ -364,6 +371,10 @@ export class ChatbotRouterService {
     });
 
     if (existing?.paused) {
+      if (await this.shouldKeepPausedForManual(existing)) {
+        await this.storePausedWhatsappVoice(existing.id, input);
+        return { handled: true, status: 'paused' };
+      }
       if (!existing.chatbotId) {
         await this.prisma.joanaConversation.update({
           where: { id: existing.id },
@@ -376,8 +387,22 @@ export class ChatbotRouterService {
       }
     }
 
-    // Sem bot / menu: nota de voz não escolhe menu — pede texto
+    if (existing?.chatbotId) {
+      const lead = await this.crm.findActiveLead(existing.chatbotId, {
+        whatsappDigits: existing.whatsappDigits,
+        instagramUserId: existing.instagramUserId,
+      });
+      if (lead && !lead.botEnabled) {
+        await this.storePausedWhatsappVoice(existing.id, input);
+        return { handled: true, status: 'paused' };
+      }
+    }
+
+    // Sem bot / menu: nota de voz não escolhe menu — pede texto (grava na mesma).
     if (!existing?.chatbotId) {
+      if (existing) {
+        await this.storePausedWhatsappVoice(existing.id, input);
+      }
       try {
         await this.wa.sendText(
           input.whatsapp,
@@ -1018,6 +1043,43 @@ export class ChatbotRouterService {
    * Conversa pausada com bot On e circuit fechado → retoma (pausa indevida
    * por check WA no IG, ou circuit já expirou após restart).
    */
+  /**
+   * Bot Off no CRM ou atendimento manual: manter pausa e continuar a gravar o fio.
+   */
+  private async shouldKeepPausedForManual(existing: {
+    chatbotId: string | null;
+    whatsappDigits: string | null;
+    instagramUserId: string | null;
+  }): Promise<boolean> {
+    const whatsapp = (existing.whatsappDigits || '').replace(/\D/g, '');
+    const ig = (existing.instagramUserId || '').trim();
+
+    const leadOr: Prisma.CrmLeadWhereInput[] = [];
+    if (whatsapp.length >= 8) leadOr.push({ whatsappDigits: whatsapp });
+    if (ig) leadOr.push({ instagramUserId: ig });
+    if (leadOr.length > 0) {
+      const disabledLead = await this.prisma.crmLead.findFirst({
+        where: { crmExcludedAt: null, botEnabled: false, OR: leadOr },
+        select: { id: true },
+      });
+      if (disabledLead) return true;
+    }
+
+    if (whatsapp.length >= 8) {
+      const joanaOff = await this.prisma.rafaCallBooking.findFirst({
+        where: {
+          crmExcludedAt: null,
+          crmJoanaEnabled: false,
+          OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
+        },
+        select: { id: true },
+      });
+      if (joanaOff) return true;
+    }
+
+    return false;
+  }
+
   private async tryResumePausedConversation(
     existing: {
       id: string;
@@ -1031,6 +1093,10 @@ export class ChatbotRouterService {
     if (!existing.chatbotId) return true;
 
     if (peer && sharedOutboundGuard.isCircuitOpen(peer)) {
+      return false;
+    }
+
+    if (await this.shouldKeepPausedForManual(existing)) {
       return false;
     }
 
