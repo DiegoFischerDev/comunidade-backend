@@ -427,16 +427,21 @@ export class ChatbotRouterService {
     });
 
     const dueBefore = new Date(Date.now() - chatbotDebounceMs());
+    // Só conversas com texto no buffer (debounce cumprido) ou resposta por enviar.
+    // Sem isto, o take 20 fica nas conversas antigas já respondidas.
     const due = await this.prisma.joanaConversation.findMany({
       where: {
         processing: false,
         OR: [
           { pendingOutbound: { not: null } },
-          { lastInboundAt: { lte: dueBefore } },
+          {
+            lastInboundAt: { lte: dueBefore },
+            NOT: { buffer: { equals: [] as Prisma.InputJsonValue } },
+          },
         ],
       },
       take: 20,
-      orderBy: { lastInboundAt: 'asc' },
+      orderBy: { lastInboundAt: { sort: 'asc', nulls: 'last' } },
       include: { chatbot: true },
     });
 

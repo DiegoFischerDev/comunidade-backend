@@ -343,18 +343,22 @@ export class JoanaService {
     });
 
     const dueBefore = new Date(Date.now() - joanaDebounceMs());
-    // Só conversas já atribuídas à Joana. Menu / Bruna / Gabi / etc. são do router.
+    // Só conversas já atribuídas à Joana, e só se houver texto à espera ou resposta por enviar.
+    // Menu / Bruna / Gabi / etc. são do router.
     const due = await this.prisma.joanaConversation.findMany({
       where: {
         processing: false,
         chatbot: { engineKind: ChatbotEngineKind.JOANA_QUALIFICATION },
         OR: [
           { pendingOutbound: { not: null } },
-          { lastInboundAt: { lte: dueBefore } },
+          {
+            lastInboundAt: { lte: dueBefore },
+            NOT: { buffer: { equals: [] as Prisma.InputJsonValue } },
+          },
         ],
       },
       take: 20,
-      orderBy: { lastInboundAt: 'asc' },
+      orderBy: { lastInboundAt: { sort: 'asc', nulls: 'last' } },
     });
 
     for (const row of due) {

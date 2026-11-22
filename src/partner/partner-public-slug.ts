@@ -12,6 +12,7 @@ export const RESERVED_PARTNER_PUBLIC_SLUGS = new Set(
     'casas',
     'partner',
     'privacidade',
+    'termos',
     'whatsapp',
     'link',
     'lead-redirect',
