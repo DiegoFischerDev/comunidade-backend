@@ -32,7 +32,7 @@ import {
   normalizeCrmPropertyTypologies,
   resolveStatusAfterImmigrationUpdate,
   sameCrmPropertyTypologies,
-  sortCrmItemsByImmigrationDate,
+  sortCrmItemsByRecentUpdate,
 } from './rafacall-crm.constants';
 import { sanitizeCrmDocumentFileName } from '../common/crm-document-file';
 
@@ -158,7 +158,7 @@ export class RafacallCrmService {
     const columns = RAFA_CALL_CRM_STATUS_ORDER.map((status) => ({
       status,
       label: RAFA_CALL_CRM_STATUS_LABELS[status],
-      items: sortCrmItemsByImmigrationDate(
+      items: sortCrmItemsByRecentUpdate(
         uniqueItems.filter((item) => item.crmStatus === status),
       ).map((item) => {
         const digits = this.extractWhatsappDigits(item);
@@ -430,6 +430,7 @@ export class RafacallCrmService {
 
   async updateCrm(params: {
     bookingId: string;
+    userName?: string;
     crmStatus?: RafaCallCrmStatus;
     crmComments?: string;
     crmExpectedImmigrationAt?: string | null;
@@ -464,6 +465,21 @@ export class RafacallCrmService {
     }
     const crmSource = this.pickCrmSource(siblings);
     const displayBooking = this.pickDisplayBooking(siblings);
+    const currentDisplayName = (
+      displayBooking.user?.name ??
+      displayBooking.guestName ??
+      ''
+    ).trim();
+    const requestedName =
+      params.userName === undefined ? null : params.userName.trim();
+    if (
+      requestedName !== null &&
+      (requestedName.length < 2 || requestedName.length > 80)
+    ) {
+      throw new BadRequestException('Indica o nome do cliente.');
+    }
+    const nameChanged =
+      requestedName !== null && requestedName !== currentDisplayName;
 
     const hasStatusChange =
       params.crmStatus !== undefined && params.crmStatus !== crmSource.crmStatus;
@@ -477,6 +493,7 @@ export class RafacallCrmService {
       params.crmHasVisa !== undefined ||
       params.crmDesiredRent !== undefined;
     const hasJoanaUpdate = params.crmJoanaEnabled !== undefined;
+    const hasNameUpdate = params.userName !== undefined;
 
     const normalizedComments = hasCommentsUpdate
       ? params.crmComments?.trim() || null
@@ -558,7 +575,8 @@ export class RafacallCrmService {
       hasImmigrationDateUpdate ||
       hasVideoCallUpdate ||
       hasPreferencesUpdate ||
-      hasJoanaUpdate;
+      hasJoanaUpdate ||
+      hasNameUpdate;
 
     if (!hasAnyFieldUpdate) {
       throw new BadRequestException('Indique um novo estado, comentários ou data.');
@@ -570,7 +588,8 @@ export class RafacallCrmService {
       immigrationChanged ||
       videoCallChanged ||
       preferencesChanged ||
-      joanaRequestedChange;
+      joanaRequestedChange ||
+      nameChanged;
 
     if (!hasEffectiveChange) {
       throw new BadRequestException('Nenhuma alteração para guardar.');
@@ -657,13 +676,53 @@ export class RafacallCrmService {
       }
     }
 
-    const merged = this.mergeDisplayAndCrm(nextDisplayBooking, {
+    let merged = this.mergeDisplayAndCrm(nextDisplayBooking, {
       ...crmSource,
       ...crmPatch,
       updatedAt: new Date(),
     });
 
+    if (nameChanged && requestedName) {
+      await this.applyCrmLeadName(siblings, requestedName);
+      merged = {
+        ...merged,
+        guestName: requestedName,
+        user: merged.user ? { ...merged.user, name: requestedName } : null,
+      };
+    }
+
     return this.serializeCrmItemWithPayments(merged);
+  }
+
+  private async applyCrmLeadName(siblings: BookingCrmRow[], name: string) {
+    const userIds = [
+      ...new Set(
+        siblings
+          .map((item) => item.user?.id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const bookingIds = siblings.map((item) => item.id);
+
+    if (userIds.length > 0) {
+      await this.prisma.user.updateMany({
+        where: { id: { in: userIds } },
+        data: { name },
+      });
+    }
+    if (bookingIds.length === 0) return;
+
+    await this.prisma.rafaCallBooking.updateMany({
+      where: { id: { in: bookingIds } },
+      data: { guestName: name },
+    });
+    await this.prisma.crmLead.updateMany({
+      where: {
+        rafaCallBookingId: { in: bookingIds },
+        crmExcludedAt: null,
+      },
+      data: { guestName: name },
+    });
   }
 
   async removeFromCrm(params: { bookingId: string }) {
@@ -1184,6 +1243,7 @@ export class RafacallCrmService {
       RafaCallCrmStatus.IMIGRACAO_NULL,
       RafaCallCrmStatus.IMIGRACAO_LONGE,
       RafaCallCrmStatus.IMIGRACAO_PERTO,
+      RafaCallCrmStatus.POTENCIAL_CLIENTE,
       RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
     ];
 
@@ -1474,6 +1534,7 @@ export class RafacallCrmService {
       RafaCallCrmStatus.IMIGRACAO_NULL,
       RafaCallCrmStatus.IMIGRACAO_LONGE,
       RafaCallCrmStatus.IMIGRACAO_PERTO,
+      RafaCallCrmStatus.POTENCIAL_CLIENTE,
       RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
     ];
 
@@ -1484,6 +1545,7 @@ export class RafacallCrmService {
         params.crmSource.crmStatus === RafaCallCrmStatus.IMIGRACAO_NULL ||
         params.crmSource.crmStatus === RafaCallCrmStatus.IMIGRACAO_LONGE ||
         params.crmSource.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO ||
+        params.crmSource.crmStatus === RafaCallCrmStatus.POTENCIAL_CLIENTE ||
         params.crmSource.crmStatus === RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA
       ) {
         nextStatus = RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA;

@@ -11,11 +11,18 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
   ValidateIf,
 } from 'class-validator';
 import { normalizeCrmPropertyTypologies } from '../rafacall-crm.constants';
 
 export class UpdateRafacallCrmDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  userName?: string;
+
   @IsOptional()
   @IsEnum(RafaCallCrmStatus)
   crmStatus?: RafaCallCrmStatus;

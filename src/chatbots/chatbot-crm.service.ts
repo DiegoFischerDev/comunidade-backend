@@ -70,8 +70,9 @@ export class ChatbotCrmService {
         sortOrder: column.sortOrder,
         tone: column.tone,
         pausesBot: column.pausesBot,
-        items: leads
+        items: [...leads]
           .filter((lead) => lead.columnId === column.id)
+          .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
           .map((lead) =>
             this.serializeLead(
               lead,

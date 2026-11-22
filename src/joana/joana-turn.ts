@@ -12,22 +12,15 @@ export type JoanaTypology = (typeof JOANA_TYPOLOGIES)[number];
 
 export type JoanaField = 'name' | 'immigration' | 'visa' | 'cities' | 'typology' | 'rent' | 'pet';
 
-/**
- * Link `/agendar` só em «perto» + visto, e nunca se a chamada já está marcada
- * ou se o link já foi enviado nesta conversa.
- */
-export function shouldOfferSchedulingLink(input: {
-  crmStatus: string;
-  hasVisa: boolean | null;
-  hasScheduledVideoCall: boolean;
-  linkAlreadyDelivered: boolean;
-  schedulingLinkSent: boolean;
-}): boolean {
-  if (input.crmStatus !== 'IMIGRACAO_PERTO') return false;
-  if (input.hasVisa !== true) return false;
-  if (input.hasScheduledVideoCall) return false;
-  if (input.linkAlreadyDelivered || input.schedulingLinkSent) return false;
-  return true;
+/** Tira links de /agendar. O agendamento da Joana é manual. */
+export function stripSchedulingLinks(text: string): string {
+  return text
+    .replace(/https?:\/\/\S*\/agendar\S*/gi, '')
+    .replace(/(?:^|\s)\/agendar\S*/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 export type JoanaProfile = {

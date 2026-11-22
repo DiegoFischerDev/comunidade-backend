@@ -155,6 +155,7 @@ export class AdminRafacallController {
   ) {
     return this.crm.updateCrm({
       bookingId: bookingId.trim(),
+      userName: dto.userName,
       crmStatus: dto.crmStatus,
       crmComments: dto.crmComments,
       crmExpectedImmigrationAt: dto.crmExpectedImmigrationAt,

@@ -16,7 +16,7 @@ import {
   isPlaceholderLeadName,
   parseDesiredRent,
   parseJoanaTypologies,
-  shouldOfferSchedulingLink,
+  stripSchedulingLinks,
   withInferredConfirmation,
   withInferredName,
   type JoanaProfile,
@@ -639,39 +639,13 @@ describe('ensureJoanaIntro', () => {
   });
 });
 
-describe('shouldOfferSchedulingLink', () => {
-  const base = {
-    crmStatus: 'IMIGRACAO_PERTO',
-    hasVisa: true as boolean | null,
-    hasScheduledVideoCall: false,
-    linkAlreadyDelivered: false,
-    schedulingLinkSent: false,
-  };
-
-  it('oferece o link em perto com visto e sem chamada marcada', () => {
-    expect(shouldOfferSchedulingLink(base)).toBe(true);
-  });
-
-  it('não oferece se a videochamada já está agendada', () => {
-    expect(
-      shouldOfferSchedulingLink({ ...base, hasScheduledVideoCall: true }),
-    ).toBe(false);
-  });
-
-  it('não oferece se o link já foi enviado nesta conversa', () => {
-    expect(shouldOfferSchedulingLink({ ...base, schedulingLinkSent: true })).toBe(
-      false,
+describe('stripSchedulingLinks', () => {
+  it('remove o link de agendar e mantém o resto da frase e outros links', () => {
+    const text = stripSchedulingLinks(
+      'Posso te passar o link: https://movecasa.pt/agendar?whatsapp=351900000000\n\nFala com a Clara: https://movecasa.pt/whatsapp?t=clara-ac-viagens',
     );
-    expect(
-      shouldOfferSchedulingLink({ ...base, linkAlreadyDelivered: true }),
-    ).toBe(false);
-  });
-
-  it('não oferece fora de perto ou sem visto', () => {
-    expect(
-      shouldOfferSchedulingLink({ ...base, crmStatus: 'VIDEO_CHAMADA_AGENDADA' }),
-    ).toBe(false);
-    expect(shouldOfferSchedulingLink({ ...base, hasVisa: false })).toBe(false);
-    expect(shouldOfferSchedulingLink({ ...base, hasVisa: null })).toBe(false);
+    expect(text).not.toContain('/agendar');
+    expect(text).toContain('https://movecasa.pt/whatsapp?t=clara-ac-viagens');
+    expect(text).toContain('Posso te passar o link:');
   });
 });

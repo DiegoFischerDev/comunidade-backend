@@ -10,7 +10,6 @@ import {
   sharedOutboundGuard,
   whatsappPeer,
 } from '../channels/outbound-guard';
-import { getFrontendBaseUrl } from '../config/frontend-base-url';
 import { PrismaService } from '../prisma/prisma.service';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
@@ -38,7 +37,7 @@ import {
   formatImmigrationLabel,
   isPlaceholderLeadName,
   missingFieldQuestion,
-  shouldOfferSchedulingLink,
+  stripSchedulingLinks,
   withInferredConfirmation,
   withInferredName,
   type JoanaCrmPatch,
@@ -578,18 +577,11 @@ export class JoanaService {
 
       let farGuidanceSent = row.farGuidanceSent;
       let schedulingLinkSent = row.schedulingLinkSent;
-      let offerSchedulingLink = false;
       const append = [...decision.append];
       let saved =
         decision.createLead || Boolean(decision.nameToSave || decision.crmPatch);
 
       try {
-        const linkAlreadyDelivered = history.some(
-          (item) =>
-            item.role === 'assistant' &&
-            (item.text.includes('/agendar?') || item.text.includes('/agendar')),
-        );
-
         const persisted = await this.persistDecision({
           whatsapp: row.whatsappDigits,
           instagramUserId: row.instagramUserId,
@@ -607,22 +599,9 @@ export class JoanaService {
               schedulingLinkSent = true;
               farGuidanceSent = false;
             } else {
-              const guidance = this.columnGuidance(
-                next.crmStatus,
-                row.whatsappDigits,
-                next.name,
-                next.bookingId,
-              );
+              const guidance = this.columnGuidance(next.crmStatus);
               if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_PERTO) {
                 farGuidanceSent = false;
-                offerSchedulingLink = shouldOfferSchedulingLink({
-                  crmStatus: next.crmStatus,
-                  hasVisa: next.hasVisa,
-                  hasScheduledVideoCall: next.hasScheduledVideoCall,
-                  linkAlreadyDelivered,
-                  schedulingLinkSent,
-                });
-                if (offerSchedulingLink && guidance) append.push(guidance);
               } else if (next.crmStatus === RafaCallCrmStatus.IMIGRACAO_LONGE) {
                 schedulingLinkSent = false;
                 if (next.hasVisa !== false && !farGuidanceSent && guidance) {
@@ -645,9 +624,8 @@ export class JoanaService {
         saved = false;
       }
 
-      const composed = composeReply(reply, append, saved);
+      const composed = stripSchedulingLinks(composeReply(reply, append, saved));
       if (composed.includes('/agendar')) schedulingLinkSent = true;
-      else if (offerSchedulingLink) schedulingLinkSent = false;
       const sent = await this.finishTurn({
         id,
         bufferIds: buffer.map((item) => item.id),
@@ -678,33 +656,9 @@ export class JoanaService {
     }
   }
 
-  private columnGuidance(
-    status: RafaCallCrmStatus,
-    whatsapp: string | null,
-    name: string | null,
-    bookingId: string | null,
-  ): string | null {
-    if (status === RafaCallCrmStatus.IMIGRACAO_PERTO) {
-      let link = '';
-      try {
-        const base = getFrontendBaseUrl().replace(/\/$/, '');
-        const params = new URLSearchParams();
-        // Âncora do cartão CRM — evita duplicar ao agendar (IG sem WA na URL).
-        if (bookingId?.trim()) params.set('booking', bookingId.trim());
-        if (whatsapp?.trim()) params.set('whatsapp', whatsapp.trim());
-        if (name && !isPlaceholderLeadName(name)) params.set('name', name);
-        const qs = params.toString();
-        link = qs ? `${base}/agendar?${qs}` : `${base}/agendar`;
-      } catch (err: unknown) {
-        this.logger.warn(
-          `Joana sem link de agenda: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return null;
-      }
-      return `Posso te passar o link para agendar a videochamada com a Rafa. São 20 a 30 minutos, então vale ter as dúvidas anotadas: ${link}`;
-    }
+  private columnGuidance(status: RafaCallCrmStatus): string | null {
     if (status === RafaCallCrmStatus.IMIGRACAO_LONGE) {
-      return 'Como sua viagem ainda está a dois meses ou mais, a Rafa ainda não consegue te acompanhar na busca do imóvel agora. Quando faltarem menos de dois meses, é a hora certa de agendar a videochamada e começar a procura. Até lá, prepare o passaporte, o visto e compre a passagem. Quando estiver mais perto, me chama de novo que eu te mando o link para agendar.';
+      return 'Como sua viagem ainda está a dois meses ou mais, a Rafa ainda não consegue te acompanhar na busca do imóvel agora. Quando faltarem menos de dois meses, é a hora de começar a procura. Até lá, prepare o passaporte, o visto e compre a passagem. Quando estiver mais perto, me chama de novo.';
     }
     return null;
   }
@@ -1281,7 +1235,7 @@ function describeProfile(
     `Videochamada: ${
       opts?.hasScheduledVideoCall
         ? 'já agendada — não ofereças nem peças para agendar de novo'
-        : 'ainda não agendada'
+        : 'ainda não agendada — não envies link nem ofereças para marcar; a equipa trata do agendamento'
     }`,
     nextQuestion
       ? `Próximo a perguntar (só isto; não repitas dados já preenchidos): ${nextQuestion}`

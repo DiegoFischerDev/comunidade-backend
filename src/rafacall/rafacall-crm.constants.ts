@@ -50,6 +50,7 @@ export const RAFA_CALL_CRM_STATUS_ORDER: RafaCallCrmStatus[] = [
   RafaCallCrmStatus.IMIGRACAO_NULL,
   RafaCallCrmStatus.IMIGRACAO_LONGE,
   RafaCallCrmStatus.IMIGRACAO_PERTO,
+  RafaCallCrmStatus.POTENCIAL_CLIENTE,
   RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
   RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA,
   RafaCallCrmStatus.AGUARDANDO_ASSINATURA,
@@ -60,6 +61,7 @@ export const RAFA_CALL_CRM_STATUS_LABELS: Record<RafaCallCrmStatus, string> = {
   [RafaCallCrmStatus.IMIGRACAO_NULL]: 'Sem data para imigar',
   [RafaCallCrmStatus.IMIGRACAO_LONGE]: 'Data para imigrar longe',
   [RafaCallCrmStatus.IMIGRACAO_PERTO]: 'Data para imigrar perto',
+  [RafaCallCrmStatus.POTENCIAL_CLIENTE]: 'Cliente ideal',
   [RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA]: 'Vídeo chamada agendada',
   [RafaCallCrmStatus.REALIZOU_VIDEO_CHAMADA]: 'Realizou vídeo chamada',
   [RafaCallCrmStatus.AGUARDANDO_ASSINATURA]: 'Contrato enviado',
@@ -296,42 +298,16 @@ export function resolveStatusAfterImmigrationUpdate(params: {
   );
 }
 
-export function compareCrmImmigrationEntries(
-  left: {
-    crmExpectedImmigrationAt: Date | null;
-    crmImmigrationImmediate?: boolean;
-  },
-  right: {
-    crmExpectedImmigrationAt: Date | null;
-    crmImmigrationImmediate?: boolean;
-  },
-): number {
-  const leftImmediate = left.crmImmigrationImmediate ?? false;
-  const rightImmediate = right.crmImmigrationImmediate ?? false;
-  if (leftImmediate && rightImmediate) return 0;
-  if (leftImmediate) return -1;
-  if (rightImmediate) return 1;
-  return compareCrmImmigrationDates(
-    left.crmExpectedImmigrationAt,
-    right.crmExpectedImmigrationAt,
-  );
-}
-
-export function compareCrmImmigrationDates(
-  left: Date | null | undefined,
-  right: Date | null | undefined,
-): number {
-  if (!left && !right) return 0;
-  if (!left) return 1;
-  if (!right) return -1;
-  return left.getTime() - right.getTime();
-}
-
-export function sortCrmItemsByImmigrationDate<
-  T extends {
-    crmExpectedImmigrationAt: Date | null;
-    crmImmigrationImmediate?: boolean;
-  },
->(items: T[]): T[] {
-  return [...items].sort((left, right) => compareCrmImmigrationEntries(left, right));
+/** Mais recente primeiro. Empate mantém a ordem atual. */
+export function sortCrmItemsByRecentUpdate<T extends { updatedAt: Date }>(
+  items: T[],
+): T[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const delta = right.item.updatedAt.getTime() - left.item.updatedAt.getTime();
+      if (delta !== 0) return delta;
+      return left.index - right.index;
+    })
+    .map(({ item }) => item);
 }
