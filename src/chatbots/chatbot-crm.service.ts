@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, RafaCallCrmPropertyTypology } from '@prisma/client';
 import { ConversationOutboundService } from '../channels/conversation-outbound.service';
+import { CrmChannelChatService } from '../channels/crm-channel-chat.service';
 import { InstagramService } from '../instagram/instagram.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
@@ -48,6 +49,7 @@ export class ChatbotCrmService {
     private readonly chatbots: ChatbotService,
     private readonly rafacallCrm: RafacallCrmService,
     private readonly outbound: ConversationOutboundService,
+    private readonly channelChat: CrmChannelChatService,
     @Inject(forwardRef(() => InstagramService))
     private readonly instagram: InstagramService,
   ) {}
@@ -67,8 +69,16 @@ export class ChatbotCrmService {
     const whatsappList = leads
       .map((lead) => lead.whatsappDigits)
       .filter((digits): digits is string => Boolean(digits));
-    const documentsByWhatsapp =
-      await this.rafacallCrm.listDocumentsByWhatsapp(whatsappList);
+    const [documentsByWhatsapp, unansweredByLead] = await Promise.all([
+      this.rafacallCrm.listDocumentsByWhatsapp(whatsappList),
+      this.channelChat.unansweredCountsForIdentities(
+        leads.map((lead) => ({
+          key: lead.id,
+          whatsappDigits: lead.whatsappDigits,
+          instagramUserId: lead.instagramUserId,
+        })),
+      ),
+    ]);
 
     return {
       chatbot: {
@@ -93,6 +103,7 @@ export class ChatbotCrmService {
               lead.whatsappDigits
                 ? documentsByWhatsapp.get(lead.whatsappDigits) ?? []
                 : [],
+              unansweredByLead.get(lead.id),
             ),
           ),
       })),
@@ -1150,8 +1161,16 @@ export class ChatbotCrmService {
     },
     columnSlug: string,
   ) {
+    const unansweredByLead = await this.channelChat.unansweredCountsForIdentities([
+      {
+        key: lead.id,
+        whatsappDigits: lead.whatsappDigits,
+        instagramUserId: lead.instagramUserId,
+      },
+    ]);
+    const unanswered = unansweredByLead.get(lead.id);
     if (!lead.whatsappDigits) {
-      return this.serializeLead(lead, columnSlug, []);
+      return this.serializeLead(lead, columnSlug, [], unanswered);
     }
     const docs = await this.rafacallCrm.listDocumentsByWhatsapp([
       lead.whatsappDigits,
@@ -1160,6 +1179,7 @@ export class ChatbotCrmService {
       lead,
       columnSlug,
       docs.get(lead.whatsappDigits) ?? [],
+      unanswered,
     );
   }
 
@@ -1193,6 +1213,7 @@ export class ChatbotCrmService {
       sizeBytes: number;
       createdAt: string;
     }> = [],
+    unanswered?: { whatsapp: number; instagram: number } | null,
   ) {
     return {
       id: lead.id,
@@ -1213,6 +1234,8 @@ export class ChatbotCrmService {
       crmRequestSummary: lead.crmRequestSummary,
       crmProfileImageUrl: lead.crmProfileImageUrl,
       documents,
+      unansweredWhatsapp: unanswered?.whatsapp ?? 0,
+      unansweredInstagram: unanswered?.instagram ?? 0,
       createdAt: lead.createdAt.toISOString(),
       updatedAt: lead.updatedAt.toISOString(),
     };

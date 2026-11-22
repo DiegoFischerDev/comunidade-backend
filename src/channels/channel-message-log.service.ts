@@ -122,6 +122,43 @@ export class ChannelMessageLogService {
     }
   }
 
+  /**
+   * Mensagens consecutivas do lead no fim do fio, por conversa+canal —
+   * o que ainda aguarda resposta de BOT/ADMIN (como o badge do WhatsApp).
+   */
+  async unansweredLeadCounts(
+    conversationIds: string[],
+  ): Promise<Map<string, number>> {
+    const ids = [...new Set(conversationIds.filter(Boolean))];
+    const counts = new Map<string, number>();
+    if (ids.length === 0) return counts;
+
+    const rows = await this.prisma.channelMessage.findMany({
+      where: {
+        conversationId: { in: ids },
+        channel: { in: [ChatbotChannel.WHATSAPP, ChatbotChannel.INSTAGRAM] },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        conversationId: true,
+        channel: true,
+        author: true,
+      },
+    });
+
+    const sealed = new Set<string>();
+    for (const row of rows) {
+      const key = `${row.conversationId}:${row.channel}`;
+      if (sealed.has(key)) continue;
+      if (row.author === ChannelMessageAuthor.LEAD) {
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        continue;
+      }
+      sealed.add(key);
+    }
+    return counts;
+  }
+
   private async touchInbound(conversationId: string): Promise<void> {
     await this.prisma.joanaConversation.updateMany({
       where: { id: conversationId },

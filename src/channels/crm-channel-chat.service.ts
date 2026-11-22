@@ -142,6 +142,103 @@ export class CrmChannelChatService {
     });
   }
 
+  /**
+   * Contagens de mensagens consecutivas do lead a aguardar resposta,
+   * por chave de identidade (bookingId / leadId) e canal.
+   */
+  async unansweredCountsForIdentities(
+    identities: Array<{
+      key: string;
+      whatsappDigits?: string | null;
+      instagramUserId?: string | null;
+    }>,
+  ): Promise<Map<string, { whatsapp: number; instagram: number }>> {
+    const result = new Map<string, { whatsapp: number; instagram: number }>();
+    for (const identity of identities) {
+      result.set(identity.key, { whatsapp: 0, instagram: 0 });
+    }
+    if (identities.length === 0) return result;
+
+    const whatsapps = [
+      ...new Set(
+        identities
+          .map((row) => (row.whatsappDigits || '').replace(/\D/g, ''))
+          .filter((digits) => digits.length >= 8),
+      ),
+    ];
+    const instagramIds = [
+      ...new Set(
+        identities
+          .map((row) => (row.instagramUserId || '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (whatsapps.length === 0 && instagramIds.length === 0) return result;
+
+    const or: Prisma.JoanaConversationWhereInput[] = [];
+    if (whatsapps.length > 0) or.push({ whatsappDigits: { in: whatsapps } });
+    if (instagramIds.length > 0) or.push({ instagramUserId: { in: instagramIds } });
+
+    const conversations = await this.prisma.joanaConversation.findMany({
+      where: { OR: or },
+      select: {
+        id: true,
+        whatsappDigits: true,
+        instagramUserId: true,
+        activeChannel: true,
+        updatedAt: true,
+      },
+    });
+    if (conversations.length === 0) return result;
+
+    const byWhatsapp = new Map<string, typeof conversations>();
+    const byInstagram = new Map<string, (typeof conversations)[number]>();
+    for (const row of conversations) {
+      const digits = (row.whatsappDigits || '').replace(/\D/g, '');
+      if (digits.length >= 8) {
+        const list = byWhatsapp.get(digits) ?? [];
+        list.push(row);
+        byWhatsapp.set(digits, list);
+      }
+      const ig = row.instagramUserId?.trim();
+      if (ig && !byInstagram.has(ig)) byInstagram.set(ig, row);
+    }
+
+    const conversationIds = new Set<string>();
+    const binding = new Map<
+      string,
+      { whatsappConversationId: string | null; instagramConversationId: string | null }
+    >();
+    for (const identity of identities) {
+      const digits = (identity.whatsappDigits || '').replace(/\D/g, '');
+      const ig = (identity.instagramUserId || '').trim();
+      const waConv =
+        digits.length >= 8 ? pickWhatsappConversation(byWhatsapp.get(digits) ?? []) : null;
+      const igConv = ig ? byInstagram.get(ig) ?? null : null;
+      if (waConv) conversationIds.add(waConv.id);
+      if (igConv) conversationIds.add(igConv.id);
+      binding.set(identity.key, {
+        whatsappConversationId: waConv?.id ?? null,
+        instagramConversationId: igConv?.id ?? null,
+      });
+    }
+
+    const counts = await this.messages.unansweredLeadCounts([...conversationIds]);
+    for (const identity of identities) {
+      const bound = binding.get(identity.key);
+      if (!bound) continue;
+      result.set(identity.key, {
+        whatsapp: bound.whatsappConversationId
+          ? counts.get(`${bound.whatsappConversationId}:${ChatbotChannel.WHATSAPP}`) ?? 0
+          : 0,
+        instagram: bound.instagramConversationId
+          ? counts.get(`${bound.instagramConversationId}:${ChatbotChannel.INSTAGRAM}`) ?? 0
+          : 0,
+      });
+    }
+    return result;
+  }
+
   private parseChannel(raw: string): ChatbotChannel {
     const value = (raw || '').trim().toUpperCase();
     if (value === ChatbotChannel.WHATSAPP || value === ChatbotChannel.INSTAGRAM || value === ChatbotChannel.FACEBOOK) {
@@ -554,6 +651,24 @@ export class CrmChannelChatService {
       });
     }
   }
+}
+
+function pickWhatsappConversation(
+  rows: Array<{
+    id: string;
+    activeChannel: ChatbotChannel;
+    instagramUserId: string | null;
+    updatedAt: Date;
+  }>,
+): { id: string } | null {
+  if (rows.length === 0) return null;
+  const byWhatsappChannel = rows.find(
+    (row) => row.activeChannel === ChatbotChannel.WHATSAPP,
+  );
+  if (byWhatsappChannel) return byWhatsappChannel;
+  const withoutIg = rows.find((row) => !row.instagramUserId);
+  if (withoutIg) return withoutIg;
+  return [...rows].sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0] ?? null;
 }
 
 function humanizeSendError(err: unknown): string {

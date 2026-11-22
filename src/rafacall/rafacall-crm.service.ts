@@ -169,6 +169,18 @@ export class RafacallCrmService {
         this.loadInstagramLinksByBookingIds(uniqueItems.map((item) => item.id)),
       ]);
 
+    const unansweredByBooking = await this.channelChat.unansweredCountsForIdentities(
+      uniqueItems.map((item) => {
+        const digits = this.extractWhatsappDigits(item);
+        const ig = igByBooking.get(item.id);
+        return {
+          key: item.id,
+          whatsappDigits: digits.length >= 8 ? digits : null,
+          instagramUserId: ig?.instagramUserId ?? null,
+        };
+      }),
+    );
+
     const columns = RAFA_CALL_CRM_STATUS_ORDER.map((status) => ({
       status,
       label: RAFA_CALL_CRM_STATUS_LABELS[status],
@@ -177,11 +189,13 @@ export class RafacallCrmService {
       ).map((item) => {
         const digits = this.extractWhatsappDigits(item);
         const ig = igByBooking.get(item.id);
+        const unanswered = unansweredByBooking.get(item.id);
         return this.serializeCrmItem(
           item,
           digits ? paymentsByWhatsapp.get(digits) ?? [] : [],
           digits ? documentsByWhatsapp.get(digits) ?? [] : [],
           ig,
+          unanswered,
         );
       }),
     }));
@@ -2453,11 +2467,20 @@ export class RafacallCrmService {
       this.loadDocumentsByWhatsapp([whatsappDigits]),
       this.loadInstagramLinksByBookingIds([item.id]),
     ]);
+    const ig = igByBooking.get(item.id);
+    const unansweredByBooking = await this.channelChat.unansweredCountsForIdentities([
+      {
+        key: item.id,
+        whatsappDigits: whatsappDigits.length >= 8 ? whatsappDigits : null,
+        instagramUserId: ig?.instagramUserId ?? null,
+      },
+    ]);
     return this.serializeCrmItem(
       item,
       paymentsMap.get(whatsappDigits) ?? [],
       documentsMap.get(whatsappDigits) ?? [],
-      igByBooking.get(item.id),
+      ig,
+      unansweredByBooking.get(item.id),
     );
   }
 
@@ -2466,7 +2489,12 @@ export class RafacallCrmService {
   ): Promise<
     Map<
       string,
-      { instagramUsername: string | null; instagramProfileUrl: string | null; canMessageInstagram: boolean }
+      {
+        instagramUsername: string | null;
+        instagramProfileUrl: string | null;
+        canMessageInstagram: boolean;
+        instagramUserId: string | null;
+      }
     >
   > {
     const ids = [...new Set(bookingIds.filter(Boolean))];
@@ -2476,6 +2504,7 @@ export class RafacallCrmService {
         instagramUsername: string | null;
         instagramProfileUrl: string | null;
         canMessageInstagram: boolean;
+        instagramUserId: string | null;
       }
     >();
     if (ids.length === 0) return map;
@@ -2494,12 +2523,14 @@ export class RafacallCrmService {
       const bookingId = lead.rafaCallBookingId;
       if (!bookingId || map.has(bookingId)) continue;
       const username = normalizeIgUsername(lead.instagramHandle);
+      const instagramUserId = lead.instagramUserId?.trim() || null;
       map.set(bookingId, {
         instagramUsername: username ? `@${username}` : null,
         instagramProfileUrl: username
           ? `https://instagram.com/${username}`
           : null,
-        canMessageInstagram: Boolean(lead.instagramUserId?.trim()),
+        canMessageInstagram: Boolean(instagramUserId),
+        instagramUserId,
       });
     }
     return map;
@@ -2738,7 +2769,9 @@ export class RafacallCrmService {
       instagramUsername: string | null;
       instagramProfileUrl: string | null;
       canMessageInstagram?: boolean;
+      instagramUserId?: string | null;
     } | null,
+    unanswered?: { whatsapp: number; instagram: number } | null,
   ) {
     const whatsappDigits = this.extractWhatsappDigits(item);
     const hasVideoCall = this.hasDisplayableVideoCall(item);
@@ -2776,6 +2809,8 @@ export class RafacallCrmService {
       instagramUsername: ig?.instagramUsername ?? null,
       instagramProfileUrl: ig?.instagramProfileUrl ?? null,
       canMessageInstagram: ig?.canMessageInstagram === true,
+      unansweredWhatsapp: unanswered?.whatsapp ?? 0,
+      unansweredInstagram: unanswered?.instagram ?? 0,
       updatedAt: item.updatedAt.toISOString(),
     };
   }
