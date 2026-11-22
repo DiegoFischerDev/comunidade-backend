@@ -49,5 +49,11 @@ jobs:
             set -e
             cd /opt/comunidade-prod
             docker compose pull backend
+            docker compose up -d postgres
+            for i in $(seq 1 45); do
+              docker compose exec -T postgres pg_isready -U comunidade -q && break
+              sleep 1
+            done
+            # One-shot: Nest a correr + npx prisma no mesmo contentor → OOM (exit 137) em VPS pequenas.
+            docker compose run --rm --no-deps backend npx prisma migrate deploy
             docker compose up -d backend
-            docker compose exec -T backend npx prisma migrate deploy

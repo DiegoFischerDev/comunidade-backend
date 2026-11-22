@@ -1,7 +1,5 @@
--- O valor novo do enum não pode nascer dentro da transação da migration.
-COMMIT;
-ALTER TYPE "ChatbotChannel" ADD VALUE 'FACEBOOK';
-BEGIN;
+-- Prisma deteta ADD VALUE e corre esta migration fora de transação no Postgres.
+ALTER TYPE "ChatbotChannel" ADD VALUE IF NOT EXISTS 'FACEBOOK';
 
 CREATE TYPE "ChannelMessageDirection" AS ENUM ('INBOUND', 'OUTBOUND');
 CREATE TYPE "ChannelMessageAuthor" AS ENUM ('LEAD', 'BOT', 'ADMIN');

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import {
   ChannelMessageAuthor,
   ChannelMessageDirection,
@@ -51,6 +51,7 @@ export class ChatbotRouterService {
     private readonly openai: JoanaOpenAiService,
     private readonly generic: GenericContextEngine,
     private readonly messageLog: ChannelMessageLogService,
+    @Inject(forwardRef(() => InstagramService))
     private readonly instagram: InstagramService,
   ) {}
 

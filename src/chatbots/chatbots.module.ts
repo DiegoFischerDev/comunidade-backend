@@ -17,9 +17,9 @@ import { GenericContextEngine } from './generic-context.engine';
   imports: [
     PrismaModule,
     WhatsAppModule,
-    ChannelsModule,
+    forwardRef(() => ChannelsModule),
     JoanaModule,
-    RafacallModule,
+    forwardRef(() => RafacallModule),
     forwardRef(() => InstagramModule),
   ],
   controllers: [ChatbotsController, AdminChatbotCrmController],

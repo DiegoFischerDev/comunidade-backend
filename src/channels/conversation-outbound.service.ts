@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import {
   ChannelMessageAuthor,
   ChannelMessageDirection,
@@ -95,6 +95,7 @@ export class ConversationOutboundService {
 
   constructor(
     private readonly wa: WhatsAppService,
+    @Inject(forwardRef(() => InstagramService))
     private readonly instagram: InstagramService,
     private readonly prisma: PrismaService,
     private readonly messageLog: ChannelMessageLogService,
