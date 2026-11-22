@@ -1,5 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ChatbotChannel, Prisma } from '@prisma/client';
+import {
+  ChannelMessageAuthor,
+  ChannelMessageDirection,
+  ChannelMessageKind,
+  ChatbotChannel,
+  Prisma,
+} from '@prisma/client';
 import { InstagramService } from '../instagram/instagram.service';
 import {
   guessWelcomeImageMime,
@@ -11,6 +17,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { enrichWelcomeStepsChannelMedia } from '../uploads/channel-media.util';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { ChannelMessageLogService } from './channel-message-log.service';
 import {
   instagramPeer,
   sharedOutboundGuard,
@@ -28,6 +35,59 @@ export type ConversationOutboundRow = {
 const ASK_WHATSAPP_MESSAGE =
   'Para te atender melhor e guardar a tua ficha, envia o teu WhatsApp com o indicativo do país (só números). Ex.: 5511999999999';
 
+export const ATTENDANCE_CLOSED_MESSAGE = 'Seu atendimento foi encerrado 🤗';
+
+export type AttendanceCloseCandidate = ConversationOutboundRow & {
+  lastInboundAt?: Date | null;
+  updatedAt?: Date | null;
+};
+
+/**
+ * Canal do aviso de encerramento: a conversa com inbound mais recente.
+ * Sem histórico, WhatsApp se houver número; senão Instagram.
+ */
+export function pickAttendanceCloseTarget(
+  rows: AttendanceCloseCandidate[],
+  identity: { whatsappDigits: string | null; instagramUserId: string | null },
+): ConversationOutboundRow | null {
+  const ranked = [...rows].sort((left, right) => {
+    const leftInbound = left.lastInboundAt?.getTime() ?? 0;
+    const rightInbound = right.lastInboundAt?.getTime() ?? 0;
+    if (leftInbound !== rightInbound) return rightInbound - leftInbound;
+    return (right.updatedAt?.getTime() ?? 0) - (left.updatedAt?.getTime() ?? 0);
+  });
+
+  const row = ranked[0];
+  if (row) {
+    return {
+      whatsappDigits: row.whatsappDigits,
+      instagramUserId: row.instagramUserId,
+      activeChannel: row.activeChannel,
+      instance: row.instance ?? null,
+    };
+  }
+
+  if (identity.whatsappDigits) {
+    return {
+      whatsappDigits: identity.whatsappDigits,
+      instagramUserId: identity.instagramUserId,
+      activeChannel: ChatbotChannel.WHATSAPP,
+      instance: null,
+    };
+  }
+
+  if (identity.instagramUserId) {
+    return {
+      whatsappDigits: null,
+      instagramUserId: identity.instagramUserId,
+      activeChannel: ChatbotChannel.INSTAGRAM,
+      instance: null,
+    };
+  }
+
+  return null;
+}
+
 @Injectable()
 export class ConversationOutboundService {
   private readonly logger = new Logger(ConversationOutboundService.name);
@@ -37,10 +97,56 @@ export class ConversationOutboundService {
     private readonly wa: WhatsAppService,
     private readonly instagram: InstagramService,
     private readonly prisma: PrismaService,
+    private readonly messageLog: ChannelMessageLogService,
   ) {}
 
   askWhatsappMessage(): string {
     return ASK_WHATSAPP_MESSAGE;
+  }
+
+  /**
+   * Avisa o lead de que o atendimento fechou, no canal activo (WhatsApp ou Instagram).
+   * Falha de envio não propaga — a exclusão do CRM já ficou registada.
+   */
+  async notifyAttendanceClosed(identity: {
+    whatsappDigits?: string | null;
+    instagramUserId?: string | null;
+  }): Promise<void> {
+    const whatsapp = (identity.whatsappDigits || '').replace(/\D/g, '');
+    const whatsappDigits = whatsapp.length >= 8 ? whatsapp : null;
+    const instagramUserId = (identity.instagramUserId || '').trim() || null;
+    if (!whatsappDigits && !instagramUserId) return;
+
+    try {
+      const rows = await this.prisma.joanaConversation.findMany({
+        where: {
+          OR: [
+            ...(whatsappDigits ? [{ whatsappDigits }] : []),
+            ...(instagramUserId ? [{ instagramUserId }] : []),
+          ],
+        },
+        select: {
+          whatsappDigits: true,
+          instagramUserId: true,
+          activeChannel: true,
+          instance: true,
+          lastInboundAt: true,
+          updatedAt: true,
+        },
+      });
+      const target = pickAttendanceCloseTarget(rows, {
+        whatsappDigits,
+        instagramUserId,
+      });
+      if (!target) return;
+      await this.sendText(target, ATTENDANCE_CLOSED_MESSAGE);
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Falha ao avisar encerramento do atendimento: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   /**
@@ -50,7 +156,7 @@ export class ConversationOutboundService {
   async sendText(
     row: ConversationOutboundRow,
     text: string,
-    opts?: { requireDelivery?: boolean },
+    opts?: { requireDelivery?: boolean; skipMessageLog?: boolean },
   ): Promise<void> {
     const body = text.trim();
     if (!body) return;
@@ -82,6 +188,7 @@ export class ConversationOutboundService {
         throw err;
       }
       await this.afterSuccessfulSend(peer);
+      await this.logBotText(row, body, opts?.skipMessageLog);
       return;
     }
 
@@ -91,6 +198,7 @@ export class ConversationOutboundService {
       preferredInstance: row.instance || undefined,
       requireDelivery: opts?.requireDelivery,
     });
+    await this.logBotText(row, body, opts?.skipMessageLog);
     if (!beforeOpen && this.outboundGuard.isCircuitOpen(peer)) {
       this.logger.error(
         `Circuit-breaker anti-loop WA ${peer.digits}: pausando conversa.`,
@@ -301,6 +409,63 @@ export class ConversationOutboundService {
       `Circuit-breaker anti-loop ${peer.channel}: ${count} envios na janela — pausando conversa.`,
     );
     await this.pausePeerConversation(peer);
+  }
+
+  private async logBotText(
+    row: ConversationOutboundRow,
+    body: string,
+    skip?: boolean,
+  ): Promise<void> {
+    if (skip) return;
+    try {
+      const channel =
+        row.activeChannel === ChatbotChannel.INSTAGRAM && row.instagramUserId?.trim()
+          ? ChatbotChannel.INSTAGRAM
+          : ChatbotChannel.WHATSAPP;
+      const conversationId = await this.findLogConversationId(row, channel);
+      if (!conversationId) return;
+      await this.messageLog.record({
+        conversationId,
+        channel,
+        direction: ChannelMessageDirection.OUTBOUND,
+        author: ChannelMessageAuthor.BOT,
+        kind: ChannelMessageKind.TEXT,
+        body,
+      });
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Falha ao gravar outbound no histórico: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  private async findLogConversationId(
+    row: ConversationOutboundRow,
+    channel: ChatbotChannel,
+  ): Promise<string | null> {
+    if (channel === ChatbotChannel.INSTAGRAM && row.instagramUserId?.trim()) {
+      const found = await this.prisma.joanaConversation.findUnique({
+        where: { instagramUserId: row.instagramUserId.trim() },
+        select: { id: true },
+      });
+      return found?.id ?? null;
+    }
+    const whatsapp = (row.whatsappDigits || '').trim();
+    if (!whatsapp) return null;
+    const found =
+      (await this.prisma.joanaConversation.findFirst({
+        where: { whatsappDigits: whatsapp, activeChannel: ChatbotChannel.WHATSAPP },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
+      })) ??
+      (await this.prisma.joanaConversation.findFirst({
+        where: { whatsappDigits: whatsapp },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
+      }));
+    return found?.id ?? null;
   }
 
   private resolvePeer(row: ConversationOutboundRow): OutboundPeer | null {

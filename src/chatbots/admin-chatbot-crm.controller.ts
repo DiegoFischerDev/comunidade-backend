@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -13,6 +14,8 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { Role } from '@prisma/client';
 import { memoryStorage } from 'multer';
 import { Roles } from '../auth/roles.decorator';
+import { SendChannelMessageDto } from '../channels/dto/send-channel-message.dto';
+import { CrmChannelChatService } from '../channels/crm-channel-chat.service';
 import { CRM_CLIENT_DOCUMENT_MAX_BYTES } from '../rafacall/rafacall-crm.constants';
 import { ChatbotCrmService } from './chatbot-crm.service';
 import {
@@ -25,7 +28,16 @@ import {
 
 @Controller('admin/crm')
 export class AdminChatbotCrmController {
-  constructor(private readonly crm: ChatbotCrmService) {}
+  constructor(
+    private readonly crm: ChatbotCrmService,
+    private readonly chat: CrmChannelChatService,
+  ) {}
+
+  @Get('counts')
+  @Roles(Role.ADMIN)
+  pipelineCounts() {
+    return this.crm.pipelineCounts();
+  }
 
   @Get(':slug')
   @Roles(Role.ADMIN)
@@ -65,6 +77,33 @@ export class AdminChatbotCrmController {
   @Roles(Role.ADMIN)
   createLead(@Param('slug') slug: string, @Body() dto: CreateCrmLeadDto) {
     return this.crm.createLead(slug, dto);
+  }
+
+  @Get(':slug/leads/:leadId/messages')
+  @Roles(Role.ADMIN)
+  leadMessages(
+    @Param('slug') slug: string,
+    @Param('leadId') leadId: string,
+    @Query('channel') channel: string,
+    @Query('after') after?: string,
+  ) {
+    return this.chat.listForLead(slug, leadId, channel, after);
+  }
+
+  @Post(':slug/leads/:leadId/messages')
+  @Roles(Role.ADMIN)
+  sendLeadMessage(
+    @Param('slug') slug: string,
+    @Param('leadId') leadId: string,
+    @Body() dto: SendChannelMessageDto,
+  ) {
+    return this.chat.sendForLead(slug, leadId, dto);
+  }
+
+  @Post(':slug/leads/:leadId/summary')
+  @Roles(Role.ADMIN)
+  generateLeadSummary(@Param('slug') slug: string, @Param('leadId') leadId: string) {
+    return this.crm.generateRequestSummary(slug, leadId);
   }
 
   @Patch(':slug/leads/:leadId')

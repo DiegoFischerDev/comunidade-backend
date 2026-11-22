@@ -2,15 +2,25 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
 import { Prisma, RafaCallCrmPropertyTypology } from '@prisma/client';
+import { ConversationOutboundService } from '../channels/conversation-outbound.service';
 import { InstagramService } from '../instagram/instagram.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RafacallCrmService } from '../rafacall/rafacall-crm.service';
+import {
+  generateCrmRequestSummary,
+  normalizeCrmRequestSummary,
+} from '../crm/crm-request-summary';
 import { ChatbotService } from './chatbot.service';
-import { isChatbotSlug, type ChatbotSlug } from './chatbot.constants';
+import {
+  CHATBOT_SLUGS,
+  isChatbotSlug,
+  type ChatbotSlug,
+} from './chatbot.constants';
 import {
   normalizePreferredCities,
   parseDesiredHouseValue,
@@ -31,10 +41,13 @@ function waDigits(value: string): string {
 
 @Injectable()
 export class ChatbotCrmService {
+  private readonly logger = new Logger(ChatbotCrmService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly chatbots: ChatbotService,
     private readonly rafacallCrm: RafacallCrmService,
+    private readonly outbound: ConversationOutboundService,
     @Inject(forwardRef(() => InstagramService))
     private readonly instagram: InstagramService,
   ) {}
@@ -84,6 +97,32 @@ export class ChatbotCrmService {
           ),
       })),
     };
+  }
+
+  /** Totais visíveis em cada kanban. A Joana usa o quadro de bookings, não `CrmLead`. */
+  async pipelineCounts(): Promise<Record<ChatbotSlug, number>> {
+    const bots = await this.prisma.chatbot.findMany({
+      select: { id: true, slug: true },
+    });
+    const grouped = await this.prisma.crmLead.groupBy({
+      by: ['chatbotId'],
+      where: { crmExcludedAt: null },
+      _count: { _all: true },
+    });
+    const countByBotId = new Map(
+      grouped.map((row) => [row.chatbotId, row._count._all]),
+    );
+    const counts = Object.fromEntries(
+      CHATBOT_SLUGS.map((slug) => [slug, 0]),
+    ) as Record<ChatbotSlug, number>;
+
+    for (const bot of bots) {
+      if (!isChatbotSlug(bot.slug) || bot.slug === 'joana') continue;
+      counts[bot.slug] = countByBotId.get(bot.id) ?? 0;
+    }
+
+    counts.joana = await this.rafacallCrm.countVisibleCrmClients();
+    return counts;
   }
 
   async listColumns(slug: string) {
@@ -618,6 +657,7 @@ export class ChatbotCrmService {
       columnId?: string;
       botEnabled?: boolean;
       crmComments?: string | null;
+      crmRequestSummary?: string | null;
       companyName?: string | null;
       instagramHandle?: string | null;
       campaignObjective?: string | null;
@@ -644,6 +684,9 @@ export class ChatbotCrmService {
     }
     if (input.crmComments !== undefined) {
       data.crmComments = input.crmComments?.trim() || null;
+    }
+    if (input.crmRequestSummary !== undefined) {
+      data.crmRequestSummary = normalizeCrmRequestSummary(input.crmRequestSummary);
     }
     if (input.companyName !== undefined) {
       if (input.companyName === null || input.companyName.trim() === '') {
@@ -737,6 +780,36 @@ export class ChatbotCrmService {
     return this.serializeLeadWithDocuments(saved, columnSlug);
   }
 
+  async generateRequestSummary(slug: string, leadId: string) {
+    const bot = await this.chatbots.requireBySlug(slug);
+    const lead = await this.prisma.crmLead.findFirst({
+      where: { id: leadId, chatbotId: bot.id, crmExcludedAt: null },
+      include: { column: true },
+    });
+    if (!lead) throw new NotFoundException('Lead não encontrado.');
+
+    let summary: string;
+    try {
+      summary = await generateCrmRequestSummary(this.prisma, {
+        whatsappDigits: lead.whatsappDigits,
+        instagramUserId: lead.instagramUserId,
+        chatbotId: bot.id,
+      });
+    } catch (err: unknown) {
+      if (err instanceof BadRequestException) throw err;
+      this.logger.warn(
+        `Resumo CRM ${lead.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw new BadRequestException('Não foi possível gerar o resumo. Tenta de novo.');
+    }
+
+    const saved = await this.prisma.crmLead.update({
+      where: { id: lead.id },
+      data: { crmRequestSummary: summary },
+    });
+    return this.serializeLeadWithDocuments(saved, lead.column.slug);
+  }
+
   async uploadLeadDocument(
     slug: string,
     leadId: string,
@@ -784,7 +857,10 @@ export class ChatbotCrmService {
     // Joana: a ficha visível é o RafaCallBooking — remove do kanban e limpa interesse.
     if (bookingId) {
       try {
-        await this.rafacallCrm.removeFromCrm({ bookingId });
+        await this.rafacallCrm.removeFromCrm({
+          bookingId,
+          notifyClosed: false,
+        });
       } catch {
         /* booking já invisível / apagado — continua soft-exclude local */
       }
@@ -814,6 +890,7 @@ export class ChatbotCrmService {
 
     // Limpa atribuição do menu (chatbotId) — próximo contacto vê o menu outra vez.
     await this.resetLeadConversationsToMenu(identity);
+    await this.outbound.notifyAttendanceClosed(identity);
     return { ok: true as const };
   }
 
@@ -1049,6 +1126,7 @@ export class ChatbotCrmService {
       crmPropertyTypology?: RafaCallCrmPropertyTypology[];
       botEnabled: boolean;
       crmComments: string | null;
+      crmRequestSummary: string | null;
       crmProfileImageUrl: string | null;
       updatedAt: Date;
       createdAt: Date;
@@ -1085,6 +1163,7 @@ export class ChatbotCrmService {
       crmPropertyTypology?: RafaCallCrmPropertyTypology[];
       botEnabled: boolean;
       crmComments: string | null;
+      crmRequestSummary: string | null;
       crmProfileImageUrl: string | null;
       updatedAt: Date;
       createdAt: Date;
@@ -1114,6 +1193,7 @@ export class ChatbotCrmService {
       propertyTypology: lead.crmPropertyTypology ?? [],
       botEnabled: lead.botEnabled,
       crmComments: lead.crmComments,
+      crmRequestSummary: lead.crmRequestSummary,
       crmProfileImageUrl: lead.crmProfileImageUrl,
       documents,
       createdAt: lead.createdAt.toISOString(),

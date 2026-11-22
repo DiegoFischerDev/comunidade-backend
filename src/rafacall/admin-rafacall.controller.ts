@@ -28,6 +28,8 @@ import {
   UpdateRafacallCrmPaymentDto,
 } from './dto/rafacall-crm-payment.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { SendChannelMessageDto } from '../channels/dto/send-channel-message.dto';
+import { CrmChannelChatService } from '../channels/crm-channel-chat.service';
 import { CRM_CLIENT_DOCUMENT_MAX_BYTES } from './rafacall-crm.constants';
 
 @Controller('admin/rafacall')
@@ -37,6 +39,7 @@ export class AdminRafacallController {
     private readonly admin: RafacallAdminService,
     private readonly booking: RafacallBookingService,
     private readonly crm: RafacallCrmService,
+    private readonly chat: CrmChannelChatService,
   ) {}
 
   @Get('working-hours')
@@ -148,6 +151,28 @@ export class AdminRafacallController {
     });
   }
 
+  @Get('crm/:bookingId/messages')
+  crmMessages(
+    @Param('bookingId') bookingId: string,
+    @Query('channel') channel: string,
+    @Query('after') after?: string,
+  ) {
+    return this.chat.listForBooking(bookingId.trim(), channel, after);
+  }
+
+  @Post('crm/:bookingId/messages')
+  sendCrmMessage(
+    @Param('bookingId') bookingId: string,
+    @Body() dto: SendChannelMessageDto,
+  ) {
+    return this.chat.sendForBooking(bookingId.trim(), dto);
+  }
+
+  @Post('crm/:bookingId/summary')
+  generateCrmSummary(@Param('bookingId') bookingId: string) {
+    return this.crm.generateRequestSummary(bookingId.trim());
+  }
+
   @Patch('crm/:bookingId')
   updateCrm(
     @Param('bookingId') bookingId: string,
@@ -158,6 +183,7 @@ export class AdminRafacallController {
       userName: dto.userName,
       crmStatus: dto.crmStatus,
       crmComments: dto.crmComments,
+      crmRequestSummary: dto.crmRequestSummary,
       crmExpectedImmigrationAt: dto.crmExpectedImmigrationAt,
       videoCallStartsAtUtcIso: dto.videoCallStartsAtUtcIso,
       videoCallTimezone: dto.videoCallTimezone,

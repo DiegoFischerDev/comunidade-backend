@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ConversationOutboundService } from '../channels/conversation-outbound.service';
-import { getFrontendBaseUrl } from '../config/frontend-base-url';
+import { buildSchedulingLink } from '../channels/scheduling-link';
 import { PrismaService } from '../prisma/prisma.service';
 import { welcomeStepsHistorySummary } from '../joana/joana-welcome';
 import { ChatbotService } from './chatbot.service';
@@ -378,16 +378,7 @@ export class GenericContextEngine {
     name: string | null | undefined,
   ): string | null {
     try {
-      const base = getFrontendBaseUrl().replace(/\/$/, '');
-      const params = new URLSearchParams();
-      // No IG o número é pedido na página /agendar — não pré-preenchemos.
-      if (whatsapp?.trim()) params.set('whatsapp', whatsapp.trim());
-      const clean = name?.trim();
-      if (clean && clean.length >= 2 && !/^Lead\s+\d+$/i.test(clean)) {
-        params.set('name', clean.slice(0, 80));
-      }
-      const qs = params.toString();
-      return qs ? `${base}/agendar?${qs}` : `${base}/agendar`;
+      return buildSchedulingLink(whatsapp, name);
     } catch (err: unknown) {
       this.logger.warn(
         `Bianca sem link de agenda: ${

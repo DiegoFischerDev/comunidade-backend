@@ -82,13 +82,22 @@ export class InstagramController {
             profilePicUrl: msg.profilePicUrl ?? null,
           });
         }
-        await this.router.bufferInbound({
-          channel: 'instagram',
-          instagramUserId: msg.instagramUserId,
-          text: msg.text,
-          externalMessageId: msg.externalMessageId,
-          pushName,
-        });
+        if (msg.audioUrl && !msg.text) {
+          await this.router.acceptInstagramAudio({
+            instagramUserId: msg.instagramUserId,
+            externalMessageId: msg.externalMessageId,
+            audioUrl: msg.audioUrl,
+            pushName,
+          });
+        } else {
+          await this.router.bufferInbound({
+            channel: 'instagram',
+            instagramUserId: msg.instagramUserId,
+            text: msg.text,
+            externalMessageId: msg.externalMessageId,
+            pushName,
+          });
+        }
       } catch (err: unknown) {
         this.logger.warn(
           `IG buffer ${msg.instagramUserId}: ${

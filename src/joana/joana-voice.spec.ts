@@ -40,12 +40,14 @@ describe('JoanaService.acceptVoiceNote', () => {
       sendText: jest.fn().mockResolvedValue(undefined),
     };
     const openai = { transcribeAudio: jest.fn() };
+    const channelLog = { record: jest.fn().mockResolvedValue(null) };
     const service = new JoanaService(
       {} as never,
       wa as never,
       { sendText: jest.fn() } as never,
       { isJoanaActive: jest.fn().mockResolvedValue(true) } as never,
       openai as never,
+      channelLog as never,
     );
 
     const result = await service.acceptVoiceNote({
@@ -65,6 +67,7 @@ describe('JoanaService.acceptVoiceNote', () => {
     const create = jest.fn().mockResolvedValue({});
     const prisma = {
       joanaConversation: {
+        findFirst: jest.fn().mockResolvedValue(null),
         findUnique: jest.fn().mockResolvedValue(null),
         create,
       },
@@ -80,12 +83,14 @@ describe('JoanaService.acceptVoiceNote', () => {
     const openai = {
       transcribeAudio: jest.fn().mockResolvedValue('quero morar em Viseu'),
     };
+    const channelLog = { record: jest.fn().mockResolvedValue(null) };
     const service = new JoanaService(
       prisma as never,
       wa as never,
       { sendText: jest.fn() } as never,
       { isJoanaActive: jest.fn().mockResolvedValue(true) } as never,
       openai as never,
+      channelLog as never,
     );
 
     const result = await service.acceptVoiceNote({
@@ -117,12 +122,18 @@ describe('JoanaService.acceptVoiceNote', () => {
       getMediaBase64: jest.fn(),
       sendText: jest.fn(),
     };
+    const channelLog = { record: jest.fn().mockResolvedValue(null) };
     const service = new JoanaService(
-      {} as never,
+      {
+        joanaConversation: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'conv-1' }),
+        },
+      } as never,
       wa as never,
       { sendText: jest.fn() } as never,
       { isJoanaActive: jest.fn().mockResolvedValue(false) } as never,
-      { transcribeAudio: jest.fn() } as never,
+      { transcribeAudio: jest.fn().mockResolvedValue('') } as never,
+      channelLog as never,
     );
 
     const result = await service.acceptVoiceNote({
@@ -132,7 +143,8 @@ describe('JoanaService.acceptVoiceNote', () => {
     });
 
     expect(result).toEqual({ handled: true, status: 'paused' });
-    expect(wa.getMediaBase64).not.toHaveBeenCalled();
     expect(wa.sendText).not.toHaveBeenCalled();
+    expect(wa.getMediaBase64).toHaveBeenCalled();
+    expect(channelLog.record).toHaveBeenCalled();
   });
 });

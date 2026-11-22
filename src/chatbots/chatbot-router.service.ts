@@ -1,5 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ChatbotChannel, ChatbotEngineKind, Prisma } from '@prisma/client';
+import {
+  ChannelMessageAuthor,
+  ChannelMessageDirection,
+  ChannelMessageKind,
+  ChatbotChannel,
+  ChatbotEngineKind,
+  Prisma,
+} from '@prisma/client';
+import { ChannelMessageLogService, AUDIO_TRANSCRIPT_FAILED } from '../channels/channel-message-log.service';
 import { ConversationOutboundService } from '../channels/conversation-outbound.service';
 import {
   instagramPeer,
@@ -13,6 +21,7 @@ import { JoanaService } from '../joana/joana.service';
 import { JOANA_INTRO } from '../joana/joana-turn';
 import { welcomeStepsHistorySummary } from '../joana/joana-welcome';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { InstagramService } from '../instagram/instagram.service';
 import { ChatbotCrmService } from './chatbot-crm.service';
 import { ChatbotService } from './chatbot.service';
 import {
@@ -41,6 +50,8 @@ export class ChatbotRouterService {
     private readonly joana: JoanaService,
     private readonly openai: JoanaOpenAiService,
     private readonly generic: GenericContextEngine,
+    private readonly messageLog: ChannelMessageLogService,
+    private readonly instagram: InstagramService,
   ) {}
 
   /**
@@ -147,6 +158,7 @@ export class ChatbotRouterService {
     instance?: string;
     pushName?: string;
     externalMessageId?: string;
+    kind?: ChannelMessageKind;
   }): Promise<{ handled: boolean; status: string }> {
     const channel: InboundChannel =
       input.channel ||
@@ -206,6 +218,22 @@ export class ChatbotRouterService {
       instagramUserId: instagramUserId || undefined,
     });
 
+    const kind = input.kind ?? ChannelMessageKind.TEXT;
+    const logChannel =
+      channel === 'instagram' ? ChatbotChannel.INSTAGRAM : ChatbotChannel.WHATSAPP;
+    const logLead = async (conversationId: string, mirror: boolean) => {
+      await this.messageLog.record({
+        conversationId,
+        channel: logChannel,
+        direction: ChannelMessageDirection.INBOUND,
+        author: ChannelMessageAuthor.LEAD,
+        kind,
+        body: text,
+        externalMessageId: messageId || null,
+        mirrorHistory: mirror ? 'user' : undefined,
+      });
+    };
+
     if (existing?.paused) {
       if (existing.whatsappDigits) {
         const captured = await this.tryCaptureOutrosSubject({
@@ -213,7 +241,10 @@ export class ChatbotRouterService {
           text,
           pushName: input.pushName,
         });
-        if (captured) return { handled: true, status: 'outros_subject_captured' };
+        if (captured) {
+          await logLead(existing.id, true);
+          return { handled: true, status: 'outros_subject_captured' };
+        }
       }
 
       if (!existing.chatbotId) {
@@ -226,6 +257,7 @@ export class ChatbotRouterService {
         // Admin Off → silêncio. Circuit expirado / pausa indevida → retomar.
         const resumed = await this.tryResumePausedConversation(existing, peer);
         if (!resumed) {
+          await logLead(existing.id, true);
           return { handled: true, status: 'paused' };
         }
         existing = { ...existing, paused: false };
@@ -244,11 +276,16 @@ export class ChatbotRouterService {
             text,
             pushName: input.pushName,
           });
-          if (captured) return { handled: true, status: 'outros_subject_captured' };
+          if (captured) {
+            await logLead(existing.id, true);
+            return { handled: true, status: 'outros_subject_captured' };
+          }
         }
+        await logLead(existing.id, true);
         return { handled: true, status: 'paused' };
       }
       if (existing.chatbot?.engineKind === ChatbotEngineKind.HANDOFF_OTHER) {
+        await logLead(existing.id, true);
         return { handled: true, status: 'paused' };
       }
       if (
@@ -264,6 +301,7 @@ export class ChatbotRouterService {
             instance: instance || existing.instance || undefined,
             pushName: input.pushName,
             externalMessageId: input.externalMessageId,
+            kind,
           });
         }
         // IG (com ou sem WA): appendBuffer abaixo → flush → processConversationPublic.
@@ -286,6 +324,14 @@ export class ChatbotRouterService {
       displayName: cleanName(input.pushName),
       item,
     });
+
+    const stored =
+      existing ??
+      (await this.findConversation({
+        whatsapp: whatsapp || undefined,
+        instagramUserId: instagramUserId || undefined,
+      }));
+    if (stored) await logLead(stored.id, false);
 
     return { handled: true, status: 'buffered' };
   }
@@ -324,6 +370,7 @@ export class ChatbotRouterService {
         });
         existing = { ...existing, paused: false };
       } else {
+        await this.storePausedWhatsappVoice(existing.id, input);
         return { handled: true, status: 'paused' };
       }
     }
@@ -376,13 +423,192 @@ export class ChatbotRouterService {
         instance,
         pushName: input.pushName,
         externalMessageId: messageId,
+        kind: ChannelMessageKind.AUDIO_TRANSCRIPT,
       });
       return { handled: true, status: buffered.status };
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
       await this.replyUnheard(input.whatsapp, instance, reason);
-      return { handled: true, status: 'audio_unheard' };
+    return { handled: true, status: 'audio_unheard' };
     }
+  }
+
+  /**
+   * Áudio do Instagram: grava já a linha e transcreve em seguida, sem atrasar o 200 do webhook.
+   */
+  async acceptInstagramAudio(input: {
+    instagramUserId: string;
+    externalMessageId: string;
+    audioUrl: string;
+    pushName?: string;
+  }): Promise<void> {
+    const instagramUserId = input.instagramUserId.trim();
+    const externalMessageId = input.externalMessageId.trim();
+    if (!instagramUserId || !externalMessageId || !input.audioUrl.trim()) return;
+
+    const conversationId = await this.ensureInstagramConversation(
+      instagramUserId,
+      input.pushName,
+    );
+    if (!conversationId) return;
+
+    await this.messageLog.record({
+      conversationId,
+      channel: ChatbotChannel.INSTAGRAM,
+      direction: ChannelMessageDirection.INBOUND,
+      author: ChannelMessageAuthor.LEAD,
+      kind: ChannelMessageKind.AUDIO_TRANSCRIPT,
+      body: this.messageLog.pendingAudioText(),
+      externalMessageId,
+    });
+
+    void this.finishInstagramAudio({
+      ...input,
+      instagramUserId,
+      externalMessageId,
+      conversationId,
+    }).catch((err: unknown) => {
+      this.logger.warn(
+        `IG áudio ${instagramUserId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  }
+
+  private async finishInstagramAudio(input: {
+    instagramUserId: string;
+    externalMessageId: string;
+    audioUrl: string;
+    pushName?: string;
+    conversationId: string;
+  }): Promise<void> {
+    let transcript = '';
+    try {
+      const media = await this.instagram.downloadAttachment(input.audioUrl);
+      transcript = await this.openai.transcribeAudio({
+        base64: media.base64,
+        mimeType: media.mimeType,
+        fileName: media.fileName,
+      });
+    } catch (err: unknown) {
+      this.logger.warn(
+        `IG transcrição ${input.instagramUserId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    if (!transcript) {
+      await this.messageLog.record({
+        conversationId: input.conversationId,
+        channel: ChatbotChannel.INSTAGRAM,
+        direction: ChannelMessageDirection.INBOUND,
+        author: ChannelMessageAuthor.LEAD,
+        kind: ChannelMessageKind.AUDIO_TRANSCRIPT,
+        body: AUDIO_TRANSCRIPT_FAILED,
+        externalMessageId: input.externalMessageId,
+      });
+      const row = await this.prisma.joanaConversation.findUnique({
+        where: { id: input.conversationId },
+      });
+      if (row && !row.paused) {
+        try {
+          await this.outbound.sendText(row, JOANA_AUDIO_UNHEARD);
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
+
+    await this.bufferInbound({
+      channel: 'instagram',
+      instagramUserId: input.instagramUserId,
+      text: transcript,
+      pushName: input.pushName,
+      externalMessageId: input.externalMessageId,
+      kind: ChannelMessageKind.AUDIO_TRANSCRIPT,
+    });
+  }
+
+  private async ensureInstagramConversation(
+    instagramUserId: string,
+    pushName?: string,
+  ): Promise<string | null> {
+    const existing = await this.prisma.joanaConversation.findUnique({
+      where: { instagramUserId },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+    try {
+      const created = await this.prisma.joanaConversation.create({
+        data: {
+          instagramUserId,
+          activeChannel: ChatbotChannel.INSTAGRAM,
+          displayName: cleanName(pushName),
+          buffer: [] as unknown as Prisma.InputJsonValue,
+          history: [] as unknown as Prisma.InputJsonValue,
+        },
+        select: { id: true },
+      });
+      return created.id;
+    } catch (err: unknown) {
+      if (
+        !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+        err.code !== 'P2002'
+      ) {
+        throw err;
+      }
+      const again = await this.prisma.joanaConversation.findUnique({
+        where: { instagramUserId },
+        select: { id: true },
+      });
+      return again?.id ?? null;
+    }
+  }
+
+  private async storePausedWhatsappVoice(
+    conversationId: string,
+    input: {
+      whatsapp: string;
+      instance: string;
+      externalMessageId?: string;
+      mediaMessage?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const messageId = (input.externalMessageId || '').trim();
+    let body = AUDIO_TRANSCRIPT_FAILED;
+    if (messageId) {
+      try {
+        const media = await this.wa.getMediaBase64(input.instance, messageId, {
+          convertToMp4: false,
+          message: input.mediaMessage,
+        });
+        if (media?.base64) {
+          const transcript = await this.openai.transcribeAudio({
+            base64: media.base64,
+            mimeType: media.mimetype,
+            fileName: media.fileName,
+          });
+          if (transcript) body = transcript;
+        }
+      } catch (err: unknown) {
+        this.logger.warn(
+          `WA áudio em pausa ${input.whatsapp}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    await this.messageLog.record({
+      conversationId,
+      channel: ChatbotChannel.WHATSAPP,
+      direction: ChannelMessageDirection.INBOUND,
+      author: ChannelMessageAuthor.LEAD,
+      kind: ChannelMessageKind.AUDIO_TRANSCRIPT,
+      body,
+      externalMessageId: messageId || null,
+      mirrorHistory: 'user',
+    });
   }
 
   private async replyUnheard(whatsapp: string, instance: string, reason: string) {

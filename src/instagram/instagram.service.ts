@@ -134,7 +134,8 @@ export class InstagramService {
         const message = event.message;
         if (!message || message.is_echo) continue;
         const text = message.text?.trim() ?? '';
-        if (!text) continue;
+        const audioUrl = audioAttachmentUrl(message.attachments);
+        if (!text && !audioUrl) continue;
 
         const instagramUserId = event.sender?.id?.trim() ?? '';
         const externalMessageId = message.mid?.trim() ?? '';
@@ -149,6 +150,7 @@ export class InstagramService {
             configuredIg,
           externalMessageId,
           text,
+          audioUrl,
           timestampMs: event.timestamp ?? Date.now(),
           raw: event,
         });
@@ -190,7 +192,9 @@ export class InstagramService {
         msg.profilePicUrl = profile.profilePicUrl;
       }
       this.logger.log(
-        `IG DM de ${msg.profileUsername || msg.instagramUserId}: ${msg.text.slice(0, 80)}`,
+        `IG DM de ${msg.profileUsername || msg.instagramUserId}: ${
+          msg.audioUrl && !msg.text ? '[áudio]' : msg.text.slice(0, 80)
+        }`,
       );
     }
 
@@ -516,6 +520,48 @@ export class InstagramService {
       throw new Error(`Instagram sendMessage failed: ${res.status}`);
     }
   }
+
+  /** Descarrega um anexo temporário da Meta (nota de voz). */
+  async downloadAttachment(url: string): Promise<{
+    base64: string;
+    mimeType: string;
+    fileName: string;
+  }> {
+    const target = url.trim();
+    if (!/^https?:\/\//i.test(target)) {
+      throw new Error('URL de áudio Instagram inválida');
+    }
+    const token = this.getPageAccessToken();
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(target, { headers });
+    if (!res.ok) {
+      throw new Error(`download áudio IG falhou (${res.status})`);
+    }
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (!bytes.length) throw new Error('Áudio Instagram vazio');
+    if (bytes.length > 25 * 1024 * 1024) throw new Error('Áudio maior que 25 MB.');
+    const mime = (res.headers.get('content-type') || 'audio/mp4').split(';')[0]!.trim();
+    const ext = mime.includes('ogg') ? 'ogg' : mime.includes('mpeg') ? 'mp3' : 'm4a';
+    return {
+      base64: bytes.toString('base64'),
+      mimeType: mime || 'audio/mp4',
+      fileName: `nota.${ext}`,
+    };
+  }
+}
+
+function audioAttachmentUrl(
+  attachments: Array<{ type?: string; payload?: { url?: string } }> | undefined,
+): string | null {
+  if (!Array.isArray(attachments)) return null;
+  for (const attachment of attachments) {
+    const type = (attachment.type || '').toLowerCase();
+    const url = attachment.payload?.url?.trim() || '';
+    if (!url) continue;
+    if (type === 'audio' || type === 'voice' || type.includes('audio')) return url;
+  }
+  return null;
 }
 
 function isInstagramUnsupportedAudioUrl(url: string): boolean {

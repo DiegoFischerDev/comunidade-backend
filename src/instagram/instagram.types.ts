@@ -7,6 +7,8 @@ export type InstagramInboundMessage = {
   igBusinessAccountId: string;
   externalMessageId: string;
   text: string;
+  /** URL temporário de uma nota de voz. O webhook não traz bytes. */
+  audioUrl?: string | null;
   timestampMs: number;
   /** Nome do perfil (Graph User Profile) — o webhook não traz isto. */
   profileName?: string | null;
@@ -33,11 +35,15 @@ export type InstagramWebhookPayload = {
       sender?: { id?: string };
       recipient?: { id?: string };
       timestamp?: number;
-      message?: {
-        mid?: string;
-        text?: string;
-        is_echo?: boolean;
-      };
+        message?: {
+          mid?: string;
+          text?: string;
+          is_echo?: boolean;
+          attachments?: Array<{
+            type?: string;
+            payload?: { url?: string };
+          }>;
+        };
     }>;
   }>;
 };

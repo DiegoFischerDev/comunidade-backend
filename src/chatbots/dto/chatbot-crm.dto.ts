@@ -7,6 +7,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  MaxLength,
   Max,
   Min,
   MinLength,
@@ -46,6 +47,12 @@ export class UpdateCrmLeadDto {
   @IsOptional()
   @IsString()
   crmComments?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @MaxLength(2000)
+  crmRequestSummary?: string | null;
 
   @IsOptional()
   @IsString()

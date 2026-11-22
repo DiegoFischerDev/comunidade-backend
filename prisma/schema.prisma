@@ -389,6 +389,11 @@ model RafaCallBooking {
    */
   crmComments              String?               @map("crm_comments") @db.Text
   /**
+   * Resumo curto (até 5 linhas) das dúvidas e solicitações do lead, gerado pela OpenAI
+   * a partir dos últimos turnos da conversa. O admin pode editar à mão.
+   */
+  crmRequestSummary        String?               @map("crm_request_summary") @db.Text
+  /**
    * Data prevista para imigração (só dia civil; guardada em UTC ao meio-dia).
    */
   crmExpectedImmigrationAt DateTime?             @map("crm_expected_immigration_at")
@@ -1283,6 +1288,23 @@ enum ChatbotEngineKind {
 enum ChatbotChannel {
   WHATSAPP
   INSTAGRAM
+  FACEBOOK
+}
+
+enum ChannelMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum ChannelMessageAuthor {
+  LEAD
+  BOT
+  ADMIN
+}
+
+enum ChannelMessageKind {
+  TEXT
+  AUDIO_TRANSCRIPT
 }
 
 /// Chatbot na mesma instância Evolution (Joana / Bruna / Gabi).
@@ -1367,12 +1389,30 @@ model JoanaConversation {
   processingStartedAt DateTime?      @map("processing_started_at")
   createdAt           DateTime       @default(now()) @map("created_at")
   updatedAt           DateTime       @updatedAt @map("updated_at")
+  messages            ChannelMessage[]
 
   @@index([processing, lastInboundAt])
   @@index([chatbotId])
   @@index([activeChannel])
   @@index([whatsappDigits])
   @@map("joana_conversations")
+}
+
+/// Histórico durável do chat CRM (o JSON `history` continua a ser só contexto do modelo).
+model ChannelMessage {
+  id                String                  @id @default(cuid())
+  conversationId    String                  @map("conversation_id")
+  conversation      JoanaConversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  channel           ChatbotChannel
+  direction         ChannelMessageDirection
+  author            ChannelMessageAuthor
+  kind              ChannelMessageKind      @default(TEXT)
+  body              String                  @db.Text
+  externalMessageId String?                 @unique @map("external_message_id") @db.VarChar(128)
+  createdAt         DateTime                @default(now()) @map("created_at")
+
+  @@index([conversationId, createdAt])
+  @@map("channel_messages")
 }
 
 /// Coluna do kanban CRM por chatbot (configurável).
@@ -1419,6 +1459,11 @@ model CrmLead {
   desiredHouseValue        Int?                         @map("desired_house_value")
   botEnabled               Boolean                      @default(true) @map("bot_enabled")
   crmComments              String?                      @map("crm_comments") @db.Text
+  /**
+   * Resumo curto (até 5 linhas) das dúvidas e solicitações do lead, gerado pela OpenAI
+   * a partir dos últimos turnos da conversa. O admin pode editar à mão.
+   */
+  crmRequestSummary        String?                      @map("crm_request_summary") @db.Text
   crmExpectedImmigrationAt DateTime?                    @map("crm_expected_immigration_at")
   crmImmigrationImmediate  Boolean                      @default(false) @map("crm_immigration_immediate")
   crmPropertyTypology      RafaCallCrmPropertyTypology[] @default([]) @map("crm_property_typology")

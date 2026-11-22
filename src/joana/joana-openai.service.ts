@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { summarizeLeadRequestText } from '../crm/crm-request-summary';
 import { CHATBOT_WHATSAPP_REPLY_STYLE } from '../chatbots/chatbot.constants';
 import { decodeWhatsappAudio, whatsappAudioFileName } from './joana-audio';
 import { JOANA_DEFAULT_CONTEXT } from './joana-context';
@@ -82,6 +83,11 @@ export class JoanaOpenAiService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  /** Resumo CRM: até 5 linhas com dúvidas e solicitações concretas do lead. */
+  summarizeLeadRequests(transcript: string): Promise<string> {
+    return summarizeLeadRequestText(transcript);
   }
 
   async interpret(input: {

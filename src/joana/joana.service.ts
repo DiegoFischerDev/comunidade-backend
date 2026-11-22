@@ -1,10 +1,17 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import {
+  ChannelMessageAuthor,
+  ChannelMessageDirection,
+  ChannelMessageKind,
   ChatbotChannel,
   ChatbotEngineKind,
   Prisma,
   RafaCallCrmStatus,
 } from '@prisma/client';
+import {
+  AUDIO_TRANSCRIPT_FAILED,
+  ChannelMessageLogService,
+} from '../channels/channel-message-log.service';
 import { ConversationOutboundService } from '../channels/conversation-outbound.service';
 import {
   sharedOutboundGuard,
@@ -62,6 +69,7 @@ export class JoanaService {
     private readonly outbound: ConversationOutboundService,
     private readonly crm: RafacallCrmService,
     private readonly openai: JoanaOpenAiService,
+    private readonly messageLog: ChannelMessageLogService,
   ) {}
 
   async getContext(): Promise<{ contextText: string }> {
@@ -154,6 +162,7 @@ export class JoanaService {
     mediaMessage?: Record<string, unknown>;
   }): Promise<{ handled: true; status: string }> {
     if (!(await this.crm.isJoanaActive(input.whatsapp))) {
+      await this.storePausedVoice(input);
       return { handled: true, status: 'paused' };
     }
 
@@ -187,6 +196,7 @@ export class JoanaService {
         instance: input.instance,
         pushName: input.pushName,
         externalMessageId: messageId,
+        kind: ChannelMessageKind.AUDIO_TRANSCRIPT,
       });
       return { handled: true, status: buffered.status };
     } catch (err: unknown) {
@@ -203,6 +213,7 @@ export class JoanaService {
     instance?: string;
     pushName?: string;
     externalMessageId?: string;
+    kind?: ChannelMessageKind;
   }): Promise<{ handled: boolean; status: string }> {
     const instance = (input.instance || '').trim();
     const allowed = joanaWhatsappInstance();
@@ -229,6 +240,19 @@ export class JoanaService {
     }
 
     if (!(await this.crm.isJoanaActive(input.whatsapp))) {
+      const row = await this.findWhatsappConversation(input.whatsapp);
+      if (row) {
+        await this.messageLog.record({
+          conversationId: row.id,
+          channel: ChatbotChannel.WHATSAPP,
+          direction: ChannelMessageDirection.INBOUND,
+          author: ChannelMessageAuthor.LEAD,
+          kind: input.kind ?? ChannelMessageKind.TEXT,
+          body: item.text,
+          externalMessageId: item.id.startsWith('local-') ? null : item.id,
+          mirrorHistory: 'user',
+        });
+      }
       return { handled: true, status: 'paused' };
     }
 
@@ -238,6 +262,18 @@ export class JoanaService {
       displayName: cleanName(input.pushName),
       item,
     });
+    const stored = await this.findWhatsappConversation(input.whatsapp);
+    if (stored) {
+      await this.messageLog.record({
+        conversationId: stored.id,
+        channel: ChatbotChannel.WHATSAPP,
+        direction: ChannelMessageDirection.INBOUND,
+        author: ChannelMessageAuthor.LEAD,
+        kind: input.kind ?? ChannelMessageKind.TEXT,
+        body: item.text,
+        externalMessageId: item.id.startsWith('local-') ? null : item.id,
+      });
+    }
     return { handled: true, status: 'buffered' };
   }
 
@@ -250,6 +286,50 @@ export class JoanaService {
         processing: false,
         paused: true,
       },
+    });
+  }
+
+  private async storePausedVoice(input: {
+    whatsapp: string;
+    instance: string;
+    externalMessageId?: string;
+    mediaMessage?: Record<string, unknown>;
+  }): Promise<void> {
+    const messageId = (input.externalMessageId || '').trim();
+    let body = AUDIO_TRANSCRIPT_FAILED;
+    if (messageId) {
+      try {
+        const media = await this.wa.getMediaBase64(input.instance, messageId, {
+          convertToMp4: false,
+          message: input.mediaMessage,
+        });
+        if (media?.base64) {
+          const transcript = await this.openai.transcribeAudio({
+            base64: media.base64,
+            mimeType: media.mimetype,
+            fileName: media.fileName,
+          });
+          if (transcript) body = transcript;
+        }
+      } catch (err: unknown) {
+        this.logger.warn(
+          `Joana áudio em pausa ${input.whatsapp}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    const row = await this.findWhatsappConversation(input.whatsapp);
+    if (!row) return;
+    await this.messageLog.record({
+      conversationId: row.id,
+      channel: ChatbotChannel.WHATSAPP,
+      direction: ChannelMessageDirection.INBOUND,
+      author: ChannelMessageAuthor.LEAD,
+      kind: ChannelMessageKind.AUDIO_TRANSCRIPT,
+      body,
+      externalMessageId: messageId || null,
+      mirrorHistory: body === AUDIO_TRANSCRIPT_FAILED ? undefined : 'user',
     });
   }
 

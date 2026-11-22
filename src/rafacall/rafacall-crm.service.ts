@@ -1,9 +1,12 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   PayloadTooLargeException,
+  forwardRef,
 } from '@nestjs/common';
+import { ConversationOutboundService } from '../channels/conversation-outbound.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { HouseImageStorageService } from '../partner/house-image-storage.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
@@ -35,6 +38,10 @@ import {
   sortCrmItemsByRecentUpdate,
 } from './rafacall-crm.constants';
 import { sanitizeCrmDocumentFileName } from '../common/crm-document-file';
+import {
+  generateCrmRequestSummary,
+  normalizeCrmRequestSummary,
+} from '../crm/crm-request-summary';
 
 function waDigits(value: string): string {
   return value.replace(/\D/g, '');
@@ -59,6 +66,7 @@ const BOOKING_CRM_SELECT = {
   status: true,
   crmStatus: true,
   crmComments: true,
+  crmRequestSummary: true,
   crmExpectedImmigrationAt: true,
   crmImmigrationImmediate: true,
   crmPropertyTypology: true,
@@ -89,6 +97,7 @@ type BookingCrmRow = {
   status: RafaCallBookingStatus;
   crmStatus: RafaCallCrmStatus;
   crmComments: string | null;
+  crmRequestSummary: string | null;
   crmExpectedImmigrationAt: Date | null;
   crmImmigrationImmediate: boolean;
   crmPropertyTypology: RafaCallCrmPropertyTypology[];
@@ -132,6 +141,8 @@ export class RafacallCrmService {
     private readonly prisma: PrismaService,
     private readonly storage: HouseImageStorageService,
     private readonly wa: WhatsAppService,
+    @Inject(forwardRef(() => ConversationOutboundService))
+    private readonly outbound: ConversationOutboundService,
   ) {}
 
   async listCrmBoard() {
@@ -173,6 +184,24 @@ export class RafacallCrmService {
     }));
 
     return { columns };
+  }
+
+  /** Mesma cardinalidade do kanban Joana: um cliente por WhatsApp; sem número, um por booking. */
+  async countVisibleCrmClients(): Promise<number> {
+    const items = await this.prisma.rafaCallBooking.findMany({
+      where: this.visibleCrmBookingWhere(),
+      select: {
+        id: true,
+        guestWhatsapp: true,
+        user: { select: { whatsapp: true } },
+      },
+    });
+    const keys = new Set<string>();
+    for (const item of items) {
+      const digits = this.extractWhatsappDigits(item);
+      keys.add(digits || `id:${item.id}`);
+    }
+    return keys.size;
   }
 
   async lookupCrmClientByWhatsapp(whatsapp: string): Promise<{
@@ -306,6 +335,7 @@ export class RafacallCrmService {
         timezone,
         crmStatus: initialStatus,
         crmComments: null,
+        crmRequestSummary: null,
         crmExpectedImmigrationAt: immigrationDate,
         crmImmigrationImmediate: immigrationImmediate,
         crmPropertyTypology: propertyTypology,
@@ -433,6 +463,7 @@ export class RafacallCrmService {
     userName?: string;
     crmStatus?: RafaCallCrmStatus;
     crmComments?: string;
+    crmRequestSummary?: string | null;
     crmExpectedImmigrationAt?: string | null;
     videoCallStartsAtUtcIso?: string | null;
     videoCallTimezone?: string;
@@ -484,6 +515,7 @@ export class RafacallCrmService {
     const hasStatusChange =
       params.crmStatus !== undefined && params.crmStatus !== crmSource.crmStatus;
     const hasCommentsUpdate = params.crmComments !== undefined;
+    const hasSummaryUpdate = params.crmRequestSummary !== undefined;
     const hasImmigrationDateUpdate = params.crmExpectedImmigrationAt !== undefined;
     const hasVideoCallUpdate = params.videoCallStartsAtUtcIso !== undefined;
     const hasPreferencesUpdate =
@@ -499,6 +531,10 @@ export class RafacallCrmService {
       ? params.crmComments?.trim() || null
       : crmSource.crmComments?.trim() || null;
     const currentComments = crmSource.crmComments?.trim() || null;
+    const normalizedSummary = hasSummaryUpdate
+      ? normalizeCrmRequestSummary(params.crmRequestSummary)
+      : crmSource.crmRequestSummary?.trim() || null;
+    const currentSummary = crmSource.crmRequestSummary?.trim() || null;
 
     let nextImmigrationDate = crmSource.crmExpectedImmigrationAt;
     let nextImmigrationImmediate = crmSource.crmImmigrationImmediate;
@@ -572,6 +608,7 @@ export class RafacallCrmService {
     const hasAnyFieldUpdate =
       hasStatusChange ||
       hasCommentsUpdate ||
+      hasSummaryUpdate ||
       hasImmigrationDateUpdate ||
       hasVideoCallUpdate ||
       hasPreferencesUpdate ||
@@ -585,6 +622,7 @@ export class RafacallCrmService {
     const hasEffectiveChange =
       hasStatusChange ||
       (hasCommentsUpdate && normalizedComments !== currentComments) ||
+      (hasSummaryUpdate && normalizedSummary !== currentSummary) ||
       immigrationChanged ||
       videoCallChanged ||
       preferencesChanged ||
@@ -596,6 +634,7 @@ export class RafacallCrmService {
     }
 
     let nextComments = hasCommentsUpdate ? normalizedComments : crmSource.crmComments;
+    const nextSummary = hasSummaryUpdate ? normalizedSummary : crmSource.crmRequestSummary;
     const now = new Date();
     let nextStatus = crmSource.crmStatus;
     let nextDisplayBooking = displayBooking;
@@ -651,6 +690,7 @@ export class RafacallCrmService {
     const crmPatch = {
       crmStatus: nextStatus,
       crmComments: nextComments,
+      crmRequestSummary: nextSummary,
       crmExpectedImmigrationAt: nextImmigrationDate,
       crmImmigrationImmediate: nextImmigrationImmediate,
       crmPropertyTypology: nextPropertyTypology,
@@ -694,6 +734,75 @@ export class RafacallCrmService {
     return this.serializeCrmItemWithPayments(merged);
   }
 
+  async generateRequestSummary(bookingId: string) {
+    const booking = await this.prisma.rafaCallBooking.findFirst({
+      where: {
+        id: bookingId,
+        ...this.visibleCrmBookingWhere(),
+      },
+      select: BOOKING_CRM_SELECT,
+    });
+    if (!booking) {
+      throw new BadRequestException('Cliente não encontrado no CRM.');
+    }
+
+    const whatsapp = this.extractWhatsappDigits(booking);
+    const igLead = await this.prisma.crmLead.findFirst({
+      where: {
+        rafaCallBookingId: booking.id,
+        crmExcludedAt: null,
+        instagramUserId: { not: null },
+      },
+      select: { instagramUserId: true },
+    });
+    const joana = await this.prisma.chatbot.findUnique({
+      where: { slug: 'joana' },
+      select: { id: true },
+    });
+
+    let summary: string;
+    try {
+      summary = await generateCrmRequestSummary(this.prisma, {
+        whatsappDigits: whatsapp || null,
+        instagramUserId: igLead?.instagramUserId ?? null,
+        chatbotId: joana?.id ?? null,
+      });
+    } catch (err: unknown) {
+      if (err instanceof BadRequestException) throw err;
+      this.logger.warn(
+        `Resumo CRM ${booking.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw new BadRequestException('Não foi possível gerar o resumo. Tenta de novo.');
+    }
+
+    if (whatsapp) {
+      await this.prisma.rafaCallBooking.updateMany({
+        where: {
+          ...this.visibleCrmBookingWhere(),
+          OR: [{ guestWhatsapp: whatsapp }, { user: { whatsapp } }],
+        },
+        data: { crmRequestSummary: summary },
+      });
+      const siblings = await this.findActiveBookingsByWhatsapp(whatsapp);
+      const crmSource = this.pickCrmSource(siblings);
+      const displayBooking = this.pickDisplayBooking(siblings);
+      return this.serializeCrmItemWithPayments(
+        this.mergeDisplayAndCrm(displayBooking, {
+          ...crmSource,
+          crmRequestSummary: summary,
+          updatedAt: new Date(),
+        }),
+      );
+    }
+
+    const updated = await this.prisma.rafaCallBooking.update({
+      where: { id: booking.id },
+      data: { crmRequestSummary: summary },
+      select: BOOKING_CRM_SELECT,
+    });
+    return this.serializeCrmItemWithPayments(updated);
+  }
+
   private async applyCrmLeadName(siblings: BookingCrmRow[], name: string) {
     const userIds = [
       ...new Set(
@@ -725,7 +834,7 @@ export class RafacallCrmService {
     });
   }
 
-  async removeFromCrm(params: { bookingId: string }) {
+  async removeFromCrm(params: { bookingId: string; notifyClosed?: boolean }) {
     const booking = await this.prisma.rafaCallBooking.findFirst({
       where: {
         id: params.bookingId,
@@ -743,6 +852,13 @@ export class RafacallCrmService {
 
     const whatsapp = this.extractWhatsappDigits(booking);
     const excludedAt = new Date();
+    const notifyClosed = params.notifyClosed !== false;
+    const closeIdentity = notifyClosed
+      ? await this.resolveAttendanceCloseIdentity({
+          bookingId: booking.id,
+          whatsapp: whatsapp.length >= 8 ? whatsapp : null,
+        })
+      : null;
 
     // Lead IG (ou sem número): remove/exclui pelo ID do booking, não pelo WhatsApp.
     if (!whatsapp) {
@@ -766,6 +882,7 @@ export class RafacallCrmService {
         });
       }
 
+      await this.notifyAttendanceClosed(closeIdentity);
       return { ok: true as const };
     }
 
@@ -839,9 +956,64 @@ export class RafacallCrmService {
 
     // Limpa interesse no chatbot — próximo WA volta ao menu inicial.
     await this.resetConversationsToMenu({ whatsappDigits: whatsapp });
+    await this.notifyAttendanceClosed(closeIdentity);
 
     // Mantém lançamentos financeiros (aparecem no dashboard Financeiro).
     return { ok: true as const };
+  }
+
+  /** WhatsApp do booking e Instagram do lead, antes de anular o IGSID. */
+  private async resolveAttendanceCloseIdentity(params: {
+    bookingId: string;
+    whatsapp: string | null;
+  }): Promise<{ whatsappDigits: string | null; instagramUserId: string | null }> {
+    const bookingIds = new Set<string>([params.bookingId]);
+    if (params.whatsapp) {
+      const siblings = await this.prisma.rafaCallBooking.findMany({
+        where: {
+          OR: [
+            { guestWhatsapp: params.whatsapp },
+            { user: { whatsapp: params.whatsapp } },
+          ],
+        },
+        select: { id: true },
+      });
+      for (const sibling of siblings) bookingIds.add(sibling.id);
+    }
+
+    const leads = await this.prisma.crmLead.findMany({
+      where: {
+        crmExcludedAt: null,
+        OR: [
+          { rafaCallBookingId: { in: [...bookingIds] } },
+          ...(params.whatsapp ? [{ whatsappDigits: params.whatsapp }] : []),
+        ],
+      },
+      select: { whatsappDigits: true, instagramUserId: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const instagramUserId =
+      leads.find((lead) => lead.instagramUserId?.trim())?.instagramUserId?.trim() ||
+      null;
+    const leadWhatsapp =
+      leads.find((lead) => (lead.whatsappDigits || '').replace(/\D/g, '').length >= 8)
+        ?.whatsappDigits || null;
+
+    return {
+      whatsappDigits: params.whatsapp || leadWhatsapp,
+      instagramUserId,
+    };
+  }
+
+  private async notifyAttendanceClosed(
+    identity: {
+      whatsappDigits: string | null;
+      instagramUserId: string | null;
+    } | null,
+  ): Promise<void> {
+    if (!identity) return;
+    await this.outbound.notifyAttendanceClosed(identity);
   }
 
   async createCrmPayment(params: {
@@ -1118,6 +1290,7 @@ export class RafacallCrmService {
     await this.syncCrmToWhatsappGroup(whatsapp, {
       crmStatus: params.crmStatus,
       crmComments: crmSource.crmComments,
+      crmRequestSummary: crmSource.crmRequestSummary,
       crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
       crmImmigrationImmediate: crmSource.crmImmigrationImmediate,
       crmPropertyTypology: crmSource.crmPropertyTypology,
@@ -1136,6 +1309,7 @@ export class RafacallCrmService {
   async resolveCrmFieldsForWhatsapp(whatsappDigits: string): Promise<{
     crmStatus: RafaCallCrmStatus;
     crmComments: string | null;
+    crmRequestSummary: string | null;
     crmExpectedImmigrationAt: Date | null;
     crmImmigrationImmediate: boolean;
     crmPropertyTypology: RafaCallCrmPropertyTypology[];
@@ -1152,6 +1326,7 @@ export class RafacallCrmService {
       return {
         crmStatus: RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
         crmComments: null,
+        crmRequestSummary: null,
         crmExpectedImmigrationAt: null,
         crmImmigrationImmediate: false,
         crmPropertyTypology: [],
@@ -1169,6 +1344,7 @@ export class RafacallCrmService {
       return {
         crmStatus: RafaCallCrmStatus.VIDEO_CHAMADA_AGENDADA,
         crmComments: null,
+        crmRequestSummary: null,
         crmExpectedImmigrationAt: null,
         crmImmigrationImmediate: false,
         crmPropertyTypology: [],
@@ -1188,6 +1364,7 @@ export class RafacallCrmService {
     return {
       crmStatus: this.normalizeInheritedCrmStatusOnSchedule(crmSource.crmStatus),
       crmComments: crmSource.crmComments,
+      crmRequestSummary: crmSource.crmRequestSummary,
       crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
       crmImmigrationImmediate: crmSource.crmImmigrationImmediate,
       crmPropertyTypology: crmSource.crmPropertyTypology,
@@ -1293,6 +1470,7 @@ export class RafacallCrmService {
         timezone,
         crmStatus: booking.crmStatus,
         crmComments: booking.crmComments,
+        crmRequestSummary: booking.crmRequestSummary,
         crmExpectedImmigrationAt: booking.crmExpectedImmigrationAt,
         crmImmigrationImmediate: booking.crmImmigrationImmediate,
         crmPropertyTypology: booking.crmPropertyTypology,
@@ -1573,6 +1751,7 @@ export class RafacallCrmService {
   crmFieldsFromBooking(booking: {
     crmStatus: RafaCallCrmStatus;
     crmComments: string | null;
+    crmRequestSummary: string | null;
     crmExpectedImmigrationAt: Date | null;
     crmImmigrationImmediate: boolean;
     crmPropertyTypology: RafaCallCrmPropertyTypology[];
@@ -1585,6 +1764,7 @@ export class RafacallCrmService {
     return {
       crmStatus: booking.crmStatus,
       crmComments: booking.crmComments,
+      crmRequestSummary: booking.crmRequestSummary,
       crmExpectedImmigrationAt: booking.crmExpectedImmigrationAt,
       crmImmigrationImmediate: booking.crmImmigrationImmediate,
       crmPropertyTypology: booking.crmPropertyTypology,
@@ -1648,6 +1828,7 @@ export class RafacallCrmService {
     data: {
       crmStatus: RafaCallCrmStatus;
       crmComments: string | null;
+      crmRequestSummary: string | null;
       crmExpectedImmigrationAt: Date | null;
       crmImmigrationImmediate: boolean;
       crmPropertyTypology: RafaCallCrmPropertyTypology[];
@@ -1669,6 +1850,7 @@ export class RafacallCrmService {
       data: {
         crmStatus: data.crmStatus,
         crmComments: data.crmComments,
+        crmRequestSummary: data.crmRequestSummary,
         crmExpectedImmigrationAt: data.crmExpectedImmigrationAt,
         crmImmigrationImmediate: data.crmImmigrationImmediate,
         crmPropertyTypology: data.crmPropertyTypology,
@@ -1887,6 +2069,7 @@ export class RafacallCrmService {
       BookingCrmRow,
       | 'crmStatus'
       | 'crmComments'
+      | 'crmRequestSummary'
       | 'crmExpectedImmigrationAt'
       | 'crmImmigrationImmediate'
       | 'crmPropertyTypology'
@@ -1903,6 +2086,7 @@ export class RafacallCrmService {
       ...displayBooking,
       crmStatus: crmSource.crmStatus,
       crmComments: crmSource.crmComments,
+      crmRequestSummary: crmSource.crmRequestSummary,
       crmExpectedImmigrationAt: crmSource.crmExpectedImmigrationAt,
       crmImmigrationImmediate: crmSource.crmImmigrationImmediate,
       crmPropertyTypology: crmSource.crmPropertyTypology,
@@ -2218,13 +2402,17 @@ export class RafacallCrmService {
   ): Promise<
     Map<
       string,
-      { instagramUsername: string | null; instagramProfileUrl: string | null }
+      { instagramUsername: string | null; instagramProfileUrl: string | null; canMessageInstagram: boolean }
     >
   > {
     const ids = [...new Set(bookingIds.filter(Boolean))];
     const map = new Map<
       string,
-      { instagramUsername: string | null; instagramProfileUrl: string | null }
+      {
+        instagramUsername: string | null;
+        instagramProfileUrl: string | null;
+        canMessageInstagram: boolean;
+      }
     >();
     if (ids.length === 0) return map;
 
@@ -2233,6 +2421,7 @@ export class RafacallCrmService {
       select: {
         rafaCallBookingId: true,
         instagramHandle: true,
+        instagramUserId: true,
       },
       orderBy: { updatedAt: 'desc' },
     });
@@ -2246,6 +2435,7 @@ export class RafacallCrmService {
         instagramProfileUrl: username
           ? `https://instagram.com/${username}`
           : null,
+        canMessageInstagram: Boolean(lead.instagramUserId?.trim()),
       });
     }
     return map;
@@ -2458,6 +2648,7 @@ export class RafacallCrmService {
       status: RafaCallBookingStatus;
       crmStatus: RafaCallCrmStatus;
       crmComments: string | null;
+      crmRequestSummary: string | null;
       crmExpectedImmigrationAt: Date | null;
       crmImmigrationImmediate: boolean;
       crmPropertyTypology: RafaCallCrmPropertyTypology[];
@@ -2481,6 +2672,7 @@ export class RafacallCrmService {
     ig?: {
       instagramUsername: string | null;
       instagramProfileUrl: string | null;
+      canMessageInstagram?: boolean;
     } | null,
   ) {
     const whatsappDigits = this.extractWhatsappDigits(item);
@@ -2494,6 +2686,7 @@ export class RafacallCrmService {
       hasVideoCall,
       crmStatus: item.crmStatus,
       crmComments: item.crmComments,
+      crmRequestSummary: item.crmRequestSummary,
       crmExpectedImmigrationAt: formatCrmImmigrationForApi(
         item.crmExpectedImmigrationAt,
         item.crmImmigrationImmediate,
@@ -2517,6 +2710,7 @@ export class RafacallCrmService {
       whatsappDigits,
       instagramUsername: ig?.instagramUsername ?? null,
       instagramProfileUrl: ig?.instagramProfileUrl ?? null,
+      canMessageInstagram: ig?.canMessageInstagram === true,
       updatedAt: item.updatedAt.toISOString(),
     };
   }

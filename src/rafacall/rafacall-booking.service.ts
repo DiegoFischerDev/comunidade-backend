@@ -1,8 +1,17 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
-import { Prisma, RafaCallBookingOrigin, RafaCallBookingStatus } from '@prisma/client';
+import {
+  ChannelMessageAuthor,
+  ChannelMessageDirection,
+  ChannelMessageKind,
+  ChatbotChannel,
+  Prisma,
+  RafaCallBookingOrigin,
+  RafaCallBookingStatus,
+} from '@prisma/client';
 import { getFrontendBaseUrl } from '../config/frontend-base-url';
+import { ChannelMessageLogService } from '../channels/channel-message-log.service';
 import { RafacallCrmService } from './rafacall-crm.service';
 import {
   RAFA_CALL_WORKING_HOURS_ID,
@@ -123,6 +132,7 @@ export class RafacallBookingService {
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
     private readonly crm: RafacallCrmService,
+    private readonly channelLog: ChannelMessageLogService,
   ) {}
 
   private get durationMinutes(): number {
@@ -1327,6 +1337,14 @@ export class RafacallBookingService {
       return { ok: true, status: 'ignored_duplicate' };
     }
 
+    if (incoming) {
+      await this.recordAdminWhatsappMessage(
+        whatsapp,
+        incoming,
+        dto.externalMessageId,
+      );
+    }
+
     if (!incoming || incoming.toLowerCase() !== triggerPhrase.toLowerCase()) {
       await this.crm.setJoanaEnabledForWhatsapp(whatsapp, false);
       const promoted = await this.crm.promoteGenericCrmNovoToEmAtendimento(whatsapp);
@@ -1359,6 +1377,46 @@ export class RafacallBookingService {
     );
 
     return { ok: true, status: 'sent' };
+  }
+
+  /** Mensagem enviada pelo Rafa no WhatsApp oficial → histórico do CRM como ADMIN. */
+  private async recordAdminWhatsappMessage(
+    whatsapp: string,
+    text: string,
+    externalMessageId?: string,
+  ): Promise<void> {
+    const body = text.trim();
+    if (!body) return;
+    try {
+      const conversation =
+        (await this.prisma.joanaConversation.findFirst({
+          where: { whatsappDigits: whatsapp, activeChannel: ChatbotChannel.WHATSAPP },
+          orderBy: { updatedAt: 'desc' },
+          select: { id: true },
+        })) ??
+        (await this.prisma.joanaConversation.findFirst({
+          where: { whatsappDigits: whatsapp },
+          orderBy: { updatedAt: 'desc' },
+          select: { id: true },
+        }));
+      if (!conversation) return;
+      await this.channelLog.record({
+        conversationId: conversation.id,
+        channel: ChatbotChannel.WHATSAPP,
+        direction: ChannelMessageDirection.OUTBOUND,
+        author: ChannelMessageAuthor.ADMIN,
+        kind: ChannelMessageKind.TEXT,
+        body,
+        externalMessageId,
+        mirrorHistory: 'assistant',
+      });
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Falha ao gravar outbound admin WA ${whatsapp}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   /** Dedup de reentregas do webhook Evolution (mesmo externalMessageId ou mesmo gatilho em janela curta). */
