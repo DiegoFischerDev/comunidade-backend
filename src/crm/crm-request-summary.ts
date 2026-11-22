@@ -2,6 +2,8 @@ import { BadRequestException } from '@nestjs/common';
 import type { PrismaService } from '../prisma/prisma.service';
 
 export const CRM_REQUEST_SUMMARY_MAX_CHARS = 2000;
+const CRM_REQUEST_SUMMARY_MAX_LINES = 3;
+const CRM_REQUEST_SUMMARY_MAX_LINE_CHARS = 90;
 
 const NO_CONVERSATION_MESSAGE = 'Este lead ainda não tem conversa para resumir.';
 
@@ -65,7 +67,20 @@ export function buildLeadRequestTranscript(historyRaw: unknown, bufferRaw: unkno
   return lines.join('\n').trim().slice(0, 12_000);
 }
 
-/** Pede à OpenAI um resumo de até 5 linhas. Lança Error se a chave falhar ou a resposta vier vazia. */
+function compactSummaryLines(content: string): string[] {
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[-*•\d.)\s]+/, '').trim())
+    .filter(Boolean)
+    .slice(0, CRM_REQUEST_SUMMARY_MAX_LINES)
+    .map((line) =>
+      line.length > CRM_REQUEST_SUMMARY_MAX_LINE_CHARS
+        ? `${line.slice(0, CRM_REQUEST_SUMMARY_MAX_LINE_CHARS - 1).trimEnd()}…`
+        : line,
+    );
+}
+
+/** Pede à OpenAI um resumo curto em palavras-chave. Lança Error se a chave falhar ou a resposta vier vazia. */
 export async function summarizeLeadRequestText(transcript: string): Promise<string> {
   const apiKey = (process.env.OPENAI_API_KEY || '').trim();
   if (!apiKey) {
@@ -74,11 +89,13 @@ export async function summarizeLeadRequestText(transcript: string): Promise<stri
   const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
   const system = [
     'És um assistente do CRM. Resume a conversa em português de Portugal.',
-    'No máximo 5 linhas.',
-    'Inclui só as dúvidas e as solicitações concretas do lead.',
-    'Não incluas saudações, nem repitas o que a assistente já respondeu, excepto se o lead ainda estiver à espera de resposta.',
-    'Se não houver pedidos concretos, responde com uma única linha a dizer que o lead ainda não fez um pedido concreto.',
-    'Não uses títulos nem marcadores. Uma ideia por linha.',
+    'Estilo: palavras-chave e frases telegráficas. Sem prosa.',
+    `No máximo ${CRM_REQUEST_SUMMARY_MAX_LINES} linhas. Cada linha com no máximo ${CRM_REQUEST_SUMMARY_MAX_LINE_CHARS} caracteres.`,
+    'Inclui só factos úteis do lead: objectivo, cidade, tipologias, orçamento, visto, pets, data, dúvidas concretas.',
+    'Exemplo de formato: "Alugar T2 Lisboa · até 1200€ · com pet"',
+    'Não uses saudações, títulos, marcadores, aspas nem explicações longas.',
+    'Não repitas o que a assistente disse.',
+    'Se não houver pedido concreto, responde só: "Sem pedido concreto".',
   ].join('\n');
 
   const controller = new AbortController();
@@ -94,7 +111,8 @@ export async function summarizeLeadRequestText(transcript: string): Promise<stri
       },
       body: JSON.stringify({
         model,
-        temperature: 0.2,
+        temperature: 0.1,
+        max_tokens: 120,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: transcript },
@@ -110,12 +128,7 @@ export async function summarizeLeadRequestText(transcript: string): Promise<stri
       choices?: Array<{ message?: { content?: string } }>;
     };
     const content = data.choices?.[0]?.message?.content ?? '';
-    const lines = content
-      .split(/\r?\n/)
-      .map((line) => line.replace(/^[-*•]\s*/, '').trim())
-      .filter(Boolean)
-      .slice(0, 5);
-    const summary = normalizeCrmRequestSummary(lines.join('\n'));
+    const summary = normalizeCrmRequestSummary(compactSummaryLines(content).join('\n'));
     if (!summary) {
       throw new Error('OpenAI devolveu um resumo vazio.');
     }
