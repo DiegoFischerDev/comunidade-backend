@@ -80,6 +80,15 @@ export class AdminChatbotCrmController {
     return this.crm.updateColumn(slug, columnId, dto);
   }
 
+  @Delete(':slug/columns/:columnId')
+  @Roles(Role.ADMIN)
+  deleteColumn(
+    @Param('slug') slug: string,
+    @Param('columnId') columnId: string,
+  ) {
+    return this.crm.deleteColumn(slug, columnId);
+  }
+
   @Post(':slug/leads')
   @Roles(Role.ADMIN)
   createLead(@Param('slug') slug: string, @Body() dto: CreateCrmLeadDto) {

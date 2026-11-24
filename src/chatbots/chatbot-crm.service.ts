@@ -308,6 +308,47 @@ export class ChatbotCrmService {
     return this.listColumns(slug);
   }
 
+  async deleteColumn(slug: string, columnId: string) {
+    const bot = await this.chatbots.requireBySlug(slug);
+    const column = await this.prisma.crmColumn.findFirst({
+      where: { id: columnId, chatbotId: bot.id },
+    });
+    if (!column) throw new NotFoundException('Coluna não encontrada.');
+
+    const otherColumns = await this.prisma.crmColumn.findMany({
+      where: { chatbotId: bot.id, id: { not: column.id } },
+      orderBy: { sortOrder: 'asc' },
+      select: { id: true },
+    });
+    if (otherColumns.length === 0) {
+      throw new BadRequestException('Não podes excluir a única coluna do CRM.');
+    }
+
+    const activeLeads = await this.prisma.crmLead.count({
+      where: {
+        columnId: column.id,
+        chatbotId: bot.id,
+        crmExcludedAt: null,
+      },
+    });
+    if (activeLeads > 0) {
+      throw new BadRequestException(
+        'A coluna ainda tem clientes. Move-os ou exclui-os antes de a remover.',
+      );
+    }
+
+    const fallbackId = otherColumns[0]!.id;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.crmLead.updateMany({
+        where: { columnId: column.id, chatbotId: bot.id },
+        data: { columnId: fallbackId },
+      });
+      await tx.crmColumn.delete({ where: { id: column.id } });
+    });
+
+    return { ok: true as const, id: column.id };
+  }
+
   async createLead(
     slug: string,
     input: { name: string; whatsapp: string; columnId?: string },
