@@ -20,7 +20,13 @@ describe('rag-prompt', () => {
 
   it('formatRagPromptBlock inclui Q/A', () => {
     const block = formatRagPromptBlock([
-      { question: 'Preço?', answer: 'Depende do pacote.', score: 0.9 },
+      {
+        id: 'test-id',
+        code: 'Rag01',
+        question: 'Preço?',
+        answer: 'Depende do pacote.',
+        score: 0.9,
+      },
     ]);
     expect(block).toContain('Q1: Preço?');
     expect(block).toContain('A1: Depende do pacote.');

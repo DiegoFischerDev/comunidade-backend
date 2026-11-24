@@ -12,11 +12,13 @@ import {
   cosineSimilarity,
   formatRagPromptBlock,
   parseEmbeddingJson,
+  type RagPromptRetrieval,
   type RagQaSnippet,
 } from './rag-prompt';
 
 export type RagQaPublic = {
   id: string;
+  code: string;
   question: string;
   answer: string;
   isActive: boolean;
@@ -34,10 +36,13 @@ export type RagFaqPublicItem = {
 
 type CachedPair = {
   id: string;
+  code: string;
   question: string;
   answer: string;
   embedding: number[];
 };
+
+const RAG_CODE_RE = /^Rag(\d+)$/i;
 
 @Injectable()
 export class RagQaService {
@@ -100,8 +105,10 @@ export class RagQaService {
     const embedding = await this.embeddings.embedOrThrow(
       buildEmbeddingInput(question, answer),
     );
+    const code = await this.nextCode();
     const row = await this.prisma.ragQaPair.create({
       data: {
+        code,
         question,
         answer,
         embedding: embedding as unknown as Prisma.InputJsonValue,
@@ -201,6 +208,8 @@ export class RagQaService {
       const score = cosineSimilarity(queryEmbedding, pair.embedding);
       if (score < this.minScore) continue;
       scored.push({
+        id: pair.id,
+        code: pair.code,
         question: pair.question,
         answer: pair.answer,
         score,
@@ -210,18 +219,36 @@ export class RagQaService {
     return scored.slice(0, this.topK);
   }
 
-  /** Bloco pronto para o system prompt, ou null se nada relevante. */
-  async retrievePromptBlock(userText: string): Promise<string | null> {
+  /** Bloco pronto para o system prompt + códigos dos pares usados. */
+  async retrievePromptBlock(userText: string): Promise<RagPromptRetrieval> {
     try {
       const snippets = await this.retrieveRelevant(userText);
       const block = formatRagPromptBlock(snippets);
-      return block || null;
+      return {
+        block: block || null,
+        codes: snippets.map((item) => item.code),
+      };
     } catch (err: unknown) {
       this.logger.warn(
         `RAG retrieve falhou: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return null;
+      return { block: null, codes: [] };
     }
+  }
+
+  private async nextCode(): Promise<string> {
+    const rows = await this.prisma.ragQaPair.findMany({
+      select: { code: true },
+    });
+    let max = 0;
+    for (const row of rows) {
+      const match = RAG_CODE_RE.exec(row.code.trim());
+      if (!match) continue;
+      const n = Number(match[1]);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+    const next = max + 1;
+    return `Rag${String(next).padStart(2, '0')}`;
   }
 
   private async loadActiveCache(): Promise<CachedPair[]> {
@@ -230,6 +257,7 @@ export class RagQaService {
       where: { isActive: true },
       select: {
         id: true,
+        code: true,
         question: true,
         answer: true,
         embedding: true,
@@ -241,6 +269,7 @@ export class RagQaService {
       if (!embedding) continue;
       cache.push({
         id: row.id,
+        code: row.code,
         question: row.question,
         answer: row.answer,
         embedding,
@@ -252,6 +281,7 @@ export class RagQaService {
 
   private toPublic(row: {
     id: string;
+    code: string;
     question: string;
     answer: string;
     isActive: boolean;
@@ -262,6 +292,7 @@ export class RagQaService {
   }): RagQaPublic {
     return {
       id: row.id,
+      code: row.code,
       question: row.question,
       answer: row.answer,
       isActive: row.isActive,

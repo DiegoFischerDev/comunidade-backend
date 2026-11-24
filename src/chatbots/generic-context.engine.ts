@@ -152,6 +152,7 @@ export class GenericContextEngine {
     const historyForModel = history;
 
     let reply = '';
+    let ragCodes: string[] = [];
     try {
       if (slug === 'gabi') {
         const profile = lead
@@ -177,6 +178,7 @@ export class GenericContextEngine {
           await this.crm.patchGabiQualification(lead.id, nextProfile);
         }
         reply = composeGabiReply(interpreted.reply, nextProfile);
+        ragCodes = interpreted.ragCodes;
       } else if (slug === 'bruna') {
         const profile: BrunaProfile = lead
           ? {
@@ -205,13 +207,16 @@ export class GenericContextEngine {
           await this.crm.patchBrunaQualification(lead.id, nextProfile);
         }
         reply = composeBrunaReply(interpreted.reply, nextProfile);
+        ragCodes = interpreted.ragCodes;
       } else {
-        reply = await this.replyWithContext({
+        const replied = await this.replyWithContext({
           botName: bot.name,
           context: bot.contextText,
           history: historyForModel,
           userText: combined,
         });
+        reply = replied.reply;
+        ragCodes = replied.ragCodes;
       }
     } catch (err: unknown) {
       this.logger.warn(
@@ -221,6 +226,7 @@ export class GenericContextEngine {
       );
       reply =
         'Desculpa, tive um problema a processar a tua mensagem. Podes tentar de novo daqui a pouco?';
+      ragCodes = [];
     }
 
     if (!reply.trim()) {
@@ -229,7 +235,10 @@ export class GenericContextEngine {
 
     let sent = false;
     try {
-      await this.outbound.sendText(row, reply, { requireDelivery: true });
+      await this.outbound.sendText(row, reply, {
+        requireDelivery: true,
+        ragCodes,
+      });
       sent = true;
     } catch (err: unknown) {
       this.logger.warn(
@@ -258,13 +267,14 @@ export class GenericContextEngine {
   }): Promise<{
     reply: string;
     proposal: ReturnType<typeof parseBrunaModelJson>['proposal'];
+    ragCodes: string[];
   }> {
     const apiKey = (process.env.OPENAI_API_KEY || '').trim();
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY não está configurada.');
     }
     const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
-    const ragBlock = await this.ragQa.retrievePromptBlock(input.userText);
+    const rag = await this.ragQa.retrievePromptBlock(input.userText);
     const system = buildSystemWithRag(
       [
         input.context.trim(),
@@ -281,7 +291,7 @@ export class GenericContextEngine {
         'Não inventes taxas, spreads, prazos nem condições bancárias.',
         `Ficha actual: ${brunaProfileSummary(input.profile)}`,
       ],
-      ragBlock,
+      rag.block,
     );
 
     const messages: Array<{
@@ -317,7 +327,10 @@ export class GenericContextEngine {
       const parsed = JSON.parse(raw) as {
         choices?: Array<{ message?: { content?: string } }>;
       };
-      return parseBrunaModelJson(parsed.choices?.[0]?.message?.content || '');
+      return {
+        ...parseBrunaModelJson(parsed.choices?.[0]?.message?.content || ''),
+        ragCodes: rag.codes,
+      };
     } finally {
       clearTimeout(timeout);
     }
@@ -328,13 +341,17 @@ export class GenericContextEngine {
     history: HistoryItem[];
     userText: string;
     profile: GabiProfile;
-  }): Promise<{ reply: string; proposal: ReturnType<typeof parseGabiModelJson>['proposal'] }> {
+  }): Promise<{
+    reply: string;
+    proposal: ReturnType<typeof parseGabiModelJson>['proposal'];
+    ragCodes: string[];
+  }> {
     const apiKey = (process.env.OPENAI_API_KEY || '').trim();
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY não está configurada.');
     }
     const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
-    const ragBlock = await this.ragQa.retrievePromptBlock(input.userText);
+    const rag = await this.ragQa.retrievePromptBlock(input.userText);
     const system = buildSystemWithRag(
       [
         input.context.trim(),
@@ -350,7 +367,7 @@ export class GenericContextEngine {
         'Não inventes preços nem compromissos.',
         `Ficha actual: ${gabiProfileSummary(input.profile)}`,
       ],
-      ragBlock,
+      rag.block,
     );
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
@@ -385,7 +402,10 @@ export class GenericContextEngine {
       const parsed = JSON.parse(raw) as {
         choices?: Array<{ message?: { content?: string } }>;
       };
-      return parseGabiModelJson(parsed.choices?.[0]?.message?.content || '');
+      return {
+        ...parseGabiModelJson(parsed.choices?.[0]?.message?.content || ''),
+        ragCodes: rag.codes,
+      };
     } finally {
       clearTimeout(timeout);
     }
@@ -396,13 +416,13 @@ export class GenericContextEngine {
     context: string;
     history: HistoryItem[];
     userText: string;
-  }): Promise<string> {
+  }): Promise<{ reply: string; ragCodes: string[] }> {
     const apiKey = (process.env.OPENAI_API_KEY || '').trim();
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY não está configurada.');
     }
     const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
-    const ragBlock = await this.ragQa.retrievePromptBlock(input.userText);
+    const rag = await this.ragQa.retrievePromptBlock(input.userText);
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       {
         role: 'system',
@@ -415,7 +435,7 @@ export class GenericContextEngine {
             'Não inventes preços, prazos nem compromissos fora do contexto.',
             'Não digas que gravaste dados.',
           ],
-          ragBlock,
+          rag.block,
         ),
       },
     ];
@@ -447,7 +467,12 @@ export class GenericContextEngine {
       const parsed = JSON.parse(raw) as {
         choices?: Array<{ message?: { content?: string } }>;
       };
-      return (parsed.choices?.[0]?.message?.content || '').trim().slice(0, 4000);
+      return {
+        reply: (parsed.choices?.[0]?.message?.content || '')
+          .trim()
+          .slice(0, 4000),
+        ragCodes: rag.codes,
+      };
     } finally {
       clearTimeout(timeout);
     }

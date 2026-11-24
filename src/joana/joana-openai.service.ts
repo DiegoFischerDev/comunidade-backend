@@ -100,13 +100,13 @@ export class JoanaOpenAiService {
     profileSummary: string;
     pendingQuestion: string | null;
     combinedText: string;
-  }): Promise<{ reply: string; proposal: JoanaProposal }> {
+  }): Promise<{ reply: string; proposal: JoanaProposal; ragCodes: string[] }> {
     if (!this.isConfigured()) {
       throw new Error('OPENAI_API_KEY não está configurada.');
     }
 
     const today = joanaDateInstruction();
-    const ragBlock = await this.ragQa.retrievePromptBlock(input.combinedText);
+    const rag = await this.ragQa.retrievePromptBlock(input.combinedText);
     const system = buildSystemWithRag(
       [
         input.context.trim() || JOANA_DEFAULT_CONTEXT,
@@ -129,7 +129,7 @@ export class JoanaOpenAiService {
         'cities pode juntar várias cidades numa frase.',
         today,
       ],
-      ragBlock,
+      rag.block,
     );
 
     const user = [
@@ -177,7 +177,7 @@ export class JoanaOpenAiService {
         parsed.proposal.immigration,
       );
       if (immigration !== undefined) parsed.proposal.immigration = immigration;
-      return parsed;
+      return { ...parsed, ragCodes: rag.codes };
     } finally {
       clearTimeout(timeout);
     }

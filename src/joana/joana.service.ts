@@ -640,6 +640,7 @@ export class JoanaService {
       const historyForModel = history;
 
       let reply = '';
+      let ragCodes: string[] = [];
       let proposal = {
         interested: null as boolean | null,
         confirmation: null as 'yes' | 'no' | null,
@@ -659,6 +660,7 @@ export class JoanaService {
         });
         reply = interpreted.reply;
         proposal = interpreted.proposal;
+        ragCodes = interpreted.ragCodes;
         // Boas-vindas já foram enviadas no 1º turno; não prefixar intro de novo.
       } catch (err: unknown) {
         this.logger.warn(
@@ -676,6 +678,7 @@ export class JoanaService {
           schedulingLinkSent: row.schedulingLinkSent,
           welcomeSent: true,
           outbound: reply,
+          ragCodes: [],
           whatsapp: row.whatsappDigits,
           instagramUserId: row.instagramUserId,
           instance: row.instance,
@@ -786,6 +789,7 @@ export class JoanaService {
         schedulingLinkSent,
         welcomeSent: true,
         outbound: composed,
+        ragCodes,
         whatsapp: row.whatsappDigits,
         instagramUserId: row.instagramUserId,
         instance: row.instance,
@@ -1250,6 +1254,7 @@ export class JoanaService {
     schedulingLinkSent: boolean;
     welcomeSent: boolean;
     outbound: string;
+    ragCodes?: string[];
     whatsapp: string | null;
     instagramUserId?: string | null;
     instance: string | null;
@@ -1290,6 +1295,7 @@ export class JoanaService {
       if (conv) {
         await this.outbound.sendText(conv, input.outbound, {
           requireDelivery: true,
+          ragCodes: input.ragCodes ?? null,
         });
       } else if (input.whatsapp) {
         await this.wa.sendText(input.whatsapp, input.outbound, {

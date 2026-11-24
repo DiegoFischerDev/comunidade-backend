@@ -1414,6 +1414,8 @@ model ChannelMessage {
   mediaUrl          String?                 @map("media_url") @db.VarChar(512)
   /// Mid Meta / id Evolution — os mids do Instagram passam facilmente de 128 chars.
   externalMessageId String?                 @unique @map("external_message_id") @db.Text
+  /// Códigos curtos (`Rag01`…) dos pares Q&A injectados neste outbound BOT (null se não houve RAG).
+  ragCodes          Json?                   @map("rag_codes")
   createdAt         DateTime                @default(now()) @map("created_at")
 
   @@index([conversationId, createdAt])
@@ -1493,6 +1495,8 @@ model CrmLead {
 /// Par pergunta/resposta ideal partilhado por todos os chatbots (RAG).
 model RagQaPair {
   id             String   @id @default(cuid())
+  /// Código curto legível para o admin (ex.: Rag01). Único.
+  code           String   @unique @db.VarChar(16)
   question       String   @db.Text
   answer         String   @db.Text
   /// Embedding OpenAI (array de floats) do texto pergunta+resposta.

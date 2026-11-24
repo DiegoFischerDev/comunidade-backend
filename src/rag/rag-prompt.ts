@@ -1,7 +1,14 @@
 export type RagQaSnippet = {
+  id: string;
+  code: string;
   question: string;
   answer: string;
   score: number;
+};
+
+export type RagPromptRetrieval = {
+  block: string | null;
+  codes: string[];
 };
 
 /**

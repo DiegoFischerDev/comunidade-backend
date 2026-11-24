@@ -12,7 +12,7 @@ describe('JoanaOpenAiService.transcribeAudio', () => {
 
   it('não chama a OpenAI sem chave ou com áudio vazio', async () => {
     const service = new JoanaOpenAiService({
-      retrievePromptBlock: jest.fn().mockResolvedValue(null),
+      retrievePromptBlock: jest.fn().mockResolvedValue({ block: null, codes: [] }),
     } as never);
     delete process.env.OPENAI_API_KEY;
     await expect(service.transcribeAudio({ base64: 'YQ==' })).rejects.toThrow(

@@ -21,6 +21,8 @@ export type ChannelMessageView = {
   kind: ChannelMessageKind;
   body: string;
   mediaUrl: string | null;
+  /** Códigos curtos dos pares RAG usados neste outbound BOT. */
+  ragCodes: string[] | null;
   createdAt: string;
 };
 
@@ -35,6 +37,8 @@ export type RecordChannelMessageInput = {
   body: string;
   mediaUrl?: string | null;
   externalMessageId?: string | null;
+  /** Códigos curtos (`Rag01`…) dos pares injectados neste turno BOT. */
+  ragCodes?: string[] | null;
   /** Copia o texto para o JSON `history` (contexto do modelo). */
   mirrorHistory?: HistoryRole;
 };
@@ -56,6 +60,7 @@ export class ChannelMessageLogService {
     const kind = input.kind ?? ChannelMessageKind.TEXT;
     const mediaUrl = input.mediaUrl?.trim().slice(0, 512) || null;
     const externalMessageId = (input.externalMessageId || '').trim() || null;
+    const ragCodes = normalizeRagCodes(input.ragCodes);
     const payload = {
       conversationId: input.conversationId,
       channel: input.channel,
@@ -64,6 +69,7 @@ export class ChannelMessageLogService {
       kind,
       body,
       mediaUrl,
+      ragCodes,
       mirrorHistory: input.mirrorHistory,
     };
 
@@ -138,6 +144,7 @@ export class ChannelMessageLogService {
     body: string;
     mediaUrl: string | null;
     externalMessageId: string | null;
+    ragCodes: string[] | null;
     mirrorHistory?: HistoryRole;
   }): Promise<ChannelMessageView> {
     if (input.externalMessageId) {
@@ -145,10 +152,14 @@ export class ChannelMessageLogService {
         where: { externalMessageId: input.externalMessageId },
       });
       if (existing) {
+        const existingCodes = parseRagCodes(existing.ragCodes);
+        const codesChanged =
+          JSON.stringify(existingCodes) !== JSON.stringify(input.ragCodes);
         const changed =
           existing.body !== input.body ||
           existing.kind !== input.kind ||
-          (existing.mediaUrl || null) !== input.mediaUrl;
+          (existing.mediaUrl || null) !== input.mediaUrl ||
+          codesChanged;
         const row = changed
           ? await this.prisma.channelMessage.update({
               where: { id: existing.id },
@@ -156,6 +167,10 @@ export class ChannelMessageLogService {
                 body: input.body,
                 kind: input.kind,
                 mediaUrl: input.mediaUrl,
+                ragCodes:
+                  input.ragCodes === null
+                    ? Prisma.JsonNull
+                    : (input.ragCodes as unknown as Prisma.InputJsonValue),
               },
             })
           : existing;
@@ -179,6 +194,10 @@ export class ChannelMessageLogService {
         body: input.body,
         mediaUrl: input.mediaUrl,
         externalMessageId: input.externalMessageId,
+        ragCodes:
+          input.ragCodes === null
+            ? undefined
+            : (input.ragCodes as unknown as Prisma.InputJsonValue),
       },
     });
 
@@ -283,6 +302,7 @@ export function serializeMessage(row: {
   kind: ChannelMessageKind;
   body: string;
   mediaUrl?: string | null;
+  ragCodes?: unknown;
   createdAt: Date;
 }): ChannelMessageView {
   return {
@@ -293,6 +313,24 @@ export function serializeMessage(row: {
     kind: row.kind,
     body: row.body,
     mediaUrl: row.mediaUrl?.trim() || null,
+    ragCodes: parseRagCodes(row.ragCodes),
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+function normalizeRagCodes(value: string[] | null | undefined): string[] | null {
+  if (!value || value.length === 0) return null;
+  const codes = value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean)
+    .slice(0, 12);
+  return codes.length > 0 ? codes : null;
+}
+
+function parseRagCodes(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const codes = value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean);
+  return codes.length > 0 ? codes : null;
 }

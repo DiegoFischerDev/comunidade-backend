@@ -157,7 +157,11 @@ export class ConversationOutboundService {
   async sendText(
     row: ConversationOutboundRow,
     text: string,
-    opts?: { requireDelivery?: boolean; skipMessageLog?: boolean },
+    opts?: {
+      requireDelivery?: boolean;
+      skipMessageLog?: boolean;
+      ragCodes?: string[] | null;
+    },
   ): Promise<void> {
     const body = text.trim();
     if (!body) return;
@@ -189,7 +193,7 @@ export class ConversationOutboundService {
         throw err;
       }
       await this.afterSuccessfulSend(peer);
-      await this.logBotText(row, body, opts?.skipMessageLog);
+      await this.logBotText(row, body, opts?.skipMessageLog, opts?.ragCodes);
       return;
     }
 
@@ -199,7 +203,7 @@ export class ConversationOutboundService {
       preferredInstance: row.instance || undefined,
       requireDelivery: opts?.requireDelivery,
     });
-    await this.logBotText(row, body, opts?.skipMessageLog);
+    await this.logBotText(row, body, opts?.skipMessageLog, opts?.ragCodes);
     if (!beforeOpen && this.outboundGuard.isCircuitOpen(peer)) {
       this.logger.error(
         `Circuit-breaker anti-loop WA ${peer.digits}: pausando conversa.`,
@@ -416,6 +420,7 @@ export class ConversationOutboundService {
     row: ConversationOutboundRow,
     body: string,
     skip?: boolean,
+    ragCodes?: string[] | null,
   ): Promise<void> {
     if (skip) return;
     try {
@@ -432,6 +437,7 @@ export class ConversationOutboundService {
         author: ChannelMessageAuthor.BOT,
         kind: ChannelMessageKind.TEXT,
         body,
+        ragCodes: ragCodes ?? null,
       });
     } catch (err: unknown) {
       this.logger.warn(
