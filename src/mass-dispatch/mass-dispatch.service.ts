@@ -22,6 +22,7 @@ import {
 } from './dto/mass-dispatch.dto';
 import { MassDispatchAudienceService } from './mass-dispatch-audience.service';
 import {
+  applyLeadPersonalization,
   applyTextVariations,
   normalizeMassDispatchSteps,
 } from './mass-dispatch-steps';
@@ -298,7 +299,12 @@ export class MassDispatchService {
       >;
       const baseSteps = normalizeMassDispatchSteps(stepsRaw);
       const variationIndex = recipient.variationIndex ?? 0;
-      const steps = applyTextVariations(baseSteps, textVariations, variationIndex);
+      const varied = applyTextVariations(
+        baseSteps,
+        textVariations,
+        variationIndex,
+      );
+      const steps = applyLeadPersonalization(varied, recipient.displayName);
 
       let sendOk = false;
       let errorMessage: string | null = null;

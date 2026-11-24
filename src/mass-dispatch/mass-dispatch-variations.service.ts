@@ -1,6 +1,10 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import type { JoanaWelcomeStep } from '../joana/joana-welcome';
-import { massDispatchTextStepIndexes } from './mass-dispatch-steps';
+import {
+  ensureNameTagPreserved,
+  MASS_DISPATCH_NAME_TAG,
+  massDispatchTextStepIndexes,
+} from './mass-dispatch-steps';
 
 const VARIATIONS_PER_STEP = 10;
 
@@ -69,6 +73,7 @@ export class MassDispatchVariationsService {
                 'Recebes uma mensagem original e devolves variações com o MESMO sentido e tom.',
                 'Não inventes ofertas, preços, links nem factos novos.',
                 'Mantém português natural (Brasil/Portugal), curto e humano.',
+                `Se a mensagem tiver a tag exacta ${MASS_DISPATCH_NAME_TAG}, mantém-na tal e qual em todas as variações (não a substituas por um nome real).`,
                 `Devolve só JSON: { "variations": string[] } com exactamente ${VARIATIONS_PER_STEP - 1} strings diferentes da original.`,
               ].join(' '),
             },
@@ -92,7 +97,7 @@ export class MassDispatchVariationsService {
       const content = data.choices?.[0]?.message?.content ?? '';
       const parsed = this.parseVariationsJson(content);
       const cleaned = parsed
-        .map((v) => v.trim())
+        .map((v) => ensureNameTagPreserved(original, v.trim()))
         .filter((v) => v && v !== original);
 
       const unique = [...new Set(cleaned)].slice(0, VARIATIONS_PER_STEP - 1);
