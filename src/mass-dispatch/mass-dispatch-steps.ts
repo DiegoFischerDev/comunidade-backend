@@ -1,16 +1,20 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  ensureNameTagPreserved,
+  MESSAGE_NAME_TAG,
+  personalizeMessageText,
+} from '../common/message-personalize';
+import {
   normalizeJoanaWelcomeSteps,
   type JoanaWelcomeStep,
 } from '../joana/joana-welcome';
 
 const ALLOWED = new Set(['TEXT', 'IMAGE', 'DOCUMENT']);
 
-/** Tag dinâmica substituída pelo primeiro nome do lead no envio. */
-export const MASS_DISPATCH_NAME_TAG = '{{nome}}';
+/** @deprecated Prefer `MESSAGE_NAME_TAG` — mantido para o UI/admin do disparo. */
+export const MASS_DISPATCH_NAME_TAG = MESSAGE_NAME_TAG;
 
-const NAME_TAG_RE = /\{\{\s*nome\s*\}\}/gi;
-const NAME_TAG_TEST_RE = /\{\{\s*nome\s*\}\}/i;
+export { ensureNameTagPreserved };
 
 /** Normaliza passos do disparo: TEXT / IMAGE / DOCUMENT (sem AUDIO). */
 export function normalizeMassDispatchSteps(raw: unknown): JoanaWelcomeStep[] {
@@ -54,52 +58,19 @@ export function applyTextVariations(
   });
 }
 
-/** Primeiro nome para personalização (ex.: «Maria Silva» → «Maria»). */
-export function massDispatchLeadFirstName(
-  displayName: string | null | undefined,
-): string {
-  const raw = (displayName || '').trim();
-  if (!raw) return '';
-  return raw.split(/\s+/)[0] || '';
-}
-
 /**
- * Substitui `{{nome}}` pelo primeiro nome do lead e limpa espaços sobrantes.
+ * Personaliza `{{nome}}` nos passos (fallback; o outbound também personaliza).
+ * Útil para garantir o nome do recipient do disparo mesmo se a conversa não tiver displayName.
  */
-export function personalizeMassDispatchText(
-  text: string,
-  displayName: string | null | undefined,
-): string {
-  const name = massDispatchLeadFirstName(displayName);
-  let out = text.replace(NAME_TAG_RE, name);
-  out = out.replace(/\s{2,}/g, ' ');
-  out = out.replace(/\s+([,.;!?])/g, '$1');
-  return out.trim();
-}
-
 export function applyLeadPersonalization(
   steps: JoanaWelcomeStep[],
   displayName: string | null | undefined,
 ): JoanaWelcomeStep[] {
   return steps.map((step) => {
     const body = (step.textContent || '').trim();
-    if (!body || !NAME_TAG_TEST_RE.test(body)) return step;
-    return {
-      ...step,
-      textContent: personalizeMassDispatchText(body, displayName),
-    };
+    if (!body) return step;
+    const next = personalizeMessageText(body, displayName);
+    if (next === body) return step;
+    return { ...step, textContent: next };
   });
-}
-
-/** Garante que variações OpenAI mantêm a tag se a original a tinha. */
-export function ensureNameTagPreserved(
-  original: string,
-  variation: string,
-): string {
-  if (!NAME_TAG_TEST_RE.test(original)) return variation;
-  if (NAME_TAG_TEST_RE.test(variation)) {
-    return variation.replace(NAME_TAG_RE, MASS_DISPATCH_NAME_TAG);
-  }
-  // Se a IA removeu a tag, anexa no início de forma natural.
-  return `${MASS_DISPATCH_NAME_TAG}, ${variation}`.trim();
 }

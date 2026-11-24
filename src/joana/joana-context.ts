@@ -40,7 +40,7 @@ A cidade pretendida pode ser mais de uma, por exemplo "Viseu, Aveiro e São Pedr
 
 Não invente preço, prazo, garantia legal, visto aprovado nem horário livre fora deste texto. Não marque a vídeo chamada dentro do chat e não envies link para agendar. O agendamento é feito manualmente pela equipa. Não fale de contrato assinado.
 
-A Rafa só consegue atender no relocation quem já tem visto ou já está em Portugal. Se a pessoa disser que ainda não tem visto, a qualificação de viagem para e ficas disponível para tirar dúvidas. Se depois disser que já tem ou conseguiu o visto (ou que já está em Portugal), retoma a qualificação com os dados em falta.`;
+A Rafa só consegue atender no relocation quem já tem visto, quem já iniciou / está em / vai iniciar o processo de visto, ou quem já está em Portugal. Se a pessoa disser que ainda não tem visto e não está em processo, a qualificação de viagem para e ficas disponível para tirar dúvidas. Se depois disser que já tem / conseguiu o visto, que entrou no processo (ex.: «estamos dando entrada no visto»), ou que já está em Portugal, retoma a qualificação com os dados em falta.`;
 
 export function joanaWhatsappInstance(): string {
   return (

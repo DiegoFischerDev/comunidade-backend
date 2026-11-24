@@ -6,6 +6,10 @@ import {
   ChatbotChannel,
   Prisma,
 } from '@prisma/client';
+import {
+  messageHasNameTag,
+  personalizeMessageText,
+} from '../common/message-personalize';
 import { InstagramService } from '../instagram/instagram.service';
 import {
   guessWelcomeImageMime,
@@ -30,6 +34,8 @@ export type ConversationOutboundRow = {
   instagramUserId: string | null;
   activeChannel: ChatbotChannel;
   instance?: string | null;
+  /** Nome do contacto (para substituir `{{nome}}` no outbound). */
+  displayName?: string | null;
 };
 
 const ASK_WHATSAPP_MESSAGE =
@@ -165,8 +171,14 @@ export class ConversationOutboundService {
       markReadMessageIds?: string[];
     },
   ): Promise<void> {
-    const body = text.trim();
+    let body = text.trim();
     if (!body) return;
+
+    if (messageHasNameTag(body)) {
+      const displayName = await this.resolveDisplayName(row);
+      body = personalizeMessageText(body, displayName);
+      if (!body) return;
+    }
 
     const peer = this.resolvePeer(row);
     if (!peer) {
@@ -374,6 +386,12 @@ export class ConversationOutboundService {
       return;
     }
 
+    let caption = (input.caption || '').trim();
+    if (caption && messageHasNameTag(caption)) {
+      const displayName = await this.resolveDisplayName(row);
+      caption = personalizeMessageText(caption, displayName);
+    }
+
     if (peer.channel === 'instagram') {
       const igType =
         input.kind === 'audio'
@@ -394,7 +412,6 @@ export class ConversationOutboundService {
       }
       await this.afterSuccessfulSend(peer);
 
-      const caption = (input.caption || '').trim();
       if (caption) {
         await this.sendText(row, caption, {
           requireDelivery: input.requireDelivery,
@@ -414,7 +431,7 @@ export class ConversationOutboundService {
     } else {
       await this.wa.sendMedia({
         to: peer.digits,
-        caption: (input.caption || '').trim(),
+        caption,
         mediaUrl: input.mediaUrl,
         mimeType:
           input.mimeType ||
@@ -515,6 +532,65 @@ export class ConversationOutboundService {
     if (row.instagramUserId?.trim()) {
       return instagramPeer(row.instagramUserId);
     }
+    return null;
+  }
+
+  /**
+   * Nome para `{{nome}}`: row → conversa → CrmLead → booking Joana.
+   */
+  private async resolveDisplayName(
+    row: ConversationOutboundRow,
+  ): Promise<string | null> {
+    const fromRow = (row.displayName || '').trim();
+    if (fromRow) return fromRow;
+
+    const whatsapp = (row.whatsappDigits || '').replace(/\D/g, '');
+    const ig = (row.instagramUserId || '').trim();
+    const orConv: Prisma.JoanaConversationWhereInput[] = [];
+    if (whatsapp.length >= 8) orConv.push({ whatsappDigits: whatsapp });
+    if (ig) orConv.push({ instagramUserId: ig });
+
+    if (orConv.length > 0) {
+      const conv = await this.prisma.joanaConversation.findFirst({
+        where: { OR: orConv },
+        orderBy: { updatedAt: 'desc' },
+        select: { displayName: true },
+      });
+      const fromConv = (conv?.displayName || '').trim();
+      if (fromConv) return fromConv;
+    }
+
+    const orLead: Prisma.CrmLeadWhereInput[] = [];
+    if (whatsapp.length >= 8) orLead.push({ whatsappDigits: whatsapp });
+    if (ig) orLead.push({ instagramUserId: ig });
+    if (orLead.length > 0) {
+      const lead = await this.prisma.crmLead.findFirst({
+        where: {
+          OR: orLead,
+          guestName: { not: null },
+          crmExcludedAt: null,
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: { guestName: true },
+      });
+      const fromLead = (lead?.guestName || '').trim();
+      if (fromLead) return fromLead;
+    }
+
+    if (whatsapp.length >= 8) {
+      const booking = await this.prisma.rafaCallBooking.findFirst({
+        where: {
+          guestWhatsapp: whatsapp,
+          guestName: { not: null },
+          crmExcludedAt: null,
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: { guestName: true },
+      });
+      const fromBooking = (booking?.guestName || '').trim();
+      if (fromBooking) return fromBooking;
+    }
+
     return null;
   }
 

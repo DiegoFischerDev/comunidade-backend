@@ -2,9 +2,9 @@ import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
 import type { JoanaWelcomeStep } from '../joana/joana-welcome';
 import {
   ensureNameTagPreserved,
-  MASS_DISPATCH_NAME_TAG,
-  massDispatchTextStepIndexes,
-} from './mass-dispatch-steps';
+  MESSAGE_NAME_TAG,
+} from '../common/message-personalize';
+import { massDispatchTextStepIndexes } from './mass-dispatch-steps';
 
 const VARIATIONS_PER_STEP = 10;
 
@@ -73,7 +73,7 @@ export class MassDispatchVariationsService {
                 'Recebes uma mensagem original e devolves variações com o MESMO sentido e tom.',
                 'Não inventes ofertas, preços, links nem factos novos.',
                 'Mantém português natural (Brasil/Portugal), curto e humano.',
-                `Se a mensagem tiver a tag exacta ${MASS_DISPATCH_NAME_TAG}, mantém-na tal e qual em todas as variações (não a substituas por um nome real).`,
+                `Se a mensagem tiver a tag exacta ${MESSAGE_NAME_TAG}, mantém-na tal e qual em todas as variações (não a substituas por um nome real).`,
                 `Devolve só JSON: { "variations": string[] } com exactamente ${VARIATIONS_PER_STEP - 1} strings diferentes da original.`,
               ].join(' '),
             },

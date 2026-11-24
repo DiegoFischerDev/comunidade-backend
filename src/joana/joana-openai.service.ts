@@ -125,7 +125,7 @@ export class JoanaOpenAiService {
         'Quando a pessoa der uma data de imigração (ou imediato), preenche immigration no JSON. Não digas que gravaste e não peças para confirmar a data. confirmation fica null, excepto se o user indicar confirmação pendente antiga (aí "yes"/"no" ou nova data em immigration).',
         'Não comente que a informação foi guardada, registrada ou atualizada. Não invente preço nem horário.',
         'Devolva só JSON com as chaves: reply, interested, confirmation, name, immigration, hasVisa, cities, typology, desiredRent, hasPet.',
-        'name, immigration, hasVisa, cities, typology, desiredRent, hasPet: omita a chave se a pessoa não falou desse dado nesta mensagem. Se falou, preenche mesmo que a ficha já tenha outro valor. immigration é YYYY-MM-DD, "IMEDIATO", ou "" para apagar. hasVisa é true se a pessoa já tem visto, se disse que conseguiu o visto, se já iniciou / está em / vai iniciar o processo de visto (mesmo que ainda não tenha o visto aprovado), ou se já está / já mora em Portugal; false só se disser que ainda não tem e não está em processo nem a iniciar, mesmo que a ficha já esteja assim. typology é uma ou várias de: QUARTO, T0, T1, T2, T3, T4, T5 — se a pessoa aceitar mais de uma (ex.: "T2 ou T3"), junta numa string com vírgula ou "ou" (ex.: "T2,T3" ou "T2 ou T3"). desiredRent é o aluguel mensal do imóvel em euros inteiros, ou "" para apagar. Não uses o preço do serviço da Rafa. hasPet é true ou false.',
+        'name, immigration, hasVisa, cities, typology, desiredRent, hasPet: omita a chave se a pessoa não falou desse dado nesta mensagem. Se falou, preenche mesmo que a ficha já tenha outro valor. immigration é YYYY-MM-DD, "IMEDIATO", ou "" para apagar. hasVisa é true se a pessoa já tem visto, se disse que conseguiu o visto, se já iniciou / está em / vai iniciar o processo de visto (mesmo que ainda não tenha o visto aprovado), ou se já está / já mora em Portugal; false só se disser que ainda não tem e não está em processo nem a iniciar, mesmo que a ficha já esteja assim. Exemplos hasVisa true: "já tenho visto"; "estamos dando entrada no visto"; "já iniciámos o processo"; "vamos dar entrada no visto"; "já moro em Portugal". Exemplos hasVisa false: "ainda não tenho visto"; "nem comecei o processo". typology é uma ou várias de: QUARTO, T0, T1, T2, T3, T4, T5 — se a pessoa aceitar mais de uma (ex.: "T2 ou T3"), junta numa string com vírgula ou "ou" (ex.: "T2,T3" ou "T2 ou T3"). desiredRent é o aluguel mensal do imóvel em euros inteiros, ou "" para apagar. Não uses o preço do serviço da Rafa. hasPet é true ou false.',
         'cities pode juntar várias cidades numa frase.',
         today,
       ],
@@ -177,6 +177,11 @@ export class JoanaOpenAiService {
         parsed.proposal.immigration,
       );
       if (immigration !== undefined) parsed.proposal.immigration = immigration;
+      const hasVisa = hasVisaFromLead(
+        input.combinedText,
+        parsed.proposal.hasVisa,
+      );
+      if (hasVisa !== undefined) parsed.proposal.hasVisa = hasVisa;
       return { ...parsed, ragCodes: rag.codes };
     } finally {
       clearTimeout(timeout);
@@ -373,6 +378,53 @@ export function immigrationFromLead(
   const day = Number(match[3]);
   if (!isBeforeToday(year, month, day, today)) return modelValue;
   return dateInFutureOrYear(month, day, null, today) ?? modelValue;
+}
+
+/**
+ * Frases de «já tem / em processo / a iniciar / já em PT» → visto true.
+ * Só sobe para true (nunca força false): corrige o modelo quando interpreta
+ * «dando entrada no visto» como sem visto.
+ */
+export function inferHasVisaFromMessage(text: string): true | null {
+  const raw = text.normalize('NFC');
+  if (
+    /(?:ainda\s+)?n[aã]o\s+(?:iniciei|iniciamos|iniciámos|comecei|começamos|dei\s+entrada|damos\s+entrada|estamos\s+no\s+processo|vou\s+iniciar|vamos\s+iniciar)/iu.test(
+      raw,
+    ) ||
+    /\bnem\s+(?:iniciei|comecei|dei\s+entrada)\b/iu.test(raw)
+  ) {
+    return null;
+  }
+
+  const inProcess =
+    /\bdando\s+entrada\b/iu.test(raw) ||
+    /\b(?:dar|fazer)\s+entrada\s+(?:no|do|de)\s+visto\b/iu.test(raw) ||
+    /\bentrada\s+no\s+visto\b/iu.test(raw) ||
+    /\b(?:no|em)\s+(?:o\s+)?processo\s+(?:de\s+)?visto\b/iu.test(raw) ||
+    /\b(?:inici(?:amos|ámos|ei|ou|aram)|começ(?:amos|ei|ou|aram)|vamos\s+iniciar|vou\s+iniciar|vamos\s+come[cç]ar|vou\s+come[cç]ar)\s+(?:o\s+)?processo(?:\s+de\s+visto)?\b/iu.test(
+      raw,
+    ) ||
+    /\b(?:vamos|vou)\s+(?:dar|fazer)\s+entrada\b/iu.test(raw) ||
+    /\bvisto\s+(?:já\s+)?(?:protocolado|submetido|pedido)\b/iu.test(raw) ||
+    /\b(?:aguardando|esperando)\s+(?:o\s+)?visto\b/iu.test(raw) ||
+    /\bpedido\s+de\s+visto\b/iu.test(raw);
+
+  const alreadyHas =
+    /\b(?:já\s+)?(?:tenho|temos|consegui|conseguimos)\s+(?:o\s+)?visto\b/iu.test(raw) ||
+    /\bvisto\s+aprovado\b/iu.test(raw) ||
+    /\b(?:já\s+)?(?:estou|estamos|moro|moramos)\s+em\s+portugal\b/iu.test(raw);
+
+  if (inProcess || alreadyHas) return true;
+  return null;
+}
+
+/** Preferência da mensagem do lead sobre o hasVisa do modelo. */
+export function hasVisaFromLead(
+  text: string,
+  modelValue: boolean | undefined,
+): boolean | undefined {
+  if (inferHasVisaFromMessage(text) === true) return true;
+  return modelValue;
 }
 
 export function parseJoanaModelJson(content: string): {

@@ -22,7 +22,6 @@ import {
 } from './dto/mass-dispatch.dto';
 import { MassDispatchAudienceService } from './mass-dispatch-audience.service';
 import {
-  applyLeadPersonalization,
   applyTextVariations,
   normalizeMassDispatchSteps,
 } from './mass-dispatch-steps';
@@ -289,6 +288,7 @@ export class MassDispatchService {
           instagramUserId: true,
           activeChannel: true,
           instance: true,
+          displayName: true,
         },
       });
 
@@ -299,12 +299,12 @@ export class MassDispatchService {
       >;
       const baseSteps = normalizeMassDispatchSteps(stepsRaw);
       const variationIndex = recipient.variationIndex ?? 0;
-      const varied = applyTextVariations(
+      const steps = applyTextVariations(
         baseSteps,
         textVariations,
         variationIndex,
       );
-      const steps = applyLeadPersonalization(varied, recipient.displayName);
+      // `{{nome}}` é resolvido no ConversationOutboundService.sendText / caption.
 
       let sendOk = false;
       let errorMessage: string | null = null;
@@ -319,6 +319,8 @@ export class MassDispatchService {
               instagramUserId: conversation.instagramUserId,
               activeChannel: conversation.activeChannel,
               instance: conversation.instance,
+              displayName:
+                recipient.displayName || conversation.displayName || null,
             },
             steps,
             { requireDelivery: true },
