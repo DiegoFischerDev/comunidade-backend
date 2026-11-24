@@ -27,6 +27,7 @@ import { JoanaModule } from './joana/joana.module';
 import { ChatbotsModule } from './chatbots/chatbots.module';
 import { InstagramModule } from './instagram/instagram.module';
 import { RagModule } from './rag/rag.module';
+import { MassDispatchModule } from './mass-dispatch/mass-dispatch.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { RagModule } from './rag/rag.module';
     JoanaModule,
     ChatbotsModule,
     InstagramModule,
+    MassDispatchModule,
   ],
   controllers: [AppController],
   providers: [

@@ -299,6 +299,7 @@ model User {
   partnerReactions                    PartnerReaction[]
   partnerComments                     PartnerComment[]
   grupoTesteMessages                  GrupoTesteMessage[]
+  massCampaignsCreated                MassCampaign[]           @relation("MassCampaignCreatedBy")
 }
 
 /**
@@ -1490,6 +1491,81 @@ model CrmLead {
   @@index([chatbotId, whatsappDigits])
   @@index([whatsappDigits])
   @@map("crm_leads")
+}
+
+enum MassCampaignStatus {
+  DRAFT
+  SENDING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum MassCampaignRecipientStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum MassCampaignSourceType {
+  BOOKING
+  CRM_LEAD
+}
+
+/// Campanha de disparo global (admin) — sequência TEXT/IMAGE/DOCUMENT para leads filtrados.
+model MassCampaign {
+  id               String             @id @default(cuid())
+  name             String?            @db.VarChar(160)
+  status           MassCampaignStatus @default(DRAFT)
+  /// Passos normalizados (JoanaWelcomeStep sem AUDIO).
+  steps            Json
+  /// Filtros usados na audiência (bots, visto, tipologias, cidade, imigração…).
+  filters          Json
+  /// Mapa stepIndex → string[] de variações OpenAI para passos TEXT.
+  textVariations   Json               @default("{}") @map("text_variations")
+  minDelayMinutes  Int                @default(1) @map("min_delay_minutes")
+  maxDelayMinutes  Int                @default(10) @map("max_delay_minutes")
+  totalRecipients  Int                @default(0) @map("total_recipients")
+  sentCount        Int                @default(0) @map("sent_count")
+  failedCount      Int                @default(0) @map("failed_count")
+  createdByUserId  String             @map("created_by_user_id")
+  createdByUser    User               @relation("MassCampaignCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  recipients       MassCampaignRecipient[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("mass_campaigns")
+}
+
+model MassCampaignRecipient {
+  id               String                      @id @default(cuid())
+  campaignId       String                      @map("campaign_id")
+  campaign         MassCampaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  status           MassCampaignRecipientStatus @default(PENDING)
+  botSlug          String                      @map("bot_slug") @db.VarChar(32)
+  sourceType       MassCampaignSourceType      @map("source_type")
+  sourceId         String                      @map("source_id")
+  conversationId   String                      @map("conversation_id")
+  channel          ChatbotChannel
+  whatsappDigits   String?                     @map("whatsapp_digits")
+  instagramUserId  String?                     @map("instagram_user_id") @db.VarChar(64)
+  displayName      String?                     @map("display_name") @db.VarChar(120)
+  /// Quando o worker pode enviar este lead.
+  dueAt            DateTime                    @map("due_at")
+  variationIndex   Int?                        @map("variation_index")
+  errorMessage     String?                     @map("error_message") @db.Text
+  sentAt           DateTime?                   @map("sent_at")
+  createdAt        DateTime                    @default(now()) @map("created_at")
+  updatedAt        DateTime                    @updatedAt @map("updated_at")
+
+  @@index([campaignId, status])
+  @@index([status, dueAt])
+  @@index([conversationId])
+  @@map("mass_campaign_recipients")
 }
 
 /// Par pergunta/resposta ideal partilhado por todos os chatbots (RAG).
