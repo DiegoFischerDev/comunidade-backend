@@ -58,6 +58,15 @@ export class CreateMassCampaignDto {
   @IsObject()
   filters!: MassDispatchFiltersDto;
 
+  /**
+   * Conversas desmarcadas manualmente no preview (default = todas incluídas).
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(5000)
+  excludedConversationIds?: string[];
+
   @IsOptional()
   @IsInt()
   @Min(1)

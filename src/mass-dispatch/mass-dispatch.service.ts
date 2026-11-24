@@ -27,7 +27,8 @@ import {
 } from './mass-dispatch-steps';
 import { MassDispatchVariationsService } from './mass-dispatch-variations.service';
 
-const PREVIEW_LIMIT = 50;
+/** Limite de linhas no preview (selecção manual). */
+const PREVIEW_LIMIT = 2000;
 
 @Injectable()
 export class MassDispatchService {
@@ -118,10 +119,18 @@ export class MassDispatchService {
       );
     }
 
-    const audience = await this.audience.resolveAudience(filters);
+    let audience = await this.audience.resolveAudience(filters);
+    const excluded = new Set(
+      (dto.excludedConversationIds ?? [])
+        .map((id) => (typeof id === 'string' ? id.trim() : ''))
+        .filter(Boolean),
+    );
+    if (excluded.size > 0) {
+      audience = audience.filter((item) => !excluded.has(item.conversationId));
+    }
     if (audience.length === 0) {
       throw new BadRequestException(
-        'Nenhum lead corresponde às condições (com canal activo).',
+        'Nenhum lead seleccionado para envio (com canal activo).',
       );
     }
 
