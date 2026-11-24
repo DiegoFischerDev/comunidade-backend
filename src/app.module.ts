@@ -26,6 +26,7 @@ import { WhatsappAutomationsModule } from './whatsapp-automations/whatsapp-autom
 import { JoanaModule } from './joana/joana.module';
 import { ChatbotsModule } from './chatbots/chatbots.module';
 import { InstagramModule } from './instagram/instagram.module';
+import { RagModule } from './rag/rag.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { InstagramModule } from './instagram/instagram.module';
     JobOffersModule,
     FinanceModule,
     WhatsappAutomationsModule,
+    RagModule,
     JoanaModule,
     ChatbotsModule,
     InstagramModule,

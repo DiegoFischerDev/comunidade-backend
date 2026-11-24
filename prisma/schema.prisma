@@ -1489,3 +1489,22 @@ model CrmLead {
   @@index([whatsappDigits])
   @@map("crm_leads")
 }
+
+/// Par pergunta/resposta ideal partilhado por todos os chatbots (RAG).
+model RagQaPair {
+  id             String   @id @default(cuid())
+  question       String   @db.Text
+  answer         String   @db.Text
+  /// Embedding OpenAI (array de floats) do texto pergunta+resposta.
+  embedding      Json
+  embeddingModel String   @map("embedding_model") @db.VarChar(80)
+  isActive       Boolean  @default(true) @map("is_active")
+  /// Se true, aparece no FAQ público do site.
+  showInFaq      Boolean  @default(false) @map("show_in_faq")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive])
+  @@index([showInFaq])
+  @@map("rag_qa_pairs")
+}

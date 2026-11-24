@@ -4,6 +4,8 @@ import { ConversationOutboundService } from '../channels/conversation-outbound.s
 import { buildSchedulingLink } from '../channels/scheduling-link';
 import { PrismaService } from '../prisma/prisma.service';
 import { welcomeStepsHistorySummary } from '../joana/joana-welcome';
+import { buildSystemWithRag } from '../rag/rag-prompt';
+import { RagQaService } from '../rag/rag-qa.service';
 import { ChatbotService } from './chatbot.service';
 import {
   CHATBOT_WHATSAPP_REPLY_STYLE,
@@ -41,6 +43,7 @@ export class GenericContextEngine {
     private readonly outbound: ConversationOutboundService,
     private readonly chatbots: ChatbotService,
     private readonly crm: ChatbotCrmService,
+    private readonly ragQa: RagQaService,
   ) {}
 
   async processConversation(id: string): Promise<void> {
@@ -270,21 +273,25 @@ export class GenericContextEngine {
       throw new Error('OPENAI_API_KEY não está configurada.');
     }
     const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
-    const system = [
-      input.context.trim(),
-      '',
-      CHATBOT_WHATSAPP_REPLY_STYLE,
-      'Identidade interna: Bruna (crédito/compra). A Rafa é mulher — fala no feminino. Na reply não digas o teu nome.',
-      'Responde em JSON: {"reply":"...","desiredHouseValue":250000,"preferredCities":"...","propertyTypology":"T2"}',
-      'desiredHouseValue, preferredCities e propertyTypology: só inclui a chave se a pessoa falou desse dado agora.',
-      'desiredHouseValue: euros inteiros do imóvel pretendido (ex.: 220000).',
-      'preferredCities: cidade(s) em Portugal, texto curto.',
-      'propertyTypology: uma ou várias de QUARTO, T0, T1, T2, T3, T4, T5 (ex.: "T2" ou "T2 ou T3").',
-      'Na reply: reage ao que disseram e faz no máximo uma pergunta. Não digas que gravaste dados.',
-      'Ordem: valor da casa pretendida → cidades pretendidas → tipologia do imóvel. Não perguntes de novo o que a ficha já tem.',
-      'Não inventes taxas, spreads, prazos nem condições bancárias.',
-      `Ficha actual: ${brunaProfileSummary(input.profile)}`,
-    ].join('\n');
+    const ragBlock = await this.ragQa.retrievePromptBlock(input.userText);
+    const system = buildSystemWithRag(
+      [
+        input.context.trim(),
+        '',
+        CHATBOT_WHATSAPP_REPLY_STYLE,
+        'Identidade interna: Bruna (crédito/compra). A Rafa é mulher — fala no feminino. Na reply não digas o teu nome.',
+        'Responde em JSON: {"reply":"...","desiredHouseValue":250000,"preferredCities":"...","propertyTypology":"T2"}',
+        'desiredHouseValue, preferredCities e propertyTypology: só inclui a chave se a pessoa falou desse dado agora.',
+        'desiredHouseValue: euros inteiros do imóvel pretendido (ex.: 220000).',
+        'preferredCities: cidade(s) em Portugal, texto curto.',
+        'propertyTypology: uma ou várias de QUARTO, T0, T1, T2, T3, T4, T5 (ex.: "T2" ou "T2 ou T3").',
+        'Na reply: reage ao que disseram e faz no máximo uma pergunta. Não digas que gravaste dados.',
+        'Ordem: valor da casa pretendida → cidades pretendidas → tipologia do imóvel. Não perguntes de novo o que a ficha já tem.',
+        'Não inventes taxas, spreads, prazos nem condições bancárias.',
+        `Ficha actual: ${brunaProfileSummary(input.profile)}`,
+      ],
+      ragBlock,
+    );
 
     const messages: Array<{
       role: 'system' | 'user' | 'assistant';
@@ -336,20 +343,24 @@ export class GenericContextEngine {
       throw new Error('OPENAI_API_KEY não está configurada.');
     }
     const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
-    const system = [
-      input.context.trim(),
-      '',
-      CHATBOT_WHATSAPP_REPLY_STYLE,
-      'Identidade interna: Gabi (publicidade/parcerias). A Rafa é mulher — fala no feminino. Na reply não digas o teu nome.',
-      'Responde em JSON: {"reply":"...","companyName":"...","instagramHandle":"...","campaignObjective":"..."}',
-      'companyName, instagramHandle e campaignObjective: só inclui a chave se a pessoa falou desse dado agora.',
-      'instagramHandle: o @ (com ou sem @); se disser que não tem / não aplicável, usa "".',
-      'campaignObjective: resume o objectivo da campanha/parceria em 1 frase curta.',
-      'Na reply: reage ao que disseram e faz no máximo uma pergunta. Não digas que gravaste dados.',
-      'Ordem: nome da empresa → Instagram (@ ou sem) → objectivo da campanha/parceria. Não perguntes de novo o que a ficha já tem.',
-      'Não inventes preços nem compromissos.',
-      `Ficha actual: ${gabiProfileSummary(input.profile)}`,
-    ].join('\n');
+    const ragBlock = await this.ragQa.retrievePromptBlock(input.userText);
+    const system = buildSystemWithRag(
+      [
+        input.context.trim(),
+        '',
+        CHATBOT_WHATSAPP_REPLY_STYLE,
+        'Identidade interna: Gabi (publicidade/parcerias). A Rafa é mulher — fala no feminino. Na reply não digas o teu nome.',
+        'Responde em JSON: {"reply":"...","companyName":"...","instagramHandle":"...","campaignObjective":"..."}',
+        'companyName, instagramHandle e campaignObjective: só inclui a chave se a pessoa falou desse dado agora.',
+        'instagramHandle: o @ (com ou sem @); se disser que não tem / não aplicável, usa "".',
+        'campaignObjective: resume o objectivo da campanha/parceria em 1 frase curta.',
+        'Na reply: reage ao que disseram e faz no máximo uma pergunta. Não digas que gravaste dados.',
+        'Ordem: nome da empresa → Instagram (@ ou sem) → objectivo da campanha/parceria. Não perguntes de novo o que a ficha já tem.',
+        'Não inventes preços nem compromissos.',
+        `Ficha actual: ${gabiProfileSummary(input.profile)}`,
+      ],
+      ragBlock,
+    );
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: system },
@@ -424,18 +435,22 @@ export class GenericContextEngine {
           'Não inventes outro URL de agendamento.',
         ]
       : [];
+    const ragBlock = await this.ragQa.retrievePromptBlock(input.userText);
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       {
         role: 'system',
-        content: [
-          input.context.trim(),
-          '',
-          CHATBOT_WHATSAPP_REPLY_STYLE,
-          `Identidade interna: ${input.botName}. Responde numa única mensagem curta de WhatsApp. Na reply não digas o teu nome.`,
-          'Não inventes preços, prazos nem compromissos fora do contexto.',
-          'Não digas que gravaste dados.',
-          ...schedulingHints,
-        ].join('\n'),
+        content: buildSystemWithRag(
+          [
+            input.context.trim(),
+            '',
+            CHATBOT_WHATSAPP_REPLY_STYLE,
+            `Identidade interna: ${input.botName}. Responde numa única mensagem curta de WhatsApp. Na reply não digas o teu nome.`,
+            'Não inventes preços, prazos nem compromissos fora do contexto.',
+            'Não digas que gravaste dados.',
+            ...schedulingHints,
+          ],
+          ragBlock,
+        ),
       },
     ];
     for (const item of input.history.slice(-HISTORY_LIMIT)) {

@@ -152,10 +152,15 @@ export class CrmChannelChatService {
       whatsappDigits?: string | null;
       instagramUserId?: string | null;
     }>,
-  ): Promise<Map<string, { whatsapp: number; instagram: number }>> {
-    const result = new Map<string, { whatsapp: number; instagram: number }>();
+  ): Promise<
+    Map<string, { whatsapp: number; instagram: number; lastActivityAt: Date | null }>
+  > {
+    const result = new Map<
+      string,
+      { whatsapp: number; instagram: number; lastActivityAt: Date | null }
+    >();
     for (const identity of identities) {
-      result.set(identity.key, { whatsapp: 0, instagram: 0 });
+      result.set(identity.key, { whatsapp: 0, instagram: 0, lastActivityAt: null });
     }
     if (identities.length === 0) return result;
 
@@ -186,6 +191,7 @@ export class CrmChannelChatService {
         whatsappDigits: true,
         instagramUserId: true,
         activeChannel: true,
+        lastInboundAt: true,
         updatedAt: true,
       },
     });
@@ -207,7 +213,11 @@ export class CrmChannelChatService {
     const conversationIds = new Set<string>();
     const binding = new Map<
       string,
-      { whatsappConversationId: string | null; instagramConversationId: string | null }
+      {
+        whatsappConversationId: string | null;
+        instagramConversationId: string | null;
+        lastActivityAt: Date | null;
+      }
     >();
     for (const identity of identities) {
       const digits = (identity.whatsappDigits || '').replace(/\D/g, '');
@@ -220,6 +230,7 @@ export class CrmChannelChatService {
       binding.set(identity.key, {
         whatsappConversationId: waConv?.id ?? null,
         instagramConversationId: igConv?.id ?? null,
+        lastActivityAt: maxConversationActivityAt(waConv, igConv),
       });
     }
 
@@ -234,6 +245,7 @@ export class CrmChannelChatService {
         instagram: bound.instagramConversationId
           ? counts.get(`${bound.instagramConversationId}:${ChatbotChannel.INSTAGRAM}`) ?? 0
           : 0,
+        lastActivityAt: bound.lastActivityAt,
       });
     }
     return result;
@@ -655,14 +667,35 @@ export class CrmChannelChatService {
   }
 }
 
-function pickWhatsappConversation(
-  rows: Array<{
+function conversationActivityMs(row: {
+  lastInboundAt?: Date | null;
+  updatedAt: Date;
+} | null | undefined): number {
+  if (!row) return 0;
+  const inbound = row.lastInboundAt?.getTime() ?? 0;
+  const updated = row.updatedAt.getTime() || 0;
+  return Math.max(inbound, updated);
+}
+
+function maxConversationActivityAt(
+  ...rows: Array<{ lastInboundAt?: Date | null; updatedAt: Date } | null | undefined>
+): Date | null {
+  let bestMs = 0;
+  for (const row of rows) {
+    const ms = conversationActivityMs(row);
+    if (ms > bestMs) bestMs = ms;
+  }
+  return bestMs > 0 ? new Date(bestMs) : null;
+}
+
+function pickWhatsappConversation<
+  T extends {
     id: string;
     activeChannel: ChatbotChannel;
     instagramUserId: string | null;
     updatedAt: Date;
-  }>,
-): { id: string } | null {
+  },
+>(rows: T[]): T | null {
   if (rows.length === 0) return null;
   const byWhatsappChannel = rows.find(
     (row) => row.activeChannel === ChatbotChannel.WHATSAPP,

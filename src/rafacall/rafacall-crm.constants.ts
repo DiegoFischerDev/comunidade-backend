@@ -298,13 +298,40 @@ export function resolveStatusAfterImmigrationUpdate(params: {
   );
 }
 
-/** Mais recente primeiro. Empate mantém a ordem atual. */
-export function sortCrmItemsByRecentUpdate<T extends { updatedAt: Date }>(
-  items: T[],
-): T[] {
+function crmUnansweredTotal(item: {
+  unansweredWhatsapp?: number | null;
+  unansweredInstagram?: number | null;
+}): number {
+  return (item.unansweredWhatsapp ?? 0) + (item.unansweredInstagram ?? 0);
+}
+
+/** Mais recente entre a ficha CRM e a última actividade de mensagens. */
+export function crmEffectiveUpdatedAt(
+  updatedAt: Date,
+  lastActivityAt?: Date | null,
+): Date {
+  const activityMs = lastActivityAt?.getTime() ?? 0;
+  if (activityMs > updatedAt.getTime()) return lastActivityAt as Date;
+  return updatedAt;
+}
+
+/**
+ * Pendentes de resposta primeiro; depois mais recente primeiro.
+ * Empate mantém a ordem atual.
+ */
+export function sortCrmItemsByRecentUpdate<
+  T extends {
+    updatedAt: Date;
+    unansweredWhatsapp?: number | null;
+    unansweredInstagram?: number | null;
+  },
+>(items: T[]): T[] {
   return items
     .map((item, index) => ({ item, index }))
     .sort((left, right) => {
+      const leftPending = crmUnansweredTotal(left.item) > 0 ? 1 : 0;
+      const rightPending = crmUnansweredTotal(right.item) > 0 ? 1 : 0;
+      if (rightPending !== leftPending) return rightPending - leftPending;
       const delta = right.item.updatedAt.getTime() - left.item.updatedAt.getTime();
       if (delta !== 0) return delta;
       return left.index - right.index;

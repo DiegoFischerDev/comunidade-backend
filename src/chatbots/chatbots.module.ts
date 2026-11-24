@@ -4,6 +4,7 @@ import { InstagramModule } from '../instagram/instagram.module';
 import { JoanaModule } from '../joana/joana.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RafacallModule } from '../rafacall/rafacall.module';
+import { RagModule } from '../rag/rag.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { AdminChatbotCrmController } from './admin-chatbot-crm.controller';
 import { ChatbotCrmService } from './chatbot-crm.service';
@@ -17,6 +18,7 @@ import { GenericContextEngine } from './generic-context.engine';
   imports: [
     PrismaModule,
     WhatsAppModule,
+    RagModule,
     forwardRef(() => ChannelsModule),
     JoanaModule,
     forwardRef(() => RafacallModule),

@@ -33,6 +33,10 @@ import {
   normalizeInstagramHandle,
   type GabiProfile,
 } from './gabi-turn';
+import {
+  crmEffectiveUpdatedAt,
+  sortCrmItemsByRecentUpdate,
+} from '../rafacall/rafacall-crm.constants';
 
 const CRM_AVATAR_BOARD_BACKFILL_LIMIT = 8;
 
@@ -93,19 +97,32 @@ export class ChatbotCrmService {
         sortOrder: column.sortOrder,
         tone: column.tone,
         pausesBot: column.pausesBot,
-        items: [...leads]
-          .filter((lead) => lead.columnId === column.id)
-          .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
-          .map((lead) =>
-            this.serializeLead(
-              lead,
-              column.slug,
-              lead.whatsappDigits
-                ? documentsByWhatsapp.get(lead.whatsappDigits) ?? []
-                : [],
-              unansweredByLead.get(lead.id),
-            ),
+        items: sortCrmItemsByRecentUpdate(
+          [...leads]
+            .filter((lead) => lead.columnId === column.id)
+            .map((lead) => {
+              const unanswered = unansweredByLead.get(lead.id) ?? null;
+              return {
+                source: lead,
+                unanswered,
+                unansweredWhatsapp: unanswered?.whatsapp ?? 0,
+                unansweredInstagram: unanswered?.instagram ?? 0,
+                updatedAt: crmEffectiveUpdatedAt(
+                  lead.updatedAt,
+                  unanswered?.lastActivityAt ?? null,
+                ),
+              };
+            }),
+        ).map(({ source, unanswered }) =>
+          this.serializeLead(
+            source,
+            column.slug,
+            source.whatsappDigits
+              ? documentsByWhatsapp.get(source.whatsappDigits) ?? []
+              : [],
+            unanswered,
           ),
+        ),
       })),
     };
   }
@@ -1214,7 +1231,11 @@ export class ChatbotCrmService {
       sizeBytes: number;
       createdAt: string;
     }> = [],
-    unanswered?: { whatsapp: number; instagram: number } | null,
+    unanswered?: {
+      whatsapp: number;
+      instagram: number;
+      lastActivityAt?: Date | null;
+    } | null,
   ) {
     return {
       id: lead.id,
@@ -1238,7 +1259,10 @@ export class ChatbotCrmService {
       unansweredWhatsapp: unanswered?.whatsapp ?? 0,
       unansweredInstagram: unanswered?.instagram ?? 0,
       createdAt: lead.createdAt.toISOString(),
-      updatedAt: lead.updatedAt.toISOString(),
+      updatedAt: crmEffectiveUpdatedAt(
+        lead.updatedAt,
+        unanswered?.lastActivityAt ?? null,
+      ).toISOString(),
     };
   }
 }

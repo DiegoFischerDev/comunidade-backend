@@ -36,6 +36,7 @@ import {
   normalizeCrmPropertyTypologies,
   resolveStatusAfterImmigrationUpdate,
   sameCrmPropertyTypologies,
+  crmEffectiveUpdatedAt,
   sortCrmItemsByRecentUpdate,
 } from './rafacall-crm.constants';
 import { sanitizeCrmDocumentFileName } from '../common/crm-document-file';
@@ -185,13 +186,26 @@ export class RafacallCrmService {
       status,
       label: RAFA_CALL_CRM_STATUS_LABELS[status],
       items: sortCrmItemsByRecentUpdate(
-        uniqueItems.filter((item) => item.crmStatus === status),
-      ).map((item) => {
-        const digits = this.extractWhatsappDigits(item);
-        const ig = igByBooking.get(item.id);
-        const unanswered = unansweredByBooking.get(item.id);
+        uniqueItems
+          .filter((item) => item.crmStatus === status)
+          .map((item) => {
+            const unanswered = unansweredByBooking.get(item.id) ?? null;
+            return {
+              source: item,
+              unanswered,
+              unansweredWhatsapp: unanswered?.whatsapp ?? 0,
+              unansweredInstagram: unanswered?.instagram ?? 0,
+              updatedAt: crmEffectiveUpdatedAt(
+                item.updatedAt,
+                unanswered?.lastActivityAt ?? null,
+              ),
+            };
+          }),
+      ).map(({ source, unanswered }) => {
+        const digits = this.extractWhatsappDigits(source);
+        const ig = igByBooking.get(source.id);
         return this.serializeCrmItem(
-          item,
+          source,
           digits ? paymentsByWhatsapp.get(digits) ?? [] : [],
           digits ? documentsByWhatsapp.get(digits) ?? [] : [],
           ig,
@@ -2771,7 +2785,11 @@ export class RafacallCrmService {
       canMessageInstagram?: boolean;
       instagramUserId?: string | null;
     } | null,
-    unanswered?: { whatsapp: number; instagram: number } | null,
+    unanswered?: {
+      whatsapp: number;
+      instagram: number;
+      lastActivityAt?: Date | null;
+    } | null,
   ) {
     const whatsappDigits = this.extractWhatsappDigits(item);
     const hasVideoCall = this.hasDisplayableVideoCall(item);
@@ -2811,7 +2829,10 @@ export class RafacallCrmService {
       canMessageInstagram: ig?.canMessageInstagram === true,
       unansweredWhatsapp: unanswered?.whatsapp ?? 0,
       unansweredInstagram: unanswered?.instagram ?? 0,
-      updatedAt: item.updatedAt.toISOString(),
+      updatedAt: crmEffectiveUpdatedAt(
+        item.updatedAt,
+        unanswered?.lastActivityAt ?? null,
+      ).toISOString(),
     };
   }
 }
