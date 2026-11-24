@@ -347,6 +347,14 @@ export class WhatsappAutomationsService {
       return 'sent_partial_or_failed';
     }
 
+    if (externalMessageId) {
+      await this.wa.markMessagesAsRead({
+        toDigits: whatsapp,
+        messageIds: [externalMessageId],
+        preferredInstance,
+      });
+    }
+
     this.logger.log(
       `Automação cliente «${matched.name}» enviada para ${whatsapp}`,
     );

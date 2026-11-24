@@ -40,6 +40,7 @@ describe('JoanaService.acceptVoiceNote', () => {
     const wa = {
       getMediaBase64: jest.fn().mockResolvedValue(null),
       sendText: jest.fn().mockResolvedValue(undefined),
+      markMessagesAsRead: jest.fn().mockResolvedValue(undefined),
     };
     const openai = { transcribeAudio: jest.fn() };
     const channelLog = { record: jest.fn().mockResolvedValue(null) };
@@ -61,6 +62,11 @@ describe('JoanaService.acceptVoiceNote', () => {
     expect(result).toEqual({ handled: true, status: 'audio_unheard' });
     expect(openai.transcribeAudio).not.toHaveBeenCalled();
     expect(wa.sendText).toHaveBeenCalledWith('351912345678', JOANA_AUDIO_UNHEARD, {
+      preferredInstance: 'comunidade MEO',
+    });
+    expect(wa.markMessagesAsRead).toHaveBeenCalledWith({
+      toDigits: '351912345678',
+      messageIds: ['MSG1'],
       preferredInstance: 'comunidade MEO',
     });
   });

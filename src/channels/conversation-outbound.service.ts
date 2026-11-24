@@ -161,6 +161,8 @@ export class ConversationOutboundService {
       requireDelivery?: boolean;
       skipMessageLog?: boolean;
       ragCodes?: string[] | null;
+      /** IDs Evolution das msgs inbound a marcar como lidas **após** enviar. */
+      markReadMessageIds?: string[];
     },
   ): Promise<void> {
     const body = text.trim();
@@ -204,6 +206,7 @@ export class ConversationOutboundService {
       requireDelivery: opts?.requireDelivery,
     });
     await this.logBotText(row, body, opts?.skipMessageLog, opts?.ragCodes);
+    await this.markInboundAsRead(row, opts?.markReadMessageIds);
     if (!beforeOpen && this.outboundGuard.isCircuitOpen(peer)) {
       this.logger.error(
         `Circuit-breaker anti-loop WA ${peer.digits}: pausando conversa.`,
@@ -219,7 +222,7 @@ export class ConversationOutboundService {
   async sendWelcomeSteps(
     row: ConversationOutboundRow,
     steps: JoanaWelcomeStep[],
-    opts?: { requireDelivery?: boolean },
+    opts?: { requireDelivery?: boolean; markReadMessageIds?: string[] },
   ): Promise<void> {
     const peer = this.resolvePeer(row);
     if (!peer) {
@@ -239,7 +242,10 @@ export class ConversationOutboundService {
         if (step.type === 'TEXT') {
           const body = (step.textContent || '').trim();
           if (body) {
-            await this.sendText(row, body, opts);
+            // markRead fica para o fim da sequência (um único read receipt).
+            await this.sendText(row, body, {
+              requireDelivery: opts?.requireDelivery,
+            });
             sentAny = true;
           }
         } else if (
@@ -314,6 +320,28 @@ export class ConversationOutboundService {
         ? lastError
         : new Error(String(lastError));
     }
+
+    if (sentAny) {
+      await this.markInboundAsRead(row, opts?.markReadMessageIds);
+    }
+  }
+
+  /**
+   * Marca msgs inbound do lead como lidas na Evolution **depois** de responder.
+   * No-op no Instagram ou sem IDs Evolution.
+   */
+  async markInboundAsRead(
+    row: ConversationOutboundRow,
+    messageIds?: string[] | null,
+  ): Promise<void> {
+    if (!messageIds?.length) return;
+    const peer = this.resolvePeer(row);
+    if (!peer || peer.channel !== 'whatsapp') return;
+    await this.wa.markMessagesAsRead({
+      toDigits: peer.digits,
+      messageIds,
+      preferredInstance: row.instance || undefined,
+    });
   }
 
   /**

@@ -178,7 +178,12 @@ export class JoanaService {
         message: input.mediaMessage,
       });
       if (!media?.base64) {
-        await this.replyUnheard(input.whatsapp, input.instance, 'Evolution sem bytes');
+        await this.replyUnheard(
+          input.whatsapp,
+          input.instance,
+          'Evolution sem bytes',
+          messageId,
+        );
         return { handled: true, status: 'audio_unheard' };
       }
       const transcript = await this.openai.transcribeAudio({
@@ -187,7 +192,12 @@ export class JoanaService {
         fileName: media.fileName,
       });
       if (!transcript) {
-        await this.replyUnheard(input.whatsapp, input.instance, 'transcrição vazia');
+        await this.replyUnheard(
+          input.whatsapp,
+          input.instance,
+          'transcrição vazia',
+          messageId,
+        );
         return { handled: true, status: 'audio_unheard' };
       }
       const buffered = await this.bufferInbound({
@@ -201,7 +211,7 @@ export class JoanaService {
       return { handled: true, status: buffered.status };
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
-      await this.replyUnheard(input.whatsapp, input.instance, reason);
+      await this.replyUnheard(input.whatsapp, input.instance, reason, messageId);
       return { handled: true, status: 'audio_unheard' };
     }
   }
@@ -387,12 +397,24 @@ export class JoanaService {
     }
   }
 
-  private async replyUnheard(whatsapp: string, instance: string, reason: string) {
+  private async replyUnheard(
+    whatsapp: string,
+    instance: string,
+    reason: string,
+    messageId?: string,
+  ) {
     this.logger.warn(`Joana áudio ${whatsapp}: ${reason}`);
     try {
       await this.wa.sendText(whatsapp, JOANA_AUDIO_UNHEARD, {
         preferredInstance: instance,
       });
+      if (messageId) {
+        await this.wa.markMessagesAsRead({
+          toDigits: whatsapp,
+          messageIds: [messageId],
+          preferredInstance: instance,
+        });
+      }
     } catch (err: unknown) {
       this.logger.warn(
         `Joana áudio resposta ${whatsapp}: ${
@@ -611,11 +633,13 @@ export class JoanaService {
           if (welcomeSteps.length > 0) {
             await this.outbound.sendWelcomeSteps(row, welcomeSteps, {
               requireDelivery: true,
+              markReadMessageIds: buffer.map((item) => item.id),
             });
             welcomeSummary = welcomeStepsHistorySummary(welcomeSteps);
           } else {
             await this.outbound.sendText(row, JOANA_INTRO, {
               requireDelivery: true,
+              markReadMessageIds: buffer.map((item) => item.id),
             });
             welcomeSummary = JOANA_INTRO;
           }
@@ -1296,11 +1320,17 @@ export class JoanaService {
         await this.outbound.sendText(conv, input.outbound, {
           requireDelivery: true,
           ragCodes: input.ragCodes ?? null,
+          markReadMessageIds: input.bufferIds,
         });
       } else if (input.whatsapp) {
         await this.wa.sendText(input.whatsapp, input.outbound, {
           preferredInstance: input.instance || undefined,
           requireDelivery: true,
+        });
+        await this.wa.markMessagesAsRead({
+          toDigits: input.whatsapp,
+          messageIds: input.bufferIds,
+          preferredInstance: input.instance || undefined,
         });
       } else {
         throw new Error('Sem canal de envio para a Joana');

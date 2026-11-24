@@ -436,6 +436,14 @@ export class ChatbotRouterService {
           'Para começar, responde com o número do menu (1 a 4) por escrito. Se ainda não viste o menu, escreve oi.',
           { preferredInstance: instance },
         );
+        const voiceId = (input.externalMessageId || '').trim();
+        if (voiceId) {
+          await this.wa.markMessagesAsRead({
+            toDigits: input.whatsapp,
+            messageIds: [voiceId],
+            preferredInstance: instance,
+          });
+        }
       } catch {
         /* ignore */
       }
@@ -458,7 +466,12 @@ export class ChatbotRouterService {
         message: input.mediaMessage,
       });
       if (!media?.base64) {
-        await this.replyUnheard(input.whatsapp, instance, 'Evolution sem bytes');
+        await this.replyUnheard(
+          input.whatsapp,
+          instance,
+          'Evolution sem bytes',
+          messageId,
+        );
         return { handled: true, status: 'audio_unheard' };
       }
       const transcript = await this.openai.transcribeAudio({
@@ -467,7 +480,12 @@ export class ChatbotRouterService {
         fileName: media.fileName,
       });
       if (!transcript) {
-        await this.replyUnheard(input.whatsapp, instance, 'transcrição vazia');
+        await this.replyUnheard(
+          input.whatsapp,
+          instance,
+          'transcrição vazia',
+          messageId,
+        );
         return { handled: true, status: 'audio_unheard' };
       }
       const buffered = await this.bufferInbound({
@@ -481,8 +499,8 @@ export class ChatbotRouterService {
       return { handled: true, status: buffered.status };
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
-      await this.replyUnheard(input.whatsapp, instance, reason);
-    return { handled: true, status: 'audio_unheard' };
+      await this.replyUnheard(input.whatsapp, instance, reason, messageId);
+      return { handled: true, status: 'audio_unheard' };
     }
   }
 
@@ -675,12 +693,24 @@ export class ChatbotRouterService {
     }
   }
 
-  private async replyUnheard(whatsapp: string, instance: string, reason: string) {
+  private async replyUnheard(
+    whatsapp: string,
+    instance: string,
+    reason: string,
+    messageId?: string,
+  ) {
     this.logger.warn(`Chatbot áudio ${whatsapp}: ${reason}`);
     try {
       await this.wa.sendText(whatsapp, JOANA_AUDIO_UNHEARD, {
         preferredInstance: instance,
       });
+      if (messageId) {
+        await this.wa.markMessagesAsRead({
+          toDigits: whatsapp,
+          messageIds: [messageId],
+          preferredInstance: instance,
+        });
+      }
     } catch {
       /* ignore */
     }
@@ -825,6 +855,7 @@ export class ChatbotRouterService {
       try {
         await this.outbound.sendText(row, menuText, {
           requireDelivery: true,
+          markReadMessageIds: buffer.map((item) => item.id),
         });
       } catch (err: unknown) {
         this.logger.warn(
@@ -870,7 +901,10 @@ export class ChatbotRouterService {
       const clarify =
         `Não percebi o assunto. Podes dizer por exemplo «relocation», «crédito», «visto», «publicidade» ou «outros», ou o número 1 a 4.\n\n${menuText}`;
       try {
-        await this.outbound.sendText(row, clarify, { requireDelivery: true });
+        await this.outbound.sendText(row, clarify, {
+          requireDelivery: true,
+          markReadMessageIds: buffer.map((item) => item.id),
+        });
       } catch (err: unknown) {
         this.logger.warn(
           `Menu reenvio ${row.whatsappDigits || row.instagramUserId}: ${
@@ -930,6 +964,7 @@ export class ChatbotRouterService {
       if (publicBot.welcomeSteps.length > 0) {
         await this.outbound.sendWelcomeSteps(row, publicBot.welcomeSteps, {
           requireDelivery: true,
+          markReadMessageIds: buffer.map((item) => item.id),
         });
         welcomeSummary = welcomeStepsHistorySummary(publicBot.welcomeSteps);
         welcomeSent = true;
@@ -940,6 +975,7 @@ export class ChatbotRouterService {
         if (fallback) {
           await this.outbound.sendText(row, fallback, {
             requireDelivery: true,
+            markReadMessageIds: buffer.map((item) => item.id),
           });
           welcomeSummary = fallback;
           welcomeSent = true;
@@ -999,15 +1035,22 @@ export class ChatbotRouterService {
     const row = await this.prisma.joanaConversation.findUnique({
       where: { id: input.conversationId },
     });
+    const handoffReadIds = readBuffer(row?.buffer).map((item) => item.id);
     try {
       if (row) {
         await this.outbound.sendText(row, OUTROS_HANDOFF_MESSAGE, {
           requireDelivery: true,
+          markReadMessageIds: handoffReadIds,
         });
       } else if (input.whatsapp) {
         await this.wa.sendText(input.whatsapp, OUTROS_HANDOFF_MESSAGE, {
           preferredInstance: input.instance || undefined,
           requireDelivery: true,
+        });
+        await this.wa.markMessagesAsRead({
+          toDigits: input.whatsapp,
+          messageIds: handoffReadIds,
+          preferredInstance: input.instance || undefined,
         });
       }
     } catch (err: unknown) {

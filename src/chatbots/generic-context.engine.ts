@@ -121,11 +121,13 @@ export class GenericContextEngine {
         if (bot.welcomeSteps.length > 0) {
           await this.outbound.sendWelcomeSteps(row, bot.welcomeSteps, {
             requireDelivery: true,
+            markReadMessageIds: buffer.map((item) => item.id),
           });
           welcomeSummary = welcomeStepsHistorySummary(bot.welcomeSteps);
         } else if (bot.introFallback?.trim()) {
           await this.outbound.sendText(row, bot.introFallback.trim(), {
             requireDelivery: true,
+            markReadMessageIds: buffer.map((item) => item.id),
           });
           welcomeSummary = bot.introFallback.trim();
         }
@@ -238,6 +240,7 @@ export class GenericContextEngine {
       await this.outbound.sendText(row, reply, {
         requireDelivery: true,
         ragCodes,
+        markReadMessageIds: buffer.map((item) => item.id),
       });
       sent = true;
     } catch (err: unknown) {

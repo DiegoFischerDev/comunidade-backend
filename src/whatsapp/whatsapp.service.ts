@@ -7,6 +7,7 @@ import {
 } from '../channels/outbound-guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { readEvolutionMessageId } from './automated-outbound';
+import { buildEvolutionReadMessages } from './mark-as-read';
 
 @Injectable()
 export class WhatsAppService {
@@ -899,6 +900,60 @@ export class WhatsAppService {
     } finally {
       if (!delivered) this.forgetAutomatedSend(number, caption, true);
     }
+  }
+
+  /**
+   * Marca mensagens inbound como lidas na Evolution (`/chat/markMessageAsRead`).
+   * Best-effort: nunca lança — falha de read receipt não deve invalidar um reply já enviado.
+   * Chamar **depois** de responder (não no receive), para ticks azuis só pós-resposta.
+   */
+  async markMessagesAsRead(params: {
+    toDigits: string;
+    messageIds: string[];
+    preferredInstance?: string;
+  }): Promise<void> {
+    const base = this.base;
+    const key = this.key;
+    if (!base || !key) return;
+
+    const number = this.normalizeRecipient(params.toDigits);
+    if (!number || number.includes('@')) return;
+
+    const readMessages = buildEvolutionReadMessages(number, params.messageIds);
+    if (!readMessages.length) return;
+
+    const attempts = this.resolveSendInstances(params.preferredInstance);
+    const reqSignal = this.evolutionRequestSignal();
+    let lastError = '';
+
+    for (let i = 0; i < attempts.length; i++) {
+      const instance = attempts[i];
+      try {
+        const res = await fetch(`${base}/chat/markMessageAsRead/${instance}`, {
+          method: 'POST',
+          headers: { apikey: key, 'content-type': 'application/json' },
+          body: JSON.stringify({ readMessages }),
+          ...(reqSignal ? { signal: reqSignal } : {}),
+        });
+        if (res.ok) {
+          if (i > 0) {
+            this.logger.warn(
+              `markMessageAsRead via instância de reserva: ${instance}`,
+            );
+          }
+          return;
+        }
+        const body = await res.text().catch(() => '');
+        lastError = `${res.status} ${body}`.trim();
+      } catch (err: unknown) {
+        lastError =
+          err instanceof Error && err.message ? err.message : 'erro de rede';
+      }
+    }
+
+    this.logger.warn(
+      `Evolution markMessageAsRead falhou (${number}, ${readMessages.length} msgs): ${lastError}`,
+    );
   }
 
   /** Pausa conversas Joana/chatbot deste WhatsApp quando o circuit anti-loop dispara. */
