@@ -40,6 +40,29 @@ import {
 
 const CRM_AVATAR_BOARD_BACKFILL_LIMIT = 8;
 
+/** CRMs activos no admin que permitem transferência entre si. */
+const CRM_TRANSFER_SLUGS = ['joana', 'bruna', 'gabi', 'outros'] as const;
+
+type CrmTransferSnapshot = {
+  guestName: string;
+  whatsappDigits: string | null;
+  instagramUserId: string | null;
+  crmComments: string | null;
+  crmRequestSummary: string | null;
+  crmProfileImageUrl: string | null;
+  subjectSummary: string | null;
+  companyName: string | null;
+  instagramHandle: string | null;
+  campaignObjective: string | null;
+  desiredHouseValue: number | null;
+  preferredCities: string | null;
+  propertyTypology: RafaCallCrmPropertyTypology[];
+  crmDesiredRent: number | null;
+  crmHasPet: boolean | null;
+  crmHasVisa: boolean | null;
+  crmExpectedImmigrationAt: string | null;
+};
+
 function waDigits(value: string): string {
   return value.replace(/\D/g, '');
 }
@@ -333,6 +356,92 @@ export class ChatbotCrmService {
     });
     void this.scheduleEnsureProfileImage(whatsapp, null);
     return this.serializeLeadWithDocuments(created, column.slug);
+  }
+
+  /**
+   * Move um lead entre CRMs (Joana ↔ Bruna/Gabi/Outros).
+   * Soft-exclude na origem, cria/liga no destino, mantém chat e documentos.
+   */
+  async transferLead(input: {
+    sourceSlug: string;
+    sourceId: string;
+    targetSlug: string;
+  }) {
+    const sourceSlug = input.sourceSlug.trim().toLowerCase();
+    const targetSlug = input.targetSlug.trim().toLowerCase();
+    if (!isChatbotSlug(sourceSlug) || !isChatbotSlug(targetSlug)) {
+      throw new BadRequestException('CRM inválido.');
+    }
+    if (!CRM_TRANSFER_SLUGS.includes(sourceSlug as (typeof CRM_TRANSFER_SLUGS)[number])) {
+      throw new BadRequestException('CRM de origem não permite transferência.');
+    }
+    if (!CRM_TRANSFER_SLUGS.includes(targetSlug as (typeof CRM_TRANSFER_SLUGS)[number])) {
+      throw new BadRequestException('CRM de destino inválido.');
+    }
+    if (sourceSlug === targetSlug) {
+      throw new BadRequestException('Escolhe um CRM de destino diferente.');
+    }
+
+    const sourceId = input.sourceId.trim();
+    if (!sourceId) throw new BadRequestException('Lead de origem inválido.');
+
+    const snapshot = await this.loadTransferSnapshot(sourceSlug, sourceId);
+    await this.assertTransferTargetFree(targetSlug, snapshot);
+
+    const targetBot = await this.chatbots.requireBySlug(targetSlug);
+    await this.softExcludeTransferSource(sourceSlug, sourceId, snapshot);
+
+    const created = await this.ensureLeadOnMenuAssign({
+      chatbotId: targetBot.id,
+      whatsappDigits: snapshot.whatsappDigits,
+      instagramUserId: snapshot.instagramUserId,
+      displayName: snapshot.guestName,
+      botEnabled: targetSlug !== 'outros',
+      subjectSummary:
+        targetSlug === 'outros' ? snapshot.subjectSummary : undefined,
+    });
+    if (!created) {
+      throw new BadRequestException(
+        'Não foi possível criar o lead no CRM de destino.',
+      );
+    }
+
+    const targetLead = await this.prisma.crmLead.findUnique({
+      where: { id: created.id },
+    });
+    if (!targetLead || targetLead.crmExcludedAt) {
+      throw new BadRequestException(
+        'Não foi possível criar o lead no CRM de destino.',
+      );
+    }
+
+    await this.applyTransferFields({
+      targetSlug,
+      leadId: targetLead.id,
+      bookingId: targetLead.rafaCallBookingId,
+      snapshot,
+    });
+
+    const paused = targetSlug === 'outros' || targetLead.botEnabled === false;
+    await this.assignConversationToChatbot(
+      {
+        whatsappDigits: snapshot.whatsappDigits,
+        instagramUserId: snapshot.instagramUserId,
+      },
+      targetBot.id,
+      paused,
+    );
+
+    return {
+      sourceSlug,
+      targetSlug,
+      targetId:
+        targetSlug === 'joana' && targetLead.rafaCallBookingId
+          ? targetLead.rafaCallBookingId
+          : targetLead.id,
+      targetKind:
+        targetSlug === 'joana' ? ('rafa_call_booking' as const) : ('crm_lead' as const),
+    };
   }
 
   /** Cria lead na 1ª coluna se ainda não existir (escolha do menu). */
@@ -1096,6 +1205,323 @@ export class ChatbotCrmService {
       .slice(0, CRM_AVATAR_BOARD_BACKFILL_LIMIT);
     for (const lead of missingIg) {
       this.scheduleEnsureInstagramProfileImage(lead.instagramUserId!, null);
+    }
+  }
+
+  private async loadTransferSnapshot(
+    sourceSlug: ChatbotSlug,
+    sourceId: string,
+  ): Promise<CrmTransferSnapshot> {
+    if (sourceSlug === 'joana') {
+      const booking = await this.prisma.rafaCallBooking.findFirst({
+        where: {
+          id: sourceId,
+          crmExcludedAt: null,
+          status: { in: ['SCHEDULED', 'COMPLETED'] },
+        },
+        select: {
+          id: true,
+          guestName: true,
+          guestWhatsapp: true,
+          crmComments: true,
+          crmRequestSummary: true,
+          crmProfileImageUrl: true,
+          crmPreferredCity: true,
+          crmPropertyTypology: true,
+          crmDesiredRent: true,
+          crmHasPet: true,
+          crmHasVisa: true,
+          crmExpectedImmigrationAt: true,
+          crmImmigrationImmediate: true,
+          user: { select: { name: true, whatsapp: true } },
+        },
+      });
+      if (!booking) {
+        throw new NotFoundException('Lead não encontrado no CRM Joana.');
+      }
+      const linked = await this.prisma.crmLead.findFirst({
+        where: { rafaCallBookingId: booking.id, crmExcludedAt: null },
+        select: { instagramUserId: true, whatsappDigits: true },
+      });
+      const whatsapp =
+        waDigits(booking.guestWhatsapp || booking.user?.whatsapp || '') ||
+        linked?.whatsappDigits ||
+        null;
+      const immigration = booking.crmImmigrationImmediate
+        ? 'IMMEDIATE'
+        : booking.crmExpectedImmigrationAt
+          ? booking.crmExpectedImmigrationAt.toISOString().slice(0, 10)
+          : null;
+      return {
+        guestName:
+          booking.guestName?.trim() ||
+          booking.user?.name?.trim() ||
+          (whatsapp ? `Lead ${whatsapp.slice(-3)}` : 'Lead'),
+        whatsappDigits: whatsapp && whatsapp.length >= 8 ? whatsapp : null,
+        instagramUserId: linked?.instagramUserId ?? null,
+        crmComments: booking.crmComments,
+        crmRequestSummary: booking.crmRequestSummary,
+        crmProfileImageUrl: booking.crmProfileImageUrl,
+        subjectSummary: null,
+        companyName: null,
+        instagramHandle: null,
+        campaignObjective: null,
+        desiredHouseValue: null,
+        preferredCities: booking.crmPreferredCity,
+        propertyTypology: booking.crmPropertyTypology ?? [],
+        crmDesiredRent: booking.crmDesiredRent,
+        crmHasPet: booking.crmHasPet,
+        crmHasVisa: booking.crmHasVisa,
+        crmExpectedImmigrationAt: immigration,
+      };
+    }
+
+    const bot = await this.chatbots.requireBySlug(sourceSlug);
+    const lead = await this.prisma.crmLead.findFirst({
+      where: { id: sourceId, chatbotId: bot.id, crmExcludedAt: null },
+    });
+    if (!lead) throw new NotFoundException('Lead não encontrado neste CRM.');
+
+    return {
+      guestName:
+        lead.guestName?.trim() ||
+        lead.companyName?.trim() ||
+        (lead.whatsappDigits
+          ? `Lead ${lead.whatsappDigits.slice(-3)}`
+          : 'Lead'),
+      whatsappDigits: lead.whatsappDigits,
+      instagramUserId: lead.instagramUserId,
+      crmComments: lead.crmComments,
+      crmRequestSummary: lead.crmRequestSummary,
+      crmProfileImageUrl: lead.crmProfileImageUrl,
+      subjectSummary: lead.subjectSummary,
+      companyName: lead.companyName,
+      instagramHandle: lead.instagramHandle,
+      campaignObjective: lead.campaignObjective,
+      desiredHouseValue: lead.desiredHouseValue,
+      preferredCities: lead.crmPreferredCity,
+      propertyTypology: lead.crmPropertyTypology ?? [],
+      crmDesiredRent: null,
+      crmHasPet: null,
+      crmHasVisa: null,
+      crmExpectedImmigrationAt: null,
+    };
+  }
+
+  private async assertTransferTargetFree(
+    targetSlug: ChatbotSlug,
+    snapshot: CrmTransferSnapshot,
+  ) {
+    if (targetSlug === 'joana') {
+      if (snapshot.whatsappDigits) {
+        const lookup = await this.rafacallCrm.lookupLeadForJoana(
+          snapshot.whatsappDigits,
+        );
+        if (lookup.kind === 'visible') {
+          throw new BadRequestException(
+            'Este contacto já está no CRM Joana.',
+          );
+        }
+      }
+      const joanaBot = await this.chatbots.requireBySlug('joana');
+      const existing = await this.findActiveLead(joanaBot.id, {
+        whatsappDigits: snapshot.whatsappDigits,
+        instagramUserId: snapshot.instagramUserId,
+      });
+      if (existing) {
+        throw new BadRequestException(
+          'Este contacto já está no CRM Joana.',
+        );
+      }
+      return;
+    }
+
+    const targetBot = await this.chatbots.requireBySlug(targetSlug);
+    const existing = await this.findActiveLead(targetBot.id, {
+      whatsappDigits: snapshot.whatsappDigits,
+      instagramUserId: snapshot.instagramUserId,
+    });
+    if (existing) {
+      throw new BadRequestException(
+        `Este contacto já está no CRM ${targetSlug}.`,
+      );
+    }
+  }
+
+  private async softExcludeTransferSource(
+    sourceSlug: ChatbotSlug,
+    sourceId: string,
+    snapshot: CrmTransferSnapshot,
+  ) {
+    const excludedAt = new Date();
+
+    if (sourceSlug === 'joana') {
+      await this.prisma.crmLead.updateMany({
+        where: { rafaCallBookingId: sourceId, crmExcludedAt: null },
+        data: {
+          crmExcludedAt: excludedAt,
+          botEnabled: false,
+          rafaCallBookingId: null,
+          instagramUserId: null,
+        },
+      });
+      await this.prisma.rafaCallBooking.updateMany({
+        where: { id: sourceId, crmExcludedAt: null },
+        data: { crmExcludedAt: excludedAt, crmJoanaEnabled: false },
+      });
+      return;
+    }
+
+    const bot = await this.chatbots.requireBySlug(sourceSlug);
+    const lead = await this.prisma.crmLead.findFirst({
+      where: { id: sourceId, chatbotId: bot.id, crmExcludedAt: null },
+      select: { id: true, rafaCallBookingId: true },
+    });
+    if (!lead) throw new NotFoundException('Lead não encontrado neste CRM.');
+
+    // Se tinha booking Joana ligado (raro fora do lock Joana), só desliga o link.
+    await this.prisma.crmLead.update({
+      where: { id: lead.id },
+      data: {
+        crmExcludedAt: excludedAt,
+        botEnabled: false,
+        rafaCallBookingId: null,
+        instagramUserId: null,
+      },
+    });
+
+    // Mantém snapshot.instagramUserId em memória para o destino; o unique fica livre.
+    void snapshot;
+  }
+
+  private async applyTransferFields(params: {
+    targetSlug: ChatbotSlug;
+    leadId: string;
+    bookingId: string | null;
+    snapshot: CrmTransferSnapshot;
+  }) {
+    const { targetSlug, leadId, bookingId, snapshot } = params;
+    const comments = this.buildTransferComments(targetSlug, snapshot);
+
+    if (targetSlug === 'joana') {
+      if (!bookingId) return;
+      await this.rafacallCrm.updateCrm({
+        bookingId,
+        userName: snapshot.guestName,
+        crmComments: comments ?? undefined,
+        crmRequestSummary: snapshot.crmRequestSummary,
+        crmPreferredCity: snapshot.preferredCities,
+        crmPropertyTypology: snapshot.propertyTypology,
+        crmDesiredRent: snapshot.crmDesiredRent,
+        crmHasPet: snapshot.crmHasPet,
+        crmHasVisa: snapshot.crmHasVisa,
+        crmExpectedImmigrationAt: snapshot.crmExpectedImmigrationAt,
+        crmJoanaEnabled: true,
+      });
+      if (snapshot.crmProfileImageUrl) {
+        await this.prisma.rafaCallBooking.update({
+          where: { id: bookingId },
+          data: { crmProfileImageUrl: snapshot.crmProfileImageUrl },
+        });
+      }
+      await this.prisma.crmLead.update({
+        where: { id: leadId },
+        data: {
+          guestName: snapshot.guestName,
+          crmComments: comments,
+          crmRequestSummary: snapshot.crmRequestSummary,
+          crmProfileImageUrl: snapshot.crmProfileImageUrl,
+          botEnabled: true,
+        },
+      });
+      return;
+    }
+
+    await this.updateLead(targetSlug, leadId, {
+      guestName: snapshot.guestName,
+      crmComments: comments,
+      crmRequestSummary: snapshot.crmRequestSummary,
+      botEnabled: targetSlug !== 'outros',
+      ...(targetSlug === 'bruna'
+        ? {
+            desiredHouseValue: snapshot.desiredHouseValue,
+            preferredCities: snapshot.preferredCities,
+            propertyTypology: snapshot.propertyTypology,
+          }
+        : {}),
+      ...(targetSlug === 'gabi'
+        ? {
+            companyName: snapshot.companyName || snapshot.guestName,
+            instagramHandle: snapshot.instagramHandle,
+            campaignObjective: snapshot.campaignObjective,
+          }
+        : {}),
+      ...(targetSlug === 'outros'
+        ? {
+            subjectSummary:
+              snapshot.subjectSummary ||
+              snapshot.crmRequestSummary ||
+              null,
+          }
+        : {}),
+    });
+
+    if (snapshot.crmProfileImageUrl) {
+      await this.prisma.crmLead.update({
+        where: { id: leadId },
+        data: { crmProfileImageUrl: snapshot.crmProfileImageUrl },
+      });
+    }
+  }
+
+  private buildTransferComments(
+    targetSlug: ChatbotSlug,
+    snapshot: CrmTransferSnapshot,
+  ): string | null {
+    const parts: string[] = [];
+    if (snapshot.crmComments?.trim()) parts.push(snapshot.crmComments.trim());
+
+    if (targetSlug === 'joana') {
+      if (snapshot.subjectSummary?.trim()) {
+        parts.push(`Assunto (Outros): ${snapshot.subjectSummary.trim()}`);
+      }
+      if (snapshot.companyName?.trim()) {
+        parts.push(`Empresa: ${snapshot.companyName.trim()}`);
+      }
+      if (snapshot.campaignObjective?.trim()) {
+        parts.push(`Objectivo: ${snapshot.campaignObjective.trim()}`);
+      }
+      if (snapshot.desiredHouseValue != null) {
+        parts.push(`Valor casa (Bruna): ${snapshot.desiredHouseValue}€`);
+      }
+    }
+
+    if (parts.length === 0) return null;
+    return parts.join('\n\n').slice(0, 4000);
+  }
+
+  private async assignConversationToChatbot(
+    identity: { whatsappDigits: string | null; instagramUserId: string | null },
+    chatbotId: string,
+    paused: boolean,
+  ) {
+    const data = {
+      chatbotId,
+      paused,
+      menuSent: true,
+      welcomeSent: true,
+    };
+    if (identity.whatsappDigits) {
+      await this.prisma.joanaConversation.updateMany({
+        where: { whatsappDigits: identity.whatsappDigits },
+        data,
+      });
+    }
+    if (identity.instagramUserId) {
+      await this.prisma.joanaConversation.updateMany({
+        where: { instagramUserId: identity.instagramUserId },
+        data,
+      });
     }
   }
 

@@ -22,6 +22,7 @@ import {
   CreateCrmColumnDto,
   CreateCrmLeadDto,
   ReorderCrmColumnsDto,
+  TransferCrmLeadDto,
   UpdateCrmColumnDto,
   UpdateCrmLeadDto,
 } from './dto/chatbot-crm.dto';
@@ -37,6 +38,12 @@ export class AdminChatbotCrmController {
   @Roles(Role.ADMIN)
   pipelineCounts() {
     return this.crm.pipelineCounts();
+  }
+
+  @Post('transfer')
+  @Roles(Role.ADMIN)
+  transferLead(@Body() dto: TransferCrmLeadDto) {
+    return this.crm.transferLead(dto);
   }
 
   @Get(':slug')

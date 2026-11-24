@@ -30,6 +30,21 @@ export class CreateCrmLeadDto {
   columnId?: string;
 }
 
+/** Mover lead de um CRM (Joana / Bruna / Gabi / Outros) para outro. */
+export class TransferCrmLeadDto {
+  @IsString()
+  @MinLength(2)
+  sourceSlug!: string;
+
+  @IsString()
+  @MinLength(1)
+  sourceId!: string;
+
+  @IsString()
+  @MinLength(2)
+  targetSlug!: string;
+}
+
 export class UpdateCrmLeadDto {
   @IsOptional()
   @IsString()
