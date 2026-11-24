@@ -195,8 +195,8 @@ describe('withInferredConfirmation', () => {
   });
 });
 
-describe('interesse só pergunta a data', () => {
-  it('um sim sem outros dados cria ficha e pergunta a data, não o nome', () => {
+describe('interesse só pergunta o visto', () => {
+  it('um sim sem outros dados cria ficha e pergunta o visto, não o nome', () => {
     const result = applyJoanaProposal({
       hasLead: false,
       excluded: false,
@@ -205,7 +205,7 @@ describe('interesse só pergunta a data', () => {
       proposal: { interested: true, confirmation: null },
     });
     expect(result.createLead).toBe(true);
-    expect(result.append[0]).toContain('Para quando');
+    expect(result.append[0]).toContain('visto');
     expect(result.append[0]).not.toBe(JOANA_NAME_QUESTION);
   });
 });
@@ -258,7 +258,7 @@ describe('applyJoanaProposal', () => {
     expect(result.disableJoana).toBe(true);
   });
 
-  it('interesse cria ficha, grava o que veio junto e pergunta a data', () => {
+  it('interesse cria ficha, grava o que veio junto e pergunta o visto', () => {
     const result = applyJoanaProposal({
       hasLead: false,
       excluded: false,
@@ -272,7 +272,7 @@ describe('applyJoanaProposal', () => {
     });
     expect(result.createLead).toBe(true);
     expect(result.crmPatch?.cities).toBe('Viseu, Aveiro e São Pedro do Sul');
-    expect(result.append.some((line) => line.includes('Para quando'))).toBe(true);
+    expect(result.append.some((line) => line.includes('visto'))).toBe(true);
   });
 
   it('campo já preenchido grava o valor novo sem pedir confirmação', () => {
@@ -292,11 +292,24 @@ describe('applyJoanaProposal', () => {
     expect(result.append).toEqual([]);
   });
 
+  it('visto primeiro: sem visto na ficha, pergunta o visto antes da data', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, immigration: null, hasVisa: null, cities: null },
+      pending: null,
+      proposal: { interested: null, confirmation: null },
+    });
+    expect(result.append[0]).toBe(
+      'Você já tem visto para Portugal ou já está em Portugal?',
+    );
+  });
+
   it('data nova grava na hora e segue para o próximo dado', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
-      profile: { ...filled, immigration: null, hasVisa: null },
+      profile: { ...filled, immigration: null, hasVisa: true, cities: null },
       pending: null,
       proposal: {
         interested: null,
@@ -306,7 +319,7 @@ describe('applyJoanaProposal', () => {
     });
     expect(result.crmPatch?.immigration).toBe('2026-05-18');
     expect(result.pending).toBeNull();
-    expect(result.append[0]).toContain('visto');
+    expect(result.append[0]).toContain('cidades');
   });
 
   it('última informação manda no nome e na data sem confirmação', () => {
@@ -402,7 +415,7 @@ describe('applyJoanaProposal', () => {
     expect(result.pending).toBeNull();
   });
 
-  it('grava que não tem visto, indica a Clara e não segue a qualificação', () => {
+  it('grava que não tem visto, indica o gate da Rafa e não segue a qualificação', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -412,10 +425,24 @@ describe('applyJoanaProposal', () => {
     });
     expect(result.crmPatch?.hasVisa).toBe(false);
     expect(result.append).toEqual([JOANA_NO_VISA_GUIDANCE]);
+    expect(result.append[0]).toContain('só consegue atender');
+    expect(result.append[0]).not.toContain('clara');
     expect(result.append.some((line) => line.includes('cidades'))).toBe(false);
   });
 
-  it('com visto, segue para as cidades', () => {
+  it('com visto e sem data, segue para a data de imigração', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: { ...filled, hasVisa: null, immigration: null, cities: null },
+      pending: null,
+      proposal: { interested: null, confirmation: null, hasVisa: true },
+    });
+    expect(result.crmPatch?.hasVisa).toBe(true);
+    expect(result.append[0]).toContain('pretende vir para Portugal');
+  });
+
+  it('com visto e data, segue para as cidades', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -439,7 +466,24 @@ describe('applyJoanaProposal', () => {
     expect(result.append).toEqual([]);
   });
 
-  it('pede o visto quando a data já está e o visto ainda não', () => {
+  it('retoma a qualificação quando passa de sem visto para com visto', () => {
+    const result = applyJoanaProposal({
+      hasLead: true,
+      excluded: false,
+      profile: {
+        ...filled,
+        hasVisa: false,
+        immigration: null,
+        cities: null,
+      },
+      pending: null,
+      proposal: { interested: null, confirmation: null, hasVisa: true },
+    });
+    expect(result.crmPatch?.hasVisa).toBe(true);
+    expect(result.append[0]).toContain('pretende vir para Portugal');
+  });
+
+  it('pede o visto quando ainda não sabemos, mesmo com data na ficha', () => {
     const result = applyJoanaProposal({
       hasLead: true,
       excluded: false,
@@ -448,7 +492,9 @@ describe('applyJoanaProposal', () => {
       proposal: { interested: null, confirmation: null },
     });
     expect(result.crmPatch).toBeNull();
-    expect(result.append[0]).toBe('Você já tem visto para Portugal?');
+    expect(result.append[0]).toBe(
+      'Você já tem visto para Portugal ou já está em Portugal?',
+    );
   });
 
   it('grava o aluguel pretendido e segue para o pet', () => {
@@ -515,13 +561,13 @@ describe('applyJoanaProposal', () => {
 describe('composeJoanaReply', () => {
   it('troca a pergunta do modelo pela próxima que falta na ficha', () => {
     const text = composeJoanaReply(
-      'Março é um bom mês. Você já tem visto para Portugal?',
-      ['Quais cidades você está considerando?'],
+      'Que bom. Você já tem visto para Portugal?',
+      ['Para quando você pretende vir para Portugal?'],
       'fallback',
       true,
     );
     expect(text).toBe(
-      'Março é um bom mês.\n\nQuais cidades você está considerando?',
+      'Que bom.\n\nPara quando você pretende vir para Portugal?',
     );
     expect(text).not.toContain('visto');
   });
@@ -533,17 +579,19 @@ describe('composeJoanaReply', () => {
 
   it('se ela não perguntar, entra a próxima pergunta que falta', () => {
     const text = composeJoanaReply(
-      'Março, perfeito.',
-      ['Você já tem visto para Portugal?'],
+      'Perfeito.',
+      ['Você já tem visto para Portugal ou já está em Portugal?'],
       'fallback',
       true,
     );
-    expect(text).toBe('Março, perfeito.\n\nVocê já tem visto para Portugal?');
+    expect(text).toBe(
+      'Perfeito.\n\nVocê já tem visto para Portugal ou já está em Portugal?',
+    );
   });
 
   it('tira da fala a frase em que ela diz que gravou e fica com a pergunta certa', () => {
     const text = composeJoanaReply(
-      'Registrei a data para 31/03/2027. Você já tem visto?',
+      'Registrei que você já tem visto. Para quando pretende vir?',
       ['Para quando você pretende vir para Portugal?'],
       'fallback',
     );
@@ -584,7 +632,7 @@ describe('composeJoanaReply', () => {
     expect(text).toBe('Você já tem visto?\n\nPrepare o passaporte e a passagem.');
   });
 
-  it('sem visto, fica a reação curta e a indicação da Clara, sem a pergunta seguinte', () => {
+  it('sem visto, fica a reação curta e o gate da Rafa, sem a pergunta seguinte', () => {
     const text = composeJoanaReply(
       'Entendi. Quais cidades você está considerando?',
       ['Quais cidades você está considerando?', JOANA_NO_VISA_GUIDANCE],
@@ -592,13 +640,14 @@ describe('composeJoanaReply', () => {
       true,
     );
     expect(text).toBe(`Entendi.\n\n${JOANA_NO_VISA_GUIDANCE}`);
-    expect(text).toContain('https://movecasa.pt/whatsapp?t=clara-ac-viagens');
+    expect(text).toContain('só consegue atender');
+    expect(text).not.toContain('clara');
     expect(text).not.toContain('cidades');
   });
 
-  it('não repete a indicação se o modelo já falou da Clara', () => {
+  it('não repete a indicação se o modelo já falou do gate', () => {
     const text = composeJoanaReply(
-      'A Clara faz a assessoria de vistos. Pode falar com ela por aqui: https://movecasa.pt/whatsapp?t=clara-ac-viagens',
+      'A Rafa só consegue atender quem já tem o visto ou já está em Portugal. Fico à disposição para tirar dúvidas enquanto isso.',
       [JOANA_NO_VISA_GUIDANCE],
       'fallback',
     );

@@ -18,7 +18,7 @@ export const OUTROS_HANDOFF_MESSAGE =
   'Ok, estamos com grande fluxo de mensagens, mas deixa aqui o assunto que quer tratar, explica direitinho, e assim que possível a Rafa vai tentar te responder.';
 
 /**
- * Estilo comum das replies (Joana / Bruna / Bianca / Gabi).
+ * Estilo comum das replies (Joana / Bruna / Gabi).
  * Anexado aos system prompts em runtime — vale mesmo com contexto custom no admin.
  */
 export const CHATBOT_WHATSAPP_REPLY_STYLE = [

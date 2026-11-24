@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ConversationOutboundService } from '../channels/conversation-outbound.service';
-import { buildSchedulingLink } from '../channels/scheduling-link';
 import { PrismaService } from '../prisma/prisma.service';
 import { welcomeStepsHistorySummary } from '../joana/joana-welcome';
 import { buildSystemWithRag } from '../rag/rag-prompt';
@@ -212,14 +211,6 @@ export class GenericContextEngine {
           context: bot.contextText,
           history: historyForModel,
           userText: combined,
-          ...(slug === 'bianca'
-            ? {
-                schedulingLink: this.buildSchedulingLink(
-                  row.whatsappDigits,
-                  lead?.guestName || row.displayName,
-                ),
-              }
-            : {}),
         });
       }
     } catch (err: unknown) {
@@ -400,41 +391,17 @@ export class GenericContextEngine {
     }
   }
 
-  private buildSchedulingLink(
-    whatsapp: string | null | undefined,
-    name: string | null | undefined,
-  ): string | null {
-    try {
-      return buildSchedulingLink(whatsapp, name);
-    } catch (err: unknown) {
-      this.logger.warn(
-        `Bianca sem link de agenda: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return null;
-    }
-  }
-
   private async replyWithContext(input: {
     botName: string;
     context: string;
     history: HistoryItem[];
     userText: string;
-    schedulingLink?: string | null;
   }): Promise<string> {
     const apiKey = (process.env.OPENAI_API_KEY || '').trim();
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY não está configurada.');
     }
     const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
-    const schedulingHints = input.schedulingLink
-      ? [
-          'Quando a pessoa mostrar interesse em falar com a especialista / agendar, inclui este link exacto na resposta:',
-          input.schedulingLink,
-          'Não inventes outro URL de agendamento.',
-        ]
-      : [];
     const ragBlock = await this.ragQa.retrievePromptBlock(input.userText);
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       {
@@ -447,7 +414,6 @@ export class GenericContextEngine {
             `Identidade interna: ${input.botName}. Responde numa única mensagem curta de WhatsApp. Na reply não digas o teu nome.`,
             'Não inventes preços, prazos nem compromissos fora do contexto.',
             'Não digas que gravaste dados.',
-            ...schedulingHints,
           ],
           ragBlock,
         ),

@@ -1978,7 +1978,7 @@ export class RafacallCrmService {
 
   /**
    * Mensagem manual do admin no WhatsApp: move leads activos em NOVO
-   * (Bruna / Bianca / Gabi / Outros) para EM_ATENDIMENTO. Joana não usa CrmLead.
+   * (Bruna / Gabi / Outros) para EM_ATENDIMENTO. Joana não usa CrmLead.
    */
   async promoteGenericCrmNovoToEmAtendimento(whatsappRaw: string): Promise<number> {
     const whatsapp = waDigits(whatsappRaw);
@@ -1988,7 +1988,7 @@ export class RafacallCrmService {
       where: {
         whatsappDigits: whatsapp,
         crmExcludedAt: null,
-        chatbot: { slug: { in: ['bruna', 'bianca', 'gabi', 'outros'] } },
+        chatbot: { slug: { in: ['bruna', 'gabi', 'outros'] } },
         column: { slug: 'NOVO' },
       },
       select: { id: true, chatbotId: true },

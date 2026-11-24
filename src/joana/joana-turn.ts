@@ -75,8 +75,8 @@ export type JoanaTurnResult = {
 };
 
 const FIELD_ORDER: JoanaField[] = [
-  'immigration',
   'visa',
+  'immigration',
   'cities',
   'typology',
   'rent',
@@ -270,8 +270,8 @@ export function withInferredName(input: {
 /** Próximo campo de qualificação em falta, na ordem do CRM. */
 export function nextMissingField(profile: JoanaProfile): JoanaField | null {
   if (profile.hasVisa === false) return null;
-  if (!profile.immigration) return 'immigration';
   if (profile.hasVisa === null) return 'visa';
+  if (!profile.immigration) return 'immigration';
   if (!profile.cities) return 'cities';
   if (profile.typology.length === 0) return 'typology';
   if (profile.desiredRent == null) return 'rent';
@@ -477,7 +477,7 @@ export const JOANA_INTEREST_QUESTION = 'Você tem interesse nesse serviço?';
 
 /** Orientação fixa quando a pessoa diz que ainda não tem visto. */
 export const JOANA_NO_VISA_GUIDANCE =
-  'Antes de continuar com o serviço de relocation, você precisa primeiro buscar se encaixar em algum tipo de visto válido. A Clara faz a assessoria de vistos e de passagens aéreas. Pode falar com ela por aqui: https://movecasa.pt/whatsapp?t=clara-ac-viagens';
+  'A Rafa só consegue atender quem já tem o visto ou já está em Portugal. Fico à disposição para tirar dúvidas enquanto isso.';
 
 /** Última mensagem quando a pessoa recusa o relocation (sem ficha). A seguir a Joana desliga. */
 export const JOANA_DECLINE_HANDOFF =
@@ -499,7 +499,7 @@ export function missingFieldQuestion(profile: JoanaProfile): string | null {
     case 'immigration':
       return 'Para quando você pretende vir para Portugal? Pode ser uma data, por exemplo 18/12/2026, ou dizer que é imediato.';
     case 'visa':
-      return 'Você já tem visto para Portugal?';
+      return 'Você já tem visto para Portugal ou já está em Portugal?';
     case 'cities':
       return 'Quais cidades você está considerando? Pode ser mais de uma, por exemplo Viseu, Aveiro e São Pedro do Sul.';
     case 'typology':
@@ -533,10 +533,14 @@ export function composeJoanaReply(
   const extras = append
     .map((line) => line.trim())
     .filter((line) => line && !isAckLine(line));
-  const holdsRelocation = extras.some((line) => line.includes('clara-ac-viagens'));
+  const holdsNoVisa = extras.some(
+    (line) =>
+      line === JOANA_NO_VISA_GUIDANCE ||
+      line.includes('só consegue atender quem já tem o visto'),
+  );
   const holdsDecline = extras.some((line) => line.includes(JOANA_DECLINE_HANDOFF));
-  const systemOwnsClose = holdsRelocation || holdsDecline;
-  const spoken = holdsRelocation
+  const systemOwnsClose = holdsNoVisa || holdsDecline;
+  const spoken = holdsNoVisa
     ? dropQuestions(withoutVisaPitch(cleaned))
     : holdsDecline
       ? dropQuestions(cleaned)
@@ -570,7 +574,12 @@ function lineIsQuestion(line: string): boolean {
 
 function withoutVisaPitch(text: string): string {
   return splitSentences(text)
-    .filter((sentence) => !/clara|visto válido/i.test(sentence))
+    .filter(
+      (sentence) =>
+        !/clara|visto válido|só consegue atender quem já tem o visto|fico à disposição para tirar dúvidas/i.test(
+          sentence,
+        ),
+    )
     .join(' ')
     .trim();
 }

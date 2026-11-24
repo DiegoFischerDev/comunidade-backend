@@ -7,46 +7,32 @@ export type MenuBot = {
   name: string;
 };
 
-export const DEFAULT_CHATBOT_MENU_TEXT = `Oiê! 🥰 Seja muito bem-vindo(a)!
-
-Aqui da equipa da Rafa — estou aqui pra te ajudar! 💛
-
+export const DEFAULT_CHATBOT_MENU_TEXT = `Oiê! Seja muito bem-vindo(a)! 💛
 Me conta, sobre qual assunto você gostaria de conversar?
 
-🏡 1. Aluguel de imóveis em Portugal (Relocation)
-
+🏡 1. Aluguel de imóveis, Visto e preparação para Portugal
 🔑 2. Financiamento ou compra de casa em Portugal
-
-🛂 3. Visto e preparação para Portugal
-
-💌 4. Publicidade e parcerias com a Rafa
-
-💬 5. Falar diretamente com a Rafa sobre outros assuntos`;
+💌 3. Publicidade e parcerias com a Rafa
+💬 4. Falar diretamente com a Rafa sobre outros assuntos`;
 
 const MENU_OPTION_EMOJI: Record<number, string> = {
   1: '🏡 ',
   2: '🔑 ',
-  3: '🛂 ',
-  4: '💌 ',
-  5: '💬 ',
+  3: '💌 ',
+  4: '💬 ',
 };
 
 /** Fallback se ainda não houver texto guardado na BD. */
 export function buildChatbotMenuText(bots: MenuBot[]): string {
   const lines = [
-    'Oiê! 🥰 Seja muito bem-vindo(a)!',
-    '',
-    'Aqui da equipa da Rafa — estou aqui pra te ajudar! 💛',
-    '',
+    'Oiê! Seja muito bem-vindo(a)! 💛',
     'Me conta, sobre qual assunto você gostaria de conversar?',
     '',
   ];
   for (const bot of [...bots].sort((a, b) => a.menuOrder - b.menuOrder)) {
     const emoji = MENU_OPTION_EMOJI[bot.menuOrder] ?? '';
     lines.push(`${emoji}${bot.menuOrder}. ${bot.menuLabel}`);
-    lines.push('');
   }
-  if (lines[lines.length - 1] === '') lines.pop();
   return lines.join('\n');
 }
 
@@ -99,14 +85,15 @@ export function parseChatbotMenuChoice(
     }
   }
 
-  if (/\b(relocation|aluguel|arrendamento)\b/.test(normalized)) {
+  if (
+    /\b(relocation|aluguel|arrendamento|visto|imigracao|imigrar|preparacao para portugal|cidadania)\b/.test(
+      normalized,
+    )
+  ) {
     return slugFromBots(bots, 'joana');
   }
   if (/\b(credito|financ|compra de casa|imobiliario)\b/.test(normalized)) {
     return slugFromBots(bots, 'bruna');
-  }
-  if (/\b(visto|imigracao|imigrar|preparacao para portugal|cidadania)\b/.test(normalized)) {
-    return slugFromBots(bots, 'bianca');
   }
   if (/\b(publicidade|propaganda|anuncio|parceria|marketing)\b/.test(normalized)) {
     return slugFromBots(bots, 'gabi');
@@ -136,8 +123,8 @@ export function buildMenuClassifySystemPrompt(bots: MenuBot[]): string {
   return [
     'És um classificador de intenções para o WhatsApp da Rafa.',
     'Dado o texto do contacto, escolhe UMA opção (slug) da lista.',
-    'Aceita número (1/2/3/4/5), nome do bot, ou qualquer frase em português que indique o assunto.',
-    'Exemplos: "publicidade" → gabi; "quero alugar em Viseu" → joana; "crédito para comprar casa" → bruna; "preciso de visto" / "preparação para Portugal" → bianca; "quero falar com a Rafa" / "outro assunto" / "5" → outros.',
+    'Aceita número (1/2/3/4), nome do bot, ou qualquer frase em português que indique o assunto.',
+    'Exemplos: "publicidade" → gabi; "quero alugar em Viseu" → joana; "crédito para comprar casa" → bruna; "preciso de visto" / "preparação para Portugal" → joana; "quero falar com a Rafa" / "outro assunto" / "4" → outros.',
     'Se não der para perceber o assunto, devolve null.',
     `Responde APENAS JSON válido: {"slug":${slugList}|null}`,
     '',
